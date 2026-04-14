@@ -29,7 +29,7 @@ const hasMultiple = images.length > 1;
         <img
           src={img}
           alt={`${title} artwork ${i + 1}`}
-          class={`carousel-img absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`}
+          class={`carousel-img absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`}
           loading="lazy"
           data-index={i}
         />
