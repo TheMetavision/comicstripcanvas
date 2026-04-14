@@ -381,7 +381,45 @@
   });
 
   document.getElementById('submit-order')?.addEventListener('click', () => {
-    alert('Thank you for your order! We\'ll send a proof within 24-48 hours.');
+    // Create branded confirmation modal
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center p-4';
+    overlay.style.backgroundColor = 'rgba(0,0,0,0.85)';
+    overlay.innerHTML = `
+      <div class="bg-panel-dark border-4 border-comic-yellow max-w-md w-full p-8 text-center relative" style="box-shadow: 8px 8px 0 #000;">
+        <div class="w-16 h-16 bg-comic-yellow border-4 border-black flex items-center justify-center mx-auto mb-6" style="box-shadow: 3px 3px 0 #000;">
+          <svg class="w-8 h-8 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 class="font-bangers text-3xl text-comic-yellow tracking-wide mb-3" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.5);">ORDER SUBMITTED!</h2>
+        <p class="font-source text-gray-300 text-sm leading-relaxed mb-2">Thank you for your personalised order!</p>
+        <p class="font-source text-gray-300 text-sm leading-relaxed mb-6">We'll send you a digital proof within <strong class="text-comic-cyan">24-48 hours</strong>. Printing begins only after your approval.</p>
+        <div class="flex gap-3 justify-center">
+          <a href="/" class="btn-secondary text-sm">BACK TO HOME</a>
+          <a href="/store" class="btn-primary text-sm">BROWSE STORE</a>
+        </div>
+        <button id="close-modal" class="absolute top-3 right-3 text-gray-500 hover:text-off-white transition-colors">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+
+    // Close handlers
+    overlay.querySelector('#close-modal')?.addEventListener('click', () => {
+      overlay.remove();
+      document.body.style.overflow = '';
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+        document.body.style.overflow = '';
+      }
+    });
   });
 
   updateProgressBar();
