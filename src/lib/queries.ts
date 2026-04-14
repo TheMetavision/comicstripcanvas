@@ -66,7 +66,7 @@ export const productBySlugQuery = `
       _id,
       title,
       "slug": slug.current,
-      images[0] {
+      "images": images[0..0] {
         asset-> { _id, url },
         alt
       },
