@@ -15,9 +15,9 @@ const categoryImages = await sanityClient.fetch(`{
   "strips": *[_type == "product" && category == "comic-book-strips" && count(images) > 0] | order(sortOrder asc)[0..5].images[0]
 }`);
 
-const coverImgs = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
-const iconImgs = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
-const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
+const coverImgs = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
+const iconImgs = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
+const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
 ---
 
 <BaseLayout
