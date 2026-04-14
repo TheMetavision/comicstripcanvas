@@ -1,0 +1,64 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Shipping Policy"
+  description="Comic Strip Canvas shipping and delivery information. Free UK mainland P&P on all orders."
+>
+  <section class="relative bg-panel-dark py-16">
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <span class="text-off-white">Shipping Policy</span>
+      </nav>
+      <h1 class="font-bangers text-5xl text-off-white tracking-wide mb-4" style="text-shadow: 3px 3px 0 rgba(0,0,0,0.4);">SHIPPING POLICY</h1>
+      <p class="font-source text-gray-400 text-sm">Last updated: April 2026</p>
+    </div>
+  </section>
+
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div class="space-y-8 font-source text-gray-300 text-sm leading-relaxed">
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Free UK Mainland Delivery</h2>
+        <p>All orders shipped to UK mainland addresses include free postage and packaging. No minimum order required.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Delivery Times</h2>
+        <p class="mb-3">All our products are made to order, so please allow for production time in addition to shipping.</p>
+        <p><strong class="text-off-white">Standard (pre-designed) products:</strong> 3-6 working days from order placement.</p>
+        <p class="mt-2"><strong class="text-off-white">Personalised products:</strong> 3-6 working days from proof approval. Please note that the proof process typically takes 24-48 hours, and additional time may be needed if revisions are requested.</p>
+        <p class="mt-2">These are estimated timescales. During busy periods (e.g. Christmas, Valentine's Day, Father's Day), delivery may take slightly longer.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">How Your Order is Packaged</h2>
+        <p><strong class="text-off-white">Poster Prints:</strong> Rolled and shipped in a protective postal tube (large size) or hard-backed envelope (small and medium sizes) to ensure your artwork arrives in perfect condition.</p>
+        <p class="mt-2"><strong class="text-off-white">Canvas Prints:</strong> Bubble-wrapped and securely boxed to protect the frame and canvas during transit. Your canvas arrives ready to hang.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Tracking</h2>
+        <p>All orders are dispatched via tracked delivery. You will receive a tracking number by email once your order has been shipped.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">International Shipping</h2>
+        <p>We currently ship to UK mainland addresses only with free P&P. We are working on expanding our delivery to Europe and beyond. Sign up to our newsletter to be notified when international shipping becomes available.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Damaged in Transit</h2>
+        <p>If your order arrives damaged, please <a href="/contact" class="text-comic-cyan hover:text-comic-yellow transition-colors">contact us</a> within 48 hours of delivery with photographs of the damage. We will arrange a free replacement as quickly as possible.</p>
+      </div>
+
+      <div>
+        <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Questions</h2>
+        <p>For any shipping queries, please <a href="/contact" class="text-comic-cyan hover:text-comic-yellow transition-colors">get in touch</a>.</p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

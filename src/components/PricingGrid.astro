@@ -1,0 +1,84 @@
+---
+const pricingData = [
+  {
+    format: 'Poster Print',
+    subtitle: '260gsm Photo Paper',
+    accent: 'border-comic-cyan',
+    accentBg: 'bg-comic-cyan',
+    prices: { small: '£9.99', medium: '£12.99', large: '£16.99' },
+  },
+  {
+    format: 'Canvas Standard Frame',
+    subtitle: '410gsm Water-Resistant Canvas',
+    accent: 'border-comic-yellow',
+    accentBg: 'bg-comic-yellow',
+    prices: { small: '£26.99', medium: '£31.99', large: '£44.99' },
+    featured: true,
+  },
+  {
+    format: 'Canvas Gallery Frame',
+    subtitle: '410gsm Water-Resistant Canvas',
+    accent: 'border-comic-red',
+    accentBg: 'bg-comic-red',
+    prices: { small: '£28.99', medium: '£33.99', large: '£46.99' },
+  },
+];
+---
+
+<div class="space-y-8">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    {pricingData.map((item) => (
+      <div class={`bg-panel-dark border-4 ${item.accent} relative overflow-hidden ${item.featured ? 'md:-mt-4 md:mb-0' : ''}`}
+           style="box-shadow: 4px 4px 0 #000000;">
+        {item.featured && (
+          <div class="absolute top-0 left-0 right-0 bg-comic-yellow text-black text-center py-1">
+            <span class="font-comic font-bold text-xs uppercase tracking-widest">Most Popular</span>
+          </div>
+        )}
+        <div class={`${item.accentBg} px-5 py-4 ${item.featured ? 'mt-7' : ''}`}>
+          <h3 class="font-bangers text-2xl text-black tracking-wide uppercase">{item.format}</h3>
+          <p class="font-source text-black opacity-70 text-sm">{item.subtitle}</p>
+        </div>
+        <div class="p-5 space-y-4">
+          {Object.entries(item.prices).map(([size, price]) => (
+            <div class="flex items-center justify-between py-3 border-b-2 border-gray-700 last:border-0">
+              <div>
+                <p class="font-russo text-off-white capitalize text-sm">{size}</p>
+                <p class="font-source text-gray-400 text-xs">
+                  {size === 'small' ? '12x8"' : size === 'medium' ? '16x12"' : '24x16"'}
+                </p>
+              </div>
+              <span class="price-tag text-xl">{price}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div class="bg-panel-dark border-4 border-black p-5" style="box-shadow: 4px 4px 0 #000000;">
+    <h4 class="font-russo text-comic-yellow mb-3 uppercase tracking-wide text-sm">Personalisation Artwork Fee</h4>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
+        <span class="font-source text-gray-300 text-sm">Comic Book Covers & Icons</span>
+        <span class="price-tag text-lg">+£10.00</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
+        <span class="font-source text-gray-300 text-sm">Comic Book Strips</span>
+        <span class="price-tag text-lg">+£25.00</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="text-center">
+    <div class="inline-flex items-center gap-3 bg-black border-4 border-comic-yellow px-6 py-3"
+         style="box-shadow: 4px 4px 0 rgba(255,242,0,0.3);">
+      <svg class="w-5 h-5 text-comic-yellow flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+      </svg>
+      <p class="font-russo text-comic-yellow text-sm uppercase tracking-wide">
+        All prices include FREE P&P to UK mainland
+      </p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,345 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { sanityClient, urlFor } from '../../lib/sanity';
+import { allProductsQuery, productBySlugQuery } from '../../lib/queries';
+import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
+import type { ProductFormat, ProductSize } from '../../data/products';
+
+export async function getStaticPaths() {
+  const products = await sanityClient.fetch(allProductsQuery);
+  return products.map((product: any) => ({
+    params: { slug: product.slug },
+  }));
+}
+
+const { slug } = Astro.params;
+const product = await sanityClient.fetch(productBySlugQuery, { slug });
+
+if (!product) {
+  return Astro.redirect('/store');
+}
+
+const categoryLinks: Record<string, string> = {
+  'comic-book-covers': '/store/comic-book-covers',
+  'comic-book-icons': '/store/comic-book-icons',
+  'comic-book-strips': '/store/comic-book-strips',
+  'personalised': '/store/personalised',
+};
+
+const categoryLabels: Record<string, string> = {
+  'comic-book-covers': 'Comic Book Covers',
+  'comic-book-icons': 'Comic Book Icons',
+  'comic-book-strips': 'Comic Book Strips',
+  'personalised': 'Personalised',
+};
+
+const basePrice = PRICES.poster.small;
+const hasImages = product.images && product.images.length > 0;
+const mainImageUrl = hasImages && product.images[0]?.asset
+  ? urlFor(product.images[0]).width(800).url()
+  : null;
+
+const relatedProducts = product.relatedProducts || [];
+const seoTitle = product.seo?.metaTitle || product.title;
+const seoDesc = product.seo?.metaDescription || product.description;
+---
+
+<BaseLayout
+  title={seoTitle}
+  description={seoDesc}
+  ogType="product"
+>
+  <section class="relative bg-charcoal py-8">
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <span>/</span>
+        <a href={categoryLinks[product.category]} class="hover:text-comic-yellow transition-colors">
+          {categoryLabels[product.category]}
+        </a>
+        <span>/</span>
+        <span class="text-off-white truncate">{product.title}</span>
+      </nav>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16">
+        <!-- Image Column -->
+        <div>
+          <div id="main-image"
+               class="bg-mid-grey border-4 border-black mb-4 overflow-hidden group cursor-zoom-in flex items-center justify-center"
+               style="box-shadow: 6px 6px 0 #000000; min-height: 400px; max-height: 600px;">
+            {mainImageUrl ? (
+              <img
+                src={mainImageUrl}
+                alt={product.images[0]?.alt || product.title}
+                class="max-w-full max-h-[580px] object-contain transition-transform duration-500 group-hover:scale-110"
+              />
+            ) : (
+              <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">PRODUCT IMAGE</span>
+            )}
+          </div>
+          {hasImages && product.images.length > 1 && (
+            <div class="flex gap-3">
+              {product.images.map((img: any, i: number) => {
+                const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).url() : null;
+                return thumbUrl ? (
+                  <button
+                    class="w-20 h-16 border-2 border-gray-700 cursor-pointer hover:border-comic-yellow transition-colors overflow-hidden bg-mid-grey flex items-center justify-center thumb-btn"
+                    data-full={urlFor(img).width(800).url()}
+                    data-alt={img.alt || product.title}
+                  >
+                    <img src={thumbUrl} alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
+                  </button>
+                ) : null;
+              })}
+            </div>
+          )}
+          {(!hasImages || product.images.length <= 1) && (
+            <div class="flex gap-3">
+              {[1, 2, 3].map((i) => (
+                <div class="w-20 h-16 img-placeholder border-2 border-gray-700">
+                  <span class="text-gray-600 text-xs font-russo">IMG {i}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <!-- Product Info Column -->
+        <div>
+          {product.isPersonalised && (
+            <div class="inline-block bg-comic-yellow text-black font-comic font-bold text-xs px-3 py-1 border-2 border-black mb-4">
+              PERSONALISED
+            </div>
+          )}
+          <h1 class="font-bangers text-4xl lg:text-5xl text-off-white tracking-wide mb-3"
+              style="text-shadow: 3px 3px 0 rgba(0,0,0,0.4);">
+            {product.title}
+          </h1>
+
+          <div id="current-price" class="price-tag text-3xl mb-4">
+            From £{basePrice.toFixed(2)}
+          </div>
+
+          <p class="font-source text-gray-300 leading-relaxed text-base mb-8">{product.description}</p>
+
+          <!-- Format Selector -->
+          <div class="mb-6">
+            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Print Format</h3>
+            <div class="grid grid-cols-3 gap-2">
+              {(Object.entries(FORMAT_LABELS) as [ProductFormat, string][]).map(([key, label]) => (
+                <button
+                  class="format-btn border-4 border-black bg-panel-dark py-3 px-2 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
+                  data-format={key}
+                  style="box-shadow: 2px 2px 0 #000;">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <!-- Size Selector -->
+          <div class="mb-6">
+            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
+            <div class="grid grid-cols-3 gap-2">
+              {(Object.entries(SIZES) as [ProductSize, string][]).map(([key, label]) => (
+                <button
+                  class="size-btn border-4 border-black bg-panel-dark py-3 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
+                  data-size={key}
+                  style="box-shadow: 2px 2px 0 #000;">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <!-- Quantity -->
+          <div class="mb-8">
+            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Quantity</h3>
+            <div class="flex items-center gap-0">
+              <button id="qty-dec" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">-</button>
+              <span id="qty-display" class="w-12 h-10 bg-charcoal border-y-4 border-black text-off-white font-russo text-sm flex items-center justify-center">1</span>
+              <button id="qty-inc" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">+</button>
+            </div>
+          </div>
+
+          <!-- Add to Cart -->
+          <button id="add-to-cart" class="btn-primary w-full text-xl text-center mb-4">
+            ADD TO CART
+          </button>
+
+          {product.isPersonalised && (
+            <a href="/personalise" class="btn-secondary w-full text-xl text-center block mb-4">
+              PERSONALISE THIS
+            </a>
+          )}
+
+          <!-- Delivery Info -->
+          <div class="bg-panel-dark border-2 border-gray-700 p-4 flex flex-wrap gap-4">
+            {[
+              { icon: '🚚', text: 'Free UK P&P' },
+              { icon: '🎨', text: 'Made to Order' },
+              { icon: '⏱️', text: '3-6 Working Days' },
+            ].map((item) => (
+              <div class="flex items-center gap-2">
+                <span class="text-lg">{item.icon}</span>
+                <span class="font-russo text-gray-300 text-xs uppercase tracking-wide">{item.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Related Products -->
+  {relatedProducts.length > 0 && (
+    <section class="py-16 bg-panel-dark">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h2 class="section-heading mb-8">YOU MIGHT ALSO LIKE</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {relatedProducts.map((p: any) => {
+            const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).url() : null;
+            return (
+              <a href={`/store/${p.slug}`} class="product-card group block">
+                <div class="aspect-[3/2] overflow-hidden bg-mid-grey flex items-center justify-center">
+                  {relImgUrl ? (
+                    <img src={relImgUrl} alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                  ) : (
+                    <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
+                  )}
+                </div>
+                <div class="p-4">
+                  <h3 class="font-russo text-off-white text-sm group-hover:text-comic-yellow transition-colors">{p.title}</h3>
+                  <span class="price-tag">From £{basePrice.toFixed(2)}</span>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": product.title,
+    "description": product.description,
+    "image": mainImageUrl || undefined,
+    "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
+    "offers": {
+      "@type": "Offer",
+      "price": basePrice,
+      "priceCurrency": "GBP",
+      "availability": "https://schema.org/InStock",
+      "seller": { "@type": "Organization", "name": "Comic Strip Canvas" }
+    }
+  })}></script>
+
+  <div id="product-data" class="hidden"
+    data-product-id={product._id}
+    data-product-slug={product.slug}
+    data-product-title={product.title}
+    data-product-accent={product.accentColor || '#EC008C'}
+  ></div>
+
+  <script>
+    const PRICES = {
+      poster: { small: 9.99, medium: 12.99, large: 16.99 },
+      'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
+      'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
+    };
+
+    const dataEl = document.getElementById('product-data');
+    const productId = dataEl?.dataset.productId || '';
+    const productSlug = dataEl?.dataset.productSlug || '';
+    const productTitle = dataEl?.dataset.productTitle || '';
+    const productAccent = dataEl?.dataset.productAccent || '#EC008C';
+
+    let selectedFormat = 'poster';
+    let selectedSize = 'small';
+    let quantity = 1;
+
+    const priceEl = document.getElementById('current-price');
+    const qtyDisplay = document.getElementById('qty-display');
+    const formatBtns = document.querySelectorAll('.format-btn');
+    const sizeBtns = document.querySelectorAll('.size-btn');
+
+    function updatePrice() {
+      const price = PRICES[selectedFormat]?.[selectedSize] || 9.99;
+      if (priceEl) priceEl.textContent = `£${(price * quantity).toFixed(2)}`;
+    }
+
+    function activateBtn(btns, activeEl, borderClass) {
+      btns.forEach(b => {
+        b.classList.remove(borderClass, 'text-off-white');
+        b.classList.add('border-black', 'text-gray-300');
+      });
+      activeEl.classList.add(borderClass, 'text-off-white');
+      activeEl.classList.remove('border-black', 'text-gray-300');
+    }
+
+    formatBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedFormat = (btn as HTMLElement).dataset.format || 'poster';
+        activateBtn(formatBtns, btn, 'border-comic-yellow');
+        updatePrice();
+      });
+    });
+
+    sizeBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedSize = (btn as HTMLElement).dataset.size || 'small';
+        activateBtn(sizeBtns, btn, 'border-comic-yellow');
+        updatePrice();
+      });
+    });
+
+    document.getElementById('qty-dec')?.addEventListener('click', () => {
+      if (quantity > 1) {
+        quantity--;
+        if (qtyDisplay) qtyDisplay.textContent = String(quantity);
+        updatePrice();
+      }
+    });
+
+    document.getElementById('qty-inc')?.addEventListener('click', () => {
+      quantity++;
+      if (qtyDisplay) qtyDisplay.textContent = String(quantity);
+      updatePrice();
+    });
+
+    if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');
+    if (sizeBtns[0]) activateBtn(sizeBtns, sizeBtns[0], 'border-comic-yellow');
+    updatePrice();
+
+    document.getElementById('add-to-cart')?.addEventListener('click', async () => {
+      const { addToCart } = await import('../../stores/cart');
+      const unitPrice = PRICES[selectedFormat]?.[selectedSize] || 9.99;
+      addToCart({
+        productId,
+        slug: productSlug,
+        title: productTitle,
+        format: selectedFormat as any,
+        size: selectedSize as any,
+        quantity,
+        unitPrice,
+        accentColor: productAccent,
+      });
+    });
+
+    // Thumbnail click to swap main image
+    document.querySelectorAll('.thumb-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mainImg = document.querySelector('#main-image img');
+        if (mainImg) {
+          (mainImg as HTMLImageElement).src = (btn as HTMLElement).dataset.full || '';
+          (mainImg as HTMLImageElement).alt = (btn as HTMLElement).dataset.alt || '';
+        }
+      });
+    });
+  </script>
+</BaseLayout>

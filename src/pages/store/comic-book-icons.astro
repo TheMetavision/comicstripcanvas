@@ -1,0 +1,59 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import { sanityClient } from '../../lib/sanity';
+import { productsByCategoryQuery } from '../../lib/queries';
+
+const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'comic-book-icons' });
+---
+
+<BaseLayout
+  title="Comic Book Icon Prints"
+  description="Bold pop-art graphic portraits and iconic character studies. Available as posters, canvas prints, and framed prints. From £9.99 with free UK P&P."
+>
+  <section class="relative bg-panel-dark py-16 overflow-hidden">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(255,242,0,0.1) 0%, transparent 50%);"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <span>/</span>
+        <span class="text-off-white">Comic Book Icons</span>
+      </nav>
+      <div class="kapow-badge inline-block mb-4">Pop Art Inspired</div>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        COMIC BOOK <span class="text-comic-yellow">ICONS</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg max-w-2xl">
+        Bold graphic portraits with a pop-art edge. Clean lines, vivid colours, and maximum visual impact. Portraits that demand attention.
+      </p>
+    </div>
+  </section>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      {products.map((product) => (
+        <ProductCard product={product} />
+      ))}
+    </div>
+    <div class="mt-12 text-center bg-panel-dark border-4 border-comic-yellow p-8" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.3);">
+      <h2 class="font-bangers text-3xl text-off-white mb-3 tracking-wide">BECOME A POP ART ICON</h2>
+      <p class="font-source text-gray-300 mb-6">We can transform your portrait into a stunning personalised pop-art graphic icon.</p>
+      <a href="/personalise" class="btn-primary">CREATE YOUR ICON</a>
+    </div>
+  </div>
+
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comicstripcanvas.co.uk" },
+      { "@type": "ListItem", "position": 2, "name": "Store", "item": "https://comicstripcanvas.co.uk/store" },
+      { "@type": "ListItem", "position": 3, "name": "Comic Book Icons", "item": "https://comicstripcanvas.co.uk/store/comic-book-icons" }
+    ]
+  })}></script>
+</BaseLayout>

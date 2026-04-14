@@ -1,0 +1,176 @@
+---
+import Navbar from '../components/Navbar.astro';
+import Footer from '../components/Footer.astro';
+import CartPanel from '../components/CartPanel.astro';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+  ogType?: string;
+  canonical?: string;
+  noindex?: boolean;
+}
+
+const {
+  title,
+  description = 'Comic Strip Canvas — UK-based pop culture wall art. Bold comic-book style canvas prints, framed prints, and posters. Personalised options available. Free UK P&P.',
+  ogImage = 'https://assets.zyrosite.com/cdn-cgi/image/format=auto,w=768,fit=crop/dJobXo5wzMH13MyG/universal_upscale_0_378e8cac-370e-4b56-ab7d-cbb045eac260_0-AMqDnxJvzEiMXLvM.jpg',
+  ogType = 'website',
+  canonical,
+  noindex = false,
+} = Astro.props;
+
+const siteUrl = 'https://comicstripcanvas.co.uk';
+const pageUrl = canonical || `${siteUrl}${Astro.url.pathname}`;
+const fullTitle = `${title} | Comic Strip Canvas`;
+
+// Breadcrumb from URL path
+const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
+const breadcrumbItems = [
+  { name: 'Home', url: siteUrl },
+  ...pathSegments.map((seg, i) => ({
+    name: seg.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+    url: `${siteUrl}/${pathSegments.slice(0, i + 1).join('/')}`,
+  })),
+];
+---
+
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content={noindex ? 'noindex, nofollow' : 'index, follow'} />
+  <title>{fullTitle}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={pageUrl} />
+  <meta name="author" content="Comic Strip Canvas" />
+  <meta name="geo.region" content="GB" />
+  <meta name="geo.country" content="GB" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content={ogType} />
+  <meta property="og:title" content={fullTitle} />
+  <meta property="og:description" content={description} />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:url" content={pageUrl} />
+  <meta property="og:site_name" content="Comic Strip Canvas" />
+  <meta property="og:locale" content="en_GB" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={fullTitle} />
+  <meta name="twitter:description" content={description} />
+  <meta name="twitter:image" content={ogImage} />
+
+  <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+
+  <!-- Organization + LocalBusiness Schema -->
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": ["Organization", "LocalBusiness"],
+    "name": "Comic Strip Canvas",
+    "alternateName": "CSC",
+    "description": "UK-based pop culture wall art brand. Bold comic-book style canvas prints, framed prints, and posters. Personalised artwork from your own photos.",
+    "url": siteUrl,
+    "logo": ogImage,
+    "image": ogImage,
+    "priceRange": "£9.99 - £46.99",
+    "currenciesAccepted": "GBP",
+    "paymentAccepted": "Credit Card, Debit Card",
+    "address": {
+      "@type": "PostalAddress",
+      "addressCountry": "GB",
+    },
+    "areaServed": {
+      "@type": "Country",
+      "name": "United Kingdom",
+    },
+    "hasOfferCatalog": {
+      "@type": "OfferCatalog",
+      "name": "Comic Strip Canvas Products",
+      "itemListElement": [
+        {
+          "@type": "OfferCatalog",
+          "name": "Comic Book Covers",
+          "url": `${siteUrl}/store/comic-book-covers`,
+        },
+        {
+          "@type": "OfferCatalog",
+          "name": "Comic Book Icons",
+          "url": `${siteUrl}/store/comic-book-icons`,
+        },
+        {
+          "@type": "OfferCatalog",
+          "name": "Comic Book Strips",
+          "url": `${siteUrl}/store/comic-book-strips`,
+        },
+        {
+          "@type": "OfferCatalog",
+          "name": "Personalised Products",
+          "url": `${siteUrl}/store/personalised`,
+        },
+      ],
+    },
+    "sameAs": [],
+  })}></script>
+
+  <!-- BreadcrumbList Schema (all pages) -->
+  {breadcrumbItems.length > 1 && (
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": breadcrumbItems.map((item, i) => ({
+        "@type": "ListItem",
+        "position": i + 1,
+        "name": item.name,
+        "item": item.url,
+      })),
+    })}></script>
+  )}
+
+  <!-- WebSite Schema for sitelinks search -->
+  {Astro.url.pathname === '/' && (
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Comic Strip Canvas",
+      "url": siteUrl,
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": `${siteUrl}/store?q={search_term_string}`,
+        "query-input": "required name=search_term_string",
+      },
+    })}></script>
+  )}
+</head>
+<body class="min-h-screen flex flex-col">
+  <Navbar />
+  <main class="flex-1 pt-24 lg:pt-28">
+    <slot />
+  </main>
+  <Footer />
+  <CartPanel />
+
+  <script>
+    const reveals = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -50px 0px' }
+    );
+    reveals.forEach((el) => observer.observe(el));
+  </script>
+</body>
+</html>

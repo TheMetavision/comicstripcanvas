@@ -1,0 +1,53 @@
+---
+---
+
+<section class="py-16 bg-comic-red relative overflow-hidden">
+  <div class="absolute inset-0 halftone-bg opacity-20"></div>
+  <div class="absolute top-0 left-0 right-0 h-2 bg-black"></div>
+  <div class="absolute bottom-0 left-0 right-0 h-2 bg-black"></div>
+
+  <div class="relative max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+    <div class="speech-bubble inline-block mb-4">
+      STAY IN THE LOOP!
+    </div>
+    <h2 class="font-bangers text-4xl md:text-5xl text-white mb-3 tracking-wide"
+        style="text-shadow: 3px 3px 0 rgba(0,0,0,0.3);">
+      FOR ALL THE LATEST NEWS, DEALS AND MORE...
+    </h2>
+    <p class="font-source text-red-100 mb-8 text-lg">
+      Join our comic crew for exclusive offers, new releases, and behind-the-scenes art.
+    </p>
+    <form class="flex flex-col sm:flex-row gap-3 max-w-lg mx-auto" id="newsletter-form">
+      <input
+        type="email"
+        name="email"
+        placeholder="Enter your email address"
+        required
+        class="flex-1 px-4 py-3 bg-white text-black font-source border-4 border-black focus:outline-none focus:border-comic-yellow placeholder:text-gray-400"
+        style="box-shadow: 3px 3px 0 #000000;"
+      />
+      <button type="submit"
+              class="bg-comic-yellow text-black font-bangers text-xl px-8 py-3 border-4 border-black transition-all hover:-translate-y-1 whitespace-nowrap uppercase tracking-wider"
+              style="box-shadow: 4px 4px 0 #000000;">
+        SIGN UP
+      </button>
+    </form>
+    <p class="font-source text-red-200 text-xs mt-4">
+      No spam, ever. Unsubscribe anytime.
+    </p>
+    <div id="newsletter-success" class="hidden mt-4 bg-comic-yellow text-black font-russo px-6 py-3 border-4 border-black inline-block">
+      Thanks for joining the crew!
+    </div>
+  </div>
+</section>
+
+<script>
+  const form = document.getElementById('newsletter-form') as HTMLFormElement;
+  const success = document.getElementById('newsletter-success');
+
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    form.classList.add('hidden');
+    success?.classList.remove('hidden');
+  });
+</script>

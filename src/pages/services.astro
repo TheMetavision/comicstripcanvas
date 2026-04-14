@@ -1,0 +1,224 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import FAQAccordion from '../components/FAQAccordion.astro';
+import PricingGrid from '../components/PricingGrid.astro';
+import NewsletterSignup from '../components/NewsletterSignup.astro';
+import { sanityClient, urlFor } from '../lib/sanity';
+import { faqsByPageQuery } from '../lib/queries';
+
+const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'services' });
+
+// Fetch product images for style showcase carousels
+const categoryImages = await sanityClient.fetch(`{
+  "covers": *[_type == "product" && category == "comic-book-covers" && count(images) > 0] | order(sortOrder asc)[0..5].images[0],
+  "icons": *[_type == "product" && category == "comic-book-icons" && count(images) > 0] | order(sortOrder asc)[0..5].images[0],
+  "strips": *[_type == "product" && category == "comic-book-strips" && count(images) > 0] | order(sortOrder asc)[0..5].images[0]
+}`);
+
+const coverImgs = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
+const iconImgs = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
+const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(500).height(500).url());
+---
+
+<BaseLayout
+  title="Services & Pricing"
+  description="Canvas prints, framed prints & posters from £9.99. Three styles available: Comic Book Covers, Icons, and Strips. Free UK P&P on all orders."
+>
+  <!-- Hero -->
+  <section class="relative bg-panel-dark halftone-bg py-20 overflow-hidden">
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(236,0,140,0.15) 0%, transparent 50%);"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <span class="text-off-white">Services & Pricing</span>
+      </nav>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        CANVAS PRINTS, FRAMED PRINTS
+        <span class="text-comic-yellow block">&amp; POSTERS</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg max-w-2xl">
+        Three stunning styles. Three premium formats. One incredibly bold aesthetic. Discover exactly what we do and how we do it.
+      </p>
+    </div>
+  </section>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+
+    <!-- What We Do -->
+    <section class="mb-20 reveal">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
+        <div>
+          <div class="kapow-badge inline-block mb-6">About Us</div>
+          <h2 class="section-heading mb-6">WHAT WE DO</h2>
+          <div class="space-y-4 font-source text-gray-300 leading-relaxed text-lg">
+            <p>
+              At Comic Strip Canvas, we create bold, vibrant pop culture wall art inspired by the golden age of comic books. Every piece is designed with passion, printed to the highest standard, and made to order — because your walls deserve something extraordinary.
+            </p>
+            <p>
+              Whether you want a ready-made design from our store or a fully personalised piece featuring your own photos, we've got you covered. Our art is designed to make a statement — and to last.
+            </p>
+          </div>
+        </div>
+        <div class="aspect-[4/3] border-4 border-comic-red overflow-hidden" style="box-shadow: 6px 6px 0 #000;">
+          <img src="https://cdn.sanity.io/images/lwbwahym/production/aaba830019ce68599cf061db11a95cd85d17dc12-5376x3072.jpg" alt="Comic Strip Canvas workshop — canvas being framed" class="w-full h-full object-cover" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Made to Order -->
+    <section class="mb-20 bg-panel-dark border-4 border-black p-8 md:p-12 reveal" style="box-shadow: 5px 5px 0 #000;">
+      <h2 class="section-heading mb-8">MADE TO ORDER</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[
+          { size: 'Small', dim: '12x8"', best: 'Perfect for desks, shelves, and smaller wall spaces.' },
+          { size: 'Medium', dim: '16x12"', best: 'Great for bedrooms, hallways, and feature walls.' },
+          { size: 'Large', dim: '24x16"', best: 'Make a bold statement in living rooms and offices.' },
+        ].map((item) => (
+          <div class="border-4 border-comic-yellow bg-black p-5 text-center" style="box-shadow: 3px 3px 0 rgba(255,242,0,0.2);">
+            <p class="font-bangers text-3xl text-comic-yellow mb-1 tracking-wide">{item.size}</p>
+            <p class="font-russo text-off-white text-xl mb-3">{item.dim}</p>
+            <p class="font-source text-gray-400 text-sm leading-relaxed">{item.best}</p>
+          </div>
+        ))}
+      </div>
+      <p class="font-source text-gray-400 text-sm mt-6 text-center">
+        All sizes available across all three product formats. Mix and match to suit your space.
+      </p>
+    </section>
+
+    <!-- Our Styles -->
+    <section class="mb-20 reveal">
+      <h2 class="section-heading mb-10">OUR STYLES</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[
+          { title: 'Comic Book Covers', accent: 'border-comic-red', accentText: 'text-comic-red', desc: 'Bold, dramatic artwork inspired by the golden and silver ages of comic books. Perfect for fans of classic superhero aesthetics, with vibrant colour palettes and dynamic compositions.', fee: 'Personalisation: +£10', imgs: coverImgs, id: 'style-covers' },
+          { title: 'Comic Book Icons', accent: 'border-comic-yellow', accentText: 'text-comic-yellow', desc: 'Graphic, pop-art inspired portraits and iconic character studies. Clean lines, flat colour, and maximum visual impact. Ideal for a contemporary, gallery-style finish.', fee: 'Personalisation: +£10', imgs: iconImgs, id: 'style-icons' },
+          { title: 'Comic Book Strips', accent: 'border-comic-cyan', accentText: 'text-comic-cyan', desc: 'Multi-panel sequential art that tells a story. From three panels to six, these pieces are narrative-driven, humorous, or action-packed — often all three at once.', fee: 'Personalisation: +£25', imgs: stripImgs, id: 'style-strips' },
+        ].map((item) => (
+          <div class={`bg-panel-dark border-4 ${item.accent} p-6`} style="box-shadow: 4px 4px 0 #000;">
+            <div class="aspect-square bg-mid-grey mb-5 overflow-hidden relative" id={item.id}>
+              {item.imgs.length > 0 ? (
+                item.imgs.map((img: string, i: number) => (
+                  <img src={img} alt={`${item.title} artwork ${i + 1}`} class={`style-carousel-img absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`} loading="lazy" data-index={i} />
+                ))
+              ) : (
+                <div class="w-full h-full flex items-center justify-center">
+                  <span class="text-gray-500 text-xs font-russo uppercase tracking-widest">STYLE PREVIEW</span>
+                </div>
+              )}
+            </div>
+            <h3 class={`font-bangers text-2xl ${item.accentText} mb-3 tracking-wide`}>{item.title}</h3>
+            <p class="font-source text-gray-300 text-sm leading-relaxed mb-4">{item.desc}</p>
+            <span class="font-comic text-comic-yellow text-xs">{item.fee}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <script>
+      ['style-covers', 'style-icons', 'style-strips'].forEach((id) => {
+        const container = document.getElementById(id);
+        if (!container) return;
+        const imgs = container.querySelectorAll('.style-carousel-img');
+        if (imgs.length <= 1) return;
+        let current = 0;
+        let paused = false;
+        function cycle() {
+          if (paused) return;
+          const next = (current + 1) % imgs.length;
+          imgs[current].classList.remove('opacity-100');
+          imgs[current].classList.add('opacity-0');
+          imgs[next].classList.remove('opacity-0');
+          imgs[next].classList.add('opacity-100');
+          current = next;
+        }
+        setInterval(cycle, 3000);
+        container.addEventListener('mouseenter', () => { paused = true; });
+        container.addEventListener('mouseleave', () => { paused = false; });
+      });
+    </script>
+
+    <!-- How We Do It -->
+    <section class="mb-20 reveal">
+      <h2 class="section-heading mb-10">HOW WE DO IT</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-panel-dark border-4 border-comic-cyan p-6" style="box-shadow: 4px 4px 0 rgba(0,174,239,0.2);">
+          <div class="w-12 h-12 bg-comic-cyan border-4 border-black flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h3 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Poster Prints</h3>
+          <p class="font-source text-gray-300 leading-relaxed text-sm">
+            Printed on premium <strong class="text-off-white">260gsm photo paper</strong> with a semi-gloss finish that makes colours sing. Sharp, detailed, and vibrant — our poster prints are rolled and shipped in protective tubes to arrive in perfect condition.
+          </p>
+          <div class="mt-4 overflow-hidden rounded border-2 border-gray-700">
+            <img src="/poster-prints-hero.png" alt="Comic Strip Canvas poster print rolled in branded postal tube" class="w-full h-auto" />
+          </div>
+        </div>
+        <div class="bg-panel-dark border-4 border-comic-yellow p-6" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.2);">
+          <div class="w-12 h-12 bg-comic-yellow border-4 border-black flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h3 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Canvas Prints</h3>
+          <p class="font-source text-gray-300 leading-relaxed text-sm">
+            Printed on <strong class="text-off-white">410gsm water-resistant canvas</strong> and stretched over a solid wooden frame. Available in Standard Frame (lightweight, perfect for most walls) or Gallery Frame (deeper, more premium presentation). Ready to hang.
+          </p>
+          <div class="mt-4 overflow-hidden rounded border-2 border-gray-700">
+            <img src="/canvas-prints-hero.png" alt="Comic Strip Canvas standard and gallery frame comparison" class="w-full h-auto" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing Grid -->
+    <section class="mb-20 reveal">
+      <div class="text-center mb-10">
+        <div class="speech-bubble inline-block mb-4">Transparent Pricing</div>
+        <h2 class="section-heading">PRICING</h2>
+      </div>
+      <PricingGrid />
+    </section>
+
+    <!-- FAQ -->
+    <section class="mb-20 reveal">
+      <div class="text-center mb-10">
+        <h2 class="section-heading">FREQUENTLY ASKED QUESTIONS</h2>
+      </div>
+      <FAQAccordion faqs={faqs} />
+
+      <script type="application/ld+json" set:html={JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": faqs.map((f: any) => ({
+          "@type": "Question",
+          "name": f.question,
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": f.answer,
+          },
+        })),
+      })}></script>
+    </section>
+
+    <!-- CTA -->
+    <section class="text-center bg-panel-dark border-4 border-comic-red p-12 reveal" style="box-shadow: 6px 6px 0 #000;">
+      <h2 class="section-heading mb-4">READY TO GET STARTED?</h2>
+      <p class="font-source text-gray-300 text-lg mb-8 max-w-xl mx-auto">
+        Browse our ready-made designs or start a personalised order — your perfect piece of wall art is just a few clicks away.
+      </p>
+      <div class="flex flex-wrap justify-center gap-4">
+        <a href="/store" class="btn-primary text-xl">BROWSE THE STORE</a>
+        <a href="/personalise" class="btn-secondary text-xl">START A CUSTOM ORDER</a>
+      </div>
+    </section>
+
+  </div>
+
+  <NewsletterSignup />
+</BaseLayout>

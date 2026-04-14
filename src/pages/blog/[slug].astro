@@ -1,0 +1,191 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { sanityClient, urlFor } from '../../lib/sanity';
+import { allBlogPostsQuery, blogPostBySlugQuery } from '../../lib/queries';
+
+export async function getStaticPaths() {
+  const posts = await sanityClient.fetch(allBlogPostsQuery);
+  return posts.map((post: any) => ({
+    params: { slug: post.slug },
+  }));
+}
+
+const { slug } = Astro.params;
+const post = await sanityClient.fetch(blogPostBySlugQuery, { slug });
+
+if (!post) {
+  return Astro.redirect('/blog');
+}
+
+const relatedPosts = post.relatedPosts || [];
+const mainImageUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(1200).height(675).url() : null;
+const seoTitle = post.seo?.metaTitle || post.title;
+const seoDesc = post.seo?.metaDescription || post.excerpt;
+
+// Simple portable text to HTML renderer
+function renderBody(blocks: any[]): string {
+  if (!blocks) return '';
+  return blocks.map((block: any) => {
+    if (block._type === 'image') {
+      const imgUrl = block.asset?.url || '';
+      const alt = block.alt || '';
+      const caption = block.caption || '';
+      return `<figure class="my-8"><img src="${imgUrl}" alt="${alt}" class="w-full border-4 border-black" style="box-shadow: 4px 4px 0 #000;" loading="lazy" />${caption ? `<figcaption class="font-source text-gray-500 text-sm mt-2 text-center">${caption}</figcaption>` : ''}</figure>`;
+    }
+
+    if (block._type !== 'block') return '';
+
+    const style = block.style || 'normal';
+    const children = (block.children || []).map((child: any) => {
+      let text = child.text || '';
+      // Escape HTML
+      text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      if (child.marks && child.marks.length > 0) {
+        child.marks.forEach((mark: string) => {
+          if (mark === 'strong') text = `<strong class="text-off-white">${text}</strong>`;
+          else if (mark === 'em') text = `<em>${text}</em>`;
+          else if (mark === 'underline') text = `<u>${text}</u>`;
+          else {
+            // Check for link annotations
+            const linkDef = (block.markDefs || []).find((d: any) => d._key === mark);
+            if (linkDef && linkDef._type === 'link') {
+              const target = linkDef.blank ? ' target="_blank" rel="noopener noreferrer"' : '';
+              text = `<a href="${linkDef.href}" class="text-comic-cyan hover:text-comic-yellow transition-colors underline"${target}>${text}</a>`;
+            }
+          }
+        });
+      }
+      return text;
+    }).join('');
+
+    switch (style) {
+      case 'h2': return `<h2 class="font-bangers text-3xl text-off-white tracking-wide mt-10 mb-4" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.3);">${children}</h2>`;
+      case 'h3': return `<h3 class="font-russo text-xl text-off-white mt-8 mb-3">${children}</h3>`;
+      case 'h4': return `<h4 class="font-russo text-lg text-off-white mt-6 mb-2">${children}</h4>`;
+      case 'blockquote': return `<blockquote class="border-l-4 border-comic-yellow pl-5 my-6 italic font-source text-gray-300">${children}</blockquote>`;
+      default: return `<p class="font-source text-gray-300 leading-relaxed mb-4">${children}</p>`;
+    }
+  }).join('\n');
+}
+
+const bodyHtml = renderBody(post.body);
+---
+
+<BaseLayout
+  title={seoTitle}
+  description={seoDesc}
+  ogType="article"
+>
+  <section class="relative bg-panel-dark py-16 overflow-hidden">
+    <div class="absolute inset-0 halftone-bg opacity-30"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <a href="/blog" class="hover:text-comic-yellow transition-colors">Blog</a>
+        <span>/</span>
+        <span class="text-off-white truncate">{post.title}</span>
+      </nav>
+
+      {post.category && (
+        <span class="bg-comic-red text-white font-comic font-bold text-xs px-3 py-1 border-2 border-black inline-block mb-4">
+          {post.category}
+        </span>
+      )}
+
+      <h1 class="font-bangers text-4xl md:text-6xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        {post.title}
+      </h1>
+
+      <div class="flex items-center gap-4 font-source text-gray-400 text-sm">
+        <span>{post.author}</span>
+        <span class="w-1 h-1 bg-gray-600 rounded-full"></span>
+        <time datetime={post.publishedAt}>
+          {new Date(post.publishedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+        </time>
+      </div>
+    </div>
+  </section>
+
+  <article class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    {mainImageUrl && (
+      <div class="mb-10">
+        <img
+          src={mainImageUrl}
+          alt={post.mainImage?.alt || post.title}
+          class="w-full border-4 border-black"
+          style="box-shadow: 6px 6px 0 #000000;"
+        />
+      </div>
+    )}
+
+    <div class="prose-comic" set:html={bodyHtml} />
+
+    <div class="mt-12 pt-8 border-t-2 border-gray-700">
+      <a href="/blog"
+         class="inline-flex items-center gap-2 font-russo text-sm text-comic-cyan hover:text-comic-yellow transition-colors uppercase tracking-wide">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+        </svg>
+        Back to Blog
+      </a>
+    </div>
+  </article>
+
+  {relatedPosts.length > 0 && (
+    <section class="py-16 bg-panel-dark">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h2 class="section-heading mb-8">MORE FROM THE BLOG</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {relatedPosts.map((rp: any) => {
+            const rpImgUrl = rp.mainImage?.asset ? urlFor(rp.mainImage).width(600).height(338).url() : null;
+            return (
+              <a href={`/blog/${rp.slug}`} class="product-card group block overflow-hidden">
+                <div class="aspect-video overflow-hidden">
+                  {rpImgUrl ? (
+                    <img src={rpImgUrl} alt={rp.mainImage?.alt || rp.title} class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                  ) : (
+                    <div class="w-full h-full img-placeholder flex items-center justify-center">
+                      <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
+                    </div>
+                  )}
+                </div>
+                <div class="p-5">
+                  <p class="font-source text-gray-500 text-xs uppercase tracking-widest mb-2">
+                    {new Date(rp.publishedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                  <h3 class="font-russo text-off-white text-sm leading-snug group-hover:text-comic-yellow transition-colors">
+                    {rp.title}
+                  </h3>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": post.title,
+    "description": post.excerpt,
+    "image": mainImageUrl || undefined,
+    "author": {
+      "@type": "Person",
+      "name": post.author,
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Comic Strip Canvas",
+    },
+    "datePublished": post.publishedAt,
+    "mainEntityOfPage": {
+      "@type": "WebPage",
+      "@id": `https://comicstripcanvas.co.uk/blog/${post.slug}`,
+    },
+  })}></script>
+</BaseLayout>

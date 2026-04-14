@@ -1,0 +1,189 @@
+@import url('https://fonts.googleapis.com/css2?family=Bangers&family=Russo+One&family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600;700&family=Comic+Neue:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-charcoal text-off-white font-source;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3 {
+    @apply font-bangers;
+  }
+}
+
+@layer components {
+  .halftone-bg {
+    background-image: radial-gradient(circle, rgba(255,242,0,0.08) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .halftone-bg-subtle {
+    background-image: radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+
+  .diagonal-stripes {
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 10px,
+      rgba(255, 242, 0, 0.03) 10px,
+      rgba(255, 242, 0, 0.03) 20px
+    );
+  }
+
+  .comic-border {
+    @apply border-4 border-black;
+    box-shadow: 4px 4px 0 #000000;
+  }
+
+  .comic-border-red {
+    @apply border-4 border-comic-red;
+    box-shadow: 4px 4px 0 rgba(236, 0, 140, 0.5);
+  }
+
+  .comic-border-yellow {
+    @apply border-4 border-comic-yellow;
+    box-shadow: 4px 4px 0 rgba(255, 242, 0, 0.5);
+  }
+
+  .speech-bubble {
+    @apply relative inline-block bg-comic-yellow text-black font-comic font-bold px-4 py-2 rounded-lg;
+  }
+
+  .speech-bubble::after {
+    content: '';
+    @apply absolute;
+    bottom: -12px;
+    left: 20px;
+    width: 0;
+    height: 0;
+    border-left: 12px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 12px solid #FFF200;
+  }
+
+  .section-divider-diagonal {
+    clip-path: polygon(0 0, 100% 0, 100% 85%, 0 100%);
+    padding-bottom: 8rem;
+  }
+
+  .btn-primary {
+    @apply bg-comic-yellow text-black font-bangers text-xl tracking-wider px-8 py-3 border-4 border-black transition-all duration-200 inline-block;
+    box-shadow: 4px 4px 0 #000000;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .btn-primary:hover {
+    @apply -translate-y-1;
+    box-shadow: 6px 6px 0 #000000;
+  }
+
+  .btn-secondary {
+    @apply bg-comic-red text-white font-bangers text-xl tracking-wider px-8 py-3 border-4 border-black transition-all duration-200 inline-block;
+    box-shadow: 4px 4px 0 #000000;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .btn-secondary:hover {
+    @apply -translate-y-1;
+    box-shadow: 6px 6px 0 #000000;
+  }
+
+  .product-card {
+    @apply bg-panel-dark border-4 border-black transition-all duration-300 cursor-pointer;
+    box-shadow: 4px 4px 0 #000000;
+  }
+
+  .product-card:hover {
+    @apply -translate-y-2 scale-[1.02];
+    box-shadow: 0 0 25px rgba(236, 0, 140, 0.5), 6px 6px 0 #000000;
+  }
+
+  .section-heading {
+    @apply font-bangers text-4xl md:text-5xl lg:text-6xl text-off-white tracking-wider;
+    letter-spacing: 0.05em;
+  }
+
+  .subheading {
+    @apply font-russo text-xl md:text-2xl;
+  }
+
+  .img-placeholder {
+    @apply bg-mid-grey flex items-center justify-center text-gray-500 font-russo tracking-widest text-sm;
+    border: 2px dashed rgba(255,255,255,0.1);
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .stagger-1 { transition-delay: 0.1s; }
+  .stagger-2 { transition-delay: 0.2s; }
+  .stagger-3 { transition-delay: 0.3s; }
+  .stagger-4 { transition-delay: 0.4s; }
+
+  .nav-link {
+    @apply font-russo text-off-white hover:text-comic-yellow transition-colors duration-200 uppercase tracking-wide text-sm;
+  }
+
+  .kapow-badge {
+    @apply inline-block bg-comic-yellow text-black font-bangers text-2xl px-6 py-2 border-4 border-black rotate-[-2deg];
+    box-shadow: 3px 3px 0 #000000;
+    clip-path: polygon(5% 0%, 95% 0%, 100% 15%, 100% 85%, 95% 100%, 5% 100%, 0% 85%, 0% 15%);
+  }
+
+  .panel-border {
+    @apply border-4 border-black;
+    box-shadow: 5px 5px 0 rgba(0,0,0,0.8);
+  }
+
+  .price-tag {
+    @apply font-bangers text-comic-yellow text-2xl tracking-wide;
+  }
+}
+
+@layer utilities {
+  .text-stroke {
+    -webkit-text-stroke: 2px black;
+  }
+
+  .clip-diagonal {
+    clip-path: polygon(0 0, 100% 0, 100% 88%, 0 100%);
+  }
+
+  .clip-diagonal-reverse {
+    clip-path: polygon(0 0, 100% 5%, 100% 100%, 0 100%);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #111111;
+}
+::-webkit-scrollbar-thumb {
+  background: #EC008C;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #FFF200;
+}

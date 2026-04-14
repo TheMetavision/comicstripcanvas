@@ -1,0 +1,104 @@
+---
+export const prerender = false;
+
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Order Confirmed"
+  description="Your Comic Strip Canvas order has been confirmed. Thank you for your purchase!"
+  noindex={true}
+>
+  <section class="relative bg-charcoal py-20 min-h-[60vh]">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
+
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 relative text-center">
+      <!-- Success State -->
+      <div id="confirmation-content">
+        <div class="speech-bubble inline-block mb-8 text-lg">KA-POW!</div>
+
+        <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-6"
+            style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+          ORDER <span class="text-comic-yellow">CONFIRMED!</span>
+        </h1>
+
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-8 max-w-lg mx-auto">
+          Thank you for your order! We've sent a confirmation to your email with all the details.
+          Your artwork is being prepared with care.
+        </p>
+
+        <div class="bg-panel-dark border-4 border-black p-8 text-left mb-8" style="box-shadow: 5px 5px 0 #000;">
+          <h2 class="font-russo text-off-white text-sm uppercase tracking-wide mb-4 pb-3 border-b-2 border-gray-700">
+            What Happens Next
+          </h2>
+          <div class="space-y-4">
+            <div class="flex gap-4 items-start">
+              <div class="w-8 h-8 bg-comic-yellow border-2 border-black flex items-center justify-center flex-shrink-0 font-bangers text-black">1</div>
+              <div>
+                <p class="font-russo text-off-white text-sm">Order Received</p>
+                <p class="font-source text-gray-400 text-xs">We've got your order and payment is confirmed.</p>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="w-8 h-8 bg-panel-dark border-2 border-gray-600 flex items-center justify-center flex-shrink-0 font-bangers text-gray-500">2</div>
+              <div>
+                <p class="font-russo text-gray-400 text-sm">In Production</p>
+                <p class="font-source text-gray-500 text-xs">Your artwork is being printed and prepared.</p>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="w-8 h-8 bg-panel-dark border-2 border-gray-600 flex items-center justify-center flex-shrink-0 font-bangers text-gray-500">3</div>
+              <div>
+                <p class="font-russo text-gray-400 text-sm">Dispatched</p>
+                <p class="font-source text-gray-500 text-xs">You'll receive an email with tracking details.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 pt-4 border-t-2 border-gray-700">
+            <p class="font-source text-gray-400 text-xs">
+              <strong class="text-off-white">Estimated delivery:</strong> 3-6 working days from dispatch.
+              Free UK P&P included.
+            </p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap justify-center gap-4">
+          <a href="/store" class="btn-primary">CONTINUE SHOPPING</a>
+          <a href="/contact" class="btn-secondary">GOT A QUESTION?</a>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="loading-state" class="hidden">
+        <div class="animate-pulse">
+          <div class="w-16 h-16 bg-comic-yellow border-4 border-black mx-auto mb-6 flex items-center justify-center" style="box-shadow: 3px 3px 0 #000;">
+            <span class="font-bangers text-2xl text-black">...</span>
+          </div>
+          <p class="font-russo text-gray-400">Processing your order...</p>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div id="error-state" class="hidden">
+        <h1 class="font-bangers text-4xl text-off-white tracking-wide mb-4">SOMETHING WENT WRONG</h1>
+        <p class="font-source text-gray-300 mb-6">We couldn't verify your order details, but don't worry — if payment was taken, your order is safe. Check your email for confirmation.</p>
+        <a href="/contact" class="btn-primary">CONTACT US</a>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // Clear the cart after successful checkout
+    import { clearCart } from '../stores/cart';
+    
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session_id');
+    
+    if (sessionId) {
+      // Clear the cart
+      clearCart();
+    }
+  </script>
+</BaseLayout>

@@ -1,0 +1,388 @@
+---
+---
+
+<div class="max-w-3xl mx-auto" id="wizard">
+  <div class="flex items-center justify-between mb-10 gap-2" id="progress-bar">
+    {[
+      { n: 1, label: 'Style' },
+      { n: 2, label: 'Upload' },
+      { n: 3, label: 'Details' },
+      { n: 4, label: 'Format' },
+      { n: 5, label: 'Review' },
+    ].map((step) => (
+      <div class="flex flex-col items-center flex-1">
+        <div class={`step-indicator w-10 h-10 border-4 border-black flex items-center justify-center font-bangers text-lg transition-all duration-300`}
+             data-step={step.n}
+             style="box-shadow: 2px 2px 0 #000;">
+          {step.n}
+        </div>
+        <span class="font-comic text-xs mt-1 text-gray-400 hidden sm:block">{step.label}</span>
+        {step.n < 5 && (
+          <div class="hidden sm:block absolute" style="display: none;"></div>
+        )}
+      </div>
+    ))}
+  </div>
+
+  <div id="step-1" class="wizard-step">
+    <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 1: CHOOSE YOUR STYLE</h2>
+    <p class="font-source text-gray-400 mb-8">Select the comic art style you'd like for your personalised artwork.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {[
+        { value: 'cover', label: 'Comic Book Cover', desc: 'You as the star of a bold, vintage-style comic book cover.', fee: '+£10 artwork fee', img: 'https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg' },
+        { value: 'icon', label: 'Comic Book Icon', desc: 'Your portrait transformed into a striking pop-art graphic icon.', fee: '+£10 artwork fee', img: 'https://cdn.sanity.io/images/lwbwahym/production/a30bbbcbffdf8289dd7b3def522f2075abe2e50d-2752x1536.jpg' },
+        { value: 'strip', label: 'Comic Book Strip', desc: 'Your story told across multiple panels in classic comic strip style.', fee: '+£25 artwork fee', img: 'https://cdn.sanity.io/images/lwbwahym/production/5895d21b1e695781263a08dc0acf608cdc8c098f-1248x832.jpg' },
+      ].map((opt) => (
+        <label class="style-option cursor-pointer block">
+          <input type="radio" name="style" value={opt.value} class="sr-only" />
+          <div class="bg-panel-dark border-4 border-black p-5 text-center transition-all duration-200 hover:border-comic-yellow"
+               style="box-shadow: 3px 3px 0 #000;">
+            <div class="aspect-video mb-4 overflow-hidden">
+              <img src={opt.img} alt={opt.label} class="w-full h-full object-cover" />
+            </div>
+            <h3 class="font-russo text-off-white text-sm mb-2">{opt.label}</h3>
+            <p class="font-source text-gray-400 text-xs leading-relaxed mb-3">{opt.desc}</p>
+            <span class="font-comic text-comic-yellow text-xs">{opt.fee}</span>
+          </div>
+        </label>
+      ))}
+    </div>
+    <div class="flex justify-end mt-8">
+      <button class="btn-primary next-btn" data-next="2">Next: Upload Photos &rarr;</button>
+    </div>
+  </div>
+
+  <div id="step-2" class="wizard-step hidden">
+    <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 2: UPLOAD YOUR PHOTO(S)</h2>
+    <p class="font-source text-gray-400 mb-8">Upload clear, high-quality photos for the best results. For Comic Strips, you can upload multiple photos.</p>
+    <div id="drop-zone"
+         class="border-4 border-dashed border-gray-600 bg-panel-dark p-10 text-center cursor-pointer transition-all duration-200 hover:border-comic-yellow"
+         style="box-shadow: 3px 3px 0 #000;">
+      <div id="upload-placeholder">
+        <svg class="w-12 h-12 text-gray-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+        <p class="font-russo text-gray-400 mb-2">Drag & drop your photo here</p>
+        <p class="font-source text-gray-500 text-sm mb-4">or</p>
+        <label class="btn-primary cursor-pointer text-sm py-2 px-6">
+          Browse Files
+          <input type="file" id="file-input" accept="image/*" multiple class="sr-only" />
+        </label>
+        <p class="font-source text-gray-500 text-xs mt-4">JPG, PNG, WEBP — Max 20MB per file</p>
+      </div>
+      <div id="upload-previews" class="hidden flex-wrap gap-4 justify-center"></div>
+    </div>
+    <div class="flex justify-between mt-8">
+      <button class="btn-secondary prev-btn" data-prev="1">&larr; Back</button>
+      <button class="btn-primary next-btn" data-next="3">Next: Customise Details &rarr;</button>
+    </div>
+  </div>
+
+  <div id="step-3" class="wizard-step hidden">
+    <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 3: CUSTOMISE YOUR DETAILS</h2>
+    <p class="font-source text-gray-400 mb-8">Give us the details to make your artwork truly personal.</p>
+    <div class="space-y-5">
+      <div>
+        <label class="block font-russo text-off-white text-sm mb-2 uppercase tracking-wide">Name / Title</label>
+        <input type="text" placeholder="e.g., 'The Amazing Dave' or 'Super Mum'"
+               class="w-full bg-panel-dark border-4 border-black text-off-white px-4 py-3 font-source focus:outline-none focus:border-comic-yellow transition-colors placeholder:text-gray-600" />
+      </div>
+      <div>
+        <label class="block font-russo text-off-white text-sm mb-2 uppercase tracking-wide">Speech Bubble / Caption Text</label>
+        <input type="text" placeholder="e.g., 'KA-POW!', 'I am unstoppable!'"
+               class="w-full bg-panel-dark border-4 border-black text-off-white px-4 py-3 font-source focus:outline-none focus:border-comic-yellow transition-colors placeholder:text-gray-600" />
+      </div>
+      <div>
+        <label class="block font-russo text-off-white text-sm mb-2 uppercase tracking-wide">Special Instructions</label>
+        <textarea rows="4" placeholder="Any specific requests? Colour preferences, background details, etc."
+                  class="w-full bg-panel-dark border-4 border-black text-off-white px-4 py-3 font-source focus:outline-none focus:border-comic-yellow transition-colors placeholder:text-gray-600 resize-none"></textarea>
+      </div>
+    </div>
+    <div class="flex justify-between mt-8">
+      <button class="btn-secondary prev-btn" data-prev="2">&larr; Back</button>
+      <button class="btn-primary next-btn" data-next="4">Next: Choose Format &rarr;</button>
+    </div>
+  </div>
+
+  <div id="step-4" class="wizard-step hidden">
+    <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 4: FORMAT & SIZE</h2>
+    <p class="font-source text-gray-400 mb-8">Choose how your artwork will be printed and displayed.</p>
+
+    <div class="space-y-6">
+      <div>
+        <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Print Format</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[
+            { value: 'poster', label: 'Poster Print', desc: '260gsm photo paper' },
+            { value: 'canvas-standard', label: 'Canvas Standard', desc: '410gsm canvas' },
+            { value: 'canvas-gallery', label: 'Canvas Gallery', desc: '410gsm canvas, premium frame' },
+          ].map((f) => (
+            <label class="cursor-pointer">
+              <input type="radio" name="wiz-format" value={f.value} class="sr-only" />
+              <div class="format-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
+                   style="box-shadow: 2px 2px 0 #000;">
+                <p class="font-russo text-off-white text-sm">{f.label}</p>
+                <p class="font-source text-gray-400 text-xs mt-1">{f.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
+        <div class="grid grid-cols-3 gap-4">
+          {[
+            { value: 'small', label: 'Small', dim: '12x8"' },
+            { value: 'medium', label: 'Medium', dim: '16x12"' },
+            { value: 'large', label: 'Large', dim: '24x16"' },
+          ].map((s) => (
+            <label class="cursor-pointer">
+              <input type="radio" name="wiz-size" value={s.value} class="sr-only" />
+              <div class="size-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
+                   style="box-shadow: 2px 2px 0 #000;">
+                <p class="font-russo text-off-white text-sm">{s.label}</p>
+                <p class="font-source text-gray-400 text-xs mt-1">{s.dim}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <div class="flex justify-between mt-8">
+      <button class="btn-secondary prev-btn" data-prev="3">&larr; Back</button>
+      <button class="btn-primary next-btn" data-next="5">Next: Review Order &rarr;</button>
+    </div>
+  </div>
+
+  <div id="step-5" class="wizard-step hidden">
+    <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 5: REVIEW & SUBMIT</h2>
+    <p class="font-source text-gray-400 mb-8">Review your order details before submitting.</p>
+
+    <div class="bg-panel-dark border-4 border-black p-6 mb-6" style="box-shadow: 4px 4px 0 #000;">
+      <h3 class="font-russo text-off-white uppercase tracking-wide text-sm mb-4 pb-3 border-b-2 border-gray-700">
+        Order Summary
+      </h3>
+      <div class="space-y-3">
+        <div class="flex justify-between">
+          <span class="font-source text-gray-400 text-sm">Style</span>
+          <span class="font-russo text-off-white text-sm" id="review-style">—</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="font-source text-gray-400 text-sm">Format</span>
+          <span class="font-russo text-off-white text-sm" id="review-format">—</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="font-source text-gray-400 text-sm">Size</span>
+          <span class="font-russo text-off-white text-sm" id="review-size">—</span>
+        </div>
+        <div class="border-t-2 border-gray-700 pt-3 mt-3 space-y-2">
+          <div class="flex justify-between">
+            <span class="font-source text-gray-400 text-sm">Base Price</span>
+            <span class="font-russo text-off-white text-sm" id="review-base-price">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="font-source text-gray-400 text-sm">Artwork Fee</span>
+            <span class="font-russo text-off-white text-sm" id="review-art-fee">—</span>
+          </div>
+          <div class="flex justify-between border-t-2 border-gray-700 pt-2">
+            <span class="font-russo text-comic-yellow uppercase tracking-wide text-sm">Total</span>
+            <span class="price-tag text-xl" id="review-total">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-panel-dark border-4 border-comic-cyan p-4 mb-6" style="box-shadow: 3px 3px 0 rgba(0,174,239,0.3);">
+      <div class="flex gap-3 items-start">
+        <svg class="w-5 h-5 text-comic-cyan flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p class="font-source text-gray-300 text-sm">
+          We'll send you a digital proof within <strong class="text-comic-cyan">24-48 hours</strong> of receiving your order. Printing begins only after your approval.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex justify-between">
+      <button class="btn-secondary prev-btn" data-prev="4">&larr; Back</button>
+      <button class="btn-primary" id="submit-order">SUBMIT ORDER</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PRICES: Record<string, Record<string, number>> = {
+    poster: { small: 9.99, medium: 12.99, large: 16.99 },
+    'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
+    'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
+  };
+
+  const FORMAT_LABELS: Record<string, string> = {
+    poster: 'Poster Print',
+    'canvas-standard': 'Canvas (Standard Frame)',
+    'canvas-gallery': 'Canvas (Gallery Frame)',
+  };
+
+  const SIZE_LABELS: Record<string, string> = {
+    small: 'Small (12x8")',
+    medium: 'Medium (16x12")',
+    large: 'Large (24x16")',
+  };
+
+  let currentStep = 1;
+
+  function goToStep(n: number) {
+    document.querySelectorAll('.wizard-step').forEach((s) => s.classList.add('hidden'));
+    const target = document.getElementById(`step-${n}`);
+    target?.classList.remove('hidden');
+    currentStep = n;
+    updateProgressBar();
+    if (n === 5) updateReview();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function updateProgressBar() {
+    document.querySelectorAll('.step-indicator').forEach((el) => {
+      const step = parseInt((el as HTMLElement).dataset.step || '0');
+      el.classList.remove('bg-comic-yellow', 'text-black', 'bg-comic-red', 'text-white', 'bg-panel-dark', 'text-gray-500');
+      if (step < currentStep) {
+        el.classList.add('bg-comic-yellow', 'text-black');
+      } else if (step === currentStep) {
+        el.classList.add('bg-comic-red', 'text-white');
+      } else {
+        el.classList.add('bg-panel-dark', 'text-gray-500');
+      }
+    });
+  }
+
+  function updateReview() {
+    const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '—';
+    const format = (document.querySelector('input[name="wiz-format"]:checked') as HTMLInputElement)?.value || '';
+    const size = (document.querySelector('input[name="wiz-size"]:checked') as HTMLInputElement)?.value || '';
+
+    const styleLabels: Record<string, string> = {
+      cover: 'Comic Book Cover',
+      icon: 'Comic Book Icon',
+      strip: 'Comic Book Strip',
+    };
+
+    const artFees: Record<string, number> = {
+      cover: 10,
+      icon: 10,
+      strip: 25,
+    };
+
+    const basePrice = format && size ? PRICES[format]?.[size] || 0 : 0;
+    const artFee = style !== '—' ? (artFees[style] || 0) : 0;
+    const total = basePrice + artFee;
+
+    const el = (id: string) => document.getElementById(id);
+    if (el('review-style')) (el('review-style') as HTMLElement).textContent = styleLabels[style] || '—';
+    if (el('review-format')) (el('review-format') as HTMLElement).textContent = FORMAT_LABELS[format] || '—';
+    if (el('review-size')) (el('review-size') as HTMLElement).textContent = SIZE_LABELS[size] || '—';
+    if (el('review-base-price')) (el('review-base-price') as HTMLElement).textContent = basePrice ? `£${basePrice.toFixed(2)}` : '—';
+    if (el('review-art-fee')) (el('review-art-fee') as HTMLElement).textContent = artFee ? `£${artFee.toFixed(2)}` : '—';
+    if (el('review-total')) (el('review-total') as HTMLElement).textContent = total ? `£${total.toFixed(2)}` : '—';
+  }
+
+  document.querySelectorAll('.next-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = parseInt((btn as HTMLElement).dataset.next || '1');
+      goToStep(next);
+    });
+  });
+
+  document.querySelectorAll('.prev-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const prev = parseInt((btn as HTMLElement).dataset.prev || '1');
+      goToStep(prev);
+    });
+  });
+
+  document.querySelectorAll('.style-option input').forEach((input) => {
+    input.addEventListener('change', () => {
+      document.querySelectorAll('.style-option > div').forEach((d) => {
+        d.classList.remove('border-comic-yellow');
+        d.classList.add('border-black');
+      });
+      const parent = input.closest('.style-option')?.querySelector('div');
+      parent?.classList.add('border-comic-yellow');
+      parent?.classList.remove('border-black');
+    });
+  });
+
+  document.querySelectorAll('.format-option').forEach((opt) => {
+    opt.addEventListener('click', () => {
+      document.querySelectorAll('.format-option').forEach((o) => {
+        o.classList.remove('border-comic-yellow');
+        o.classList.add('border-black');
+      });
+      opt.classList.add('border-comic-yellow');
+      opt.classList.remove('border-black');
+    });
+  });
+
+  document.querySelectorAll('.size-option').forEach((opt) => {
+    opt.addEventListener('click', () => {
+      document.querySelectorAll('.size-option').forEach((o) => {
+        o.classList.remove('border-comic-yellow');
+        o.classList.add('border-black');
+      });
+      opt.classList.add('border-comic-yellow');
+      opt.classList.remove('border-black');
+    });
+  });
+
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input') as HTMLInputElement;
+  const previewContainer = document.getElementById('upload-previews');
+  const uploadPlaceholder = document.getElementById('upload-placeholder');
+
+  function handleFiles(files: FileList) {
+    if (!previewContainer || !uploadPlaceholder) return;
+    uploadPlaceholder.classList.add('hidden');
+    previewContainer.classList.remove('hidden');
+    previewContainer.classList.add('flex');
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const div = document.createElement('div');
+        div.className = 'relative';
+        div.innerHTML = `
+          <img src="${e.target?.result}" alt="Preview" class="w-24 h-24 object-cover border-4 border-black" />
+          <p class="font-source text-gray-400 text-xs mt-1 truncate w-24">${file.name}</p>
+        `;
+        previewContainer.appendChild(div);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  fileInput?.addEventListener('change', () => {
+    if (fileInput.files) handleFiles(fileInput.files);
+  });
+
+  dropZone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('border-comic-yellow');
+  });
+
+  dropZone?.addEventListener('dragleave', () => {
+    dropZone.classList.remove('border-comic-yellow');
+  });
+
+  dropZone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('border-comic-yellow');
+    if (e.dataTransfer?.files) handleFiles(e.dataTransfer.files);
+  });
+
+  document.getElementById('submit-order')?.addEventListener('click', () => {
+    alert('Thank you for your order! We\'ll send a proof within 24-48 hours.');
+  });
+
+  updateProgressBar();
+</script>

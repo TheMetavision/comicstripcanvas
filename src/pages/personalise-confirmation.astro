@@ -1,0 +1,77 @@
+---
+export const prerender = false;
+
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Custom Order Confirmed"
+  description="Your personalised Comic Strip Canvas order has been confirmed. We'll send you a proof within 24-48 hours."
+  noindex={true}
+>
+  <section class="relative bg-charcoal py-20 min-h-[60vh]">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-cyan"></div>
+
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 relative text-center">
+      <div class="speech-bubble inline-block mb-8 text-lg">YOU'RE THE HERO!</div>
+
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-6"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        CUSTOM ORDER <span class="text-comic-cyan">RECEIVED!</span>
+      </h1>
+
+      <p class="font-source text-gray-300 text-lg leading-relaxed mb-8 max-w-lg mx-auto">
+        Thank you for your personalised order! Our artists are about to get to work. Here's what happens next.
+      </p>
+
+      <div class="bg-panel-dark border-4 border-black p-8 text-left mb-8" style="box-shadow: 5px 5px 0 #000;">
+        <h2 class="font-russo text-off-white text-sm uppercase tracking-wide mb-4 pb-3 border-b-2 border-gray-700">
+          Your Personalised Order Timeline
+        </h2>
+        <div class="space-y-4">
+          <div class="flex gap-4 items-start">
+            <div class="w-8 h-8 bg-comic-cyan border-2 border-black flex items-center justify-center flex-shrink-0 font-bangers text-black">1</div>
+            <div>
+              <p class="font-russo text-off-white text-sm">Order Received</p>
+              <p class="font-source text-gray-400 text-xs">Payment confirmed. Your photos are with our artists.</p>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start">
+            <div class="w-8 h-8 bg-comic-yellow border-2 border-black flex items-center justify-center flex-shrink-0 font-bangers text-black">2</div>
+            <div>
+              <p class="font-russo text-off-white text-sm">Proof Creation (24-48 hours)</p>
+              <p class="font-source text-gray-400 text-xs">We'll email you a digital proof of your artwork for review.</p>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start">
+            <div class="w-8 h-8 bg-panel-dark border-2 border-gray-600 flex items-center justify-center flex-shrink-0 font-bangers text-gray-500">3</div>
+            <div>
+              <p class="font-russo text-gray-400 text-sm">Your Approval</p>
+              <p class="font-source text-gray-500 text-xs">Review the proof and request up to 2 rounds of revisions if needed.</p>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start">
+            <div class="w-8 h-8 bg-panel-dark border-2 border-gray-600 flex items-center justify-center flex-shrink-0 font-bangers text-gray-500">4</div>
+            <div>
+              <p class="font-russo text-gray-400 text-sm">Print & Dispatch</p>
+              <p class="font-source text-gray-500 text-xs">Once approved, we print and ship within 3-6 working days.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 pt-4 border-t-2 border-gray-700">
+          <p class="font-source text-gray-400 text-xs">
+            <strong class="text-comic-cyan">Check your email</strong> — we've sent a confirmation with all your order details. 
+            The proof will arrive at the same email address within 24-48 hours.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap justify-center gap-4">
+        <a href="/store" class="btn-primary">BROWSE MORE ART</a>
+        <a href="/contact" class="btn-secondary">GOT A QUESTION?</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

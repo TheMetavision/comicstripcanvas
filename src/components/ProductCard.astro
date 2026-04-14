@@ -1,0 +1,64 @@
+---
+import { urlFor } from '../lib/sanity';
+import { PRICES } from '../data/products';
+
+interface Props {
+  product: any;
+  showQuickView?: boolean;
+}
+
+const { product, showQuickView = true } = Astro.props;
+
+const categoryLabels: Record<string, string> = {
+  'comic-book-covers': 'Comic Book Covers',
+  'comic-book-icons': 'Comic Book Icons',
+  'comic-book-strips': 'Comic Book Strips',
+  'personalised': 'Personalised',
+};
+
+const basePrice = PRICES.poster.small;
+const hasImage = product.images && product.images.length > 0 && product.images[0]?.asset;
+const imageUrl = hasImage ? urlFor(product.images[0]).width(600).height(750).url() : null;
+---
+
+<article class="product-card group relative flex flex-col overflow-hidden">
+  <a href={`/store/${product.slug}`} class="flex flex-col h-full">
+    <div class="aspect-[4/5] bg-mid-grey relative overflow-hidden flex items-center justify-center">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt={product.images[0]?.alt || product.title}
+          class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110"
+          loading="lazy"
+        />
+      ) : (
+        <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
+      )}
+      <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+      {product.isPersonalised && (
+        <div class="absolute top-3 left-3">
+          <span class="bg-comic-yellow text-black font-comic font-bold text-xs px-2 py-1 border-2 border-black">
+            PERSONALISED
+          </span>
+        </div>
+      )}
+    </div>
+
+    <div class="p-4 flex flex-col flex-1">
+      <span class="font-source text-xs text-gray-400 uppercase tracking-widest mb-1">
+        {categoryLabels[product.category]}
+      </span>
+      <h3 class="font-russo text-off-white text-base leading-snug mb-2 group-hover:text-comic-yellow transition-colors">
+        {product.title}
+      </h3>
+      <div class="mt-auto flex items-center justify-between pt-3 border-t-2 border-gray-700">
+        <span class="price-tag">From £{basePrice.toFixed(2)}</span>
+        {showQuickView && (
+          <span class="font-russo text-xs text-gray-400 group-hover:text-comic-cyan transition-colors uppercase tracking-wide">
+            View &rarr;
+          </span>
+        )}
+      </div>
+    </div>
+  </a>
+</article>

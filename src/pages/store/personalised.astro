@@ -1,0 +1,72 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import { sanityClient } from '../../lib/sanity';
+import { productsByCategoryQuery } from '../../lib/queries';
+
+const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'personalised' });
+---
+
+<BaseLayout
+  title="Personalised Comic Art Prints"
+  description="Turn your photos into personalised comic book art. Comic covers, pop icons, and comic strips featuring YOU. From £9.99 + artwork fee. Free UK P&P."
+>
+  <section class="relative bg-panel-dark py-16 overflow-hidden">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(236,0,140,0.15) 0%, transparent 50%), radial-gradient(circle at 20% 30%, rgba(255,242,0,0.08) 0%, transparent 40%);"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <span>/</span>
+        <span class="text-off-white">Personalised</span>
+      </nav>
+      <div class="speech-bubble inline-block mb-4">Made Just For You!</div>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        PERSONALISED <span class="text-comic-yellow">ART</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg max-w-2xl">
+        Your photos transformed into stunning comic book art. Choose your style, upload your pictures, and we'll create something truly one-of-a-kind.
+      </p>
+    </div>
+  </section>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div class="bg-panel-dark border-4 border-comic-yellow p-6 mb-10" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.3);">
+      <div class="flex gap-3 items-start">
+        <svg class="w-5 h-5 text-comic-yellow flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+          <p class="font-russo text-comic-yellow text-sm uppercase tracking-wide mb-1">How Personalised Orders Work</p>
+          <p class="font-source text-gray-300 text-sm">
+            Select your style below, then click "Start Your Custom Order" to use our step-by-step personalisation wizard. Upload your photos, add your details, choose your format and size, and we'll create a digital proof within 24-48 hours.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      {products.map((product) => (
+        <ProductCard product={product} />
+      ))}
+    </div>
+
+    <div class="mt-12 text-center">
+      <a href="/personalise" class="btn-primary text-xl">START YOUR CUSTOM ORDER</a>
+    </div>
+  </div>
+
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comicstripcanvas.co.uk" },
+      { "@type": "ListItem", "position": 2, "name": "Store", "item": "https://comicstripcanvas.co.uk/store" },
+      { "@type": "ListItem", "position": 3, "name": "Personalised", "item": "https://comicstripcanvas.co.uk/store/personalised" }
+    ]
+  })}></script>
+</BaseLayout>

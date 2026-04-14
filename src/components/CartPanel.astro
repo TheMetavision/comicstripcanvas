@@ -1,0 +1,211 @@
+---
+---
+
+<div id="cart-overlay"
+     class="fixed inset-0 bg-black bg-opacity-70 z-[60] hidden transition-opacity duration-300"
+     aria-hidden="true">
+</div>
+
+<aside id="cart-panel"
+       class="fixed top-0 right-0 h-full w-full sm:w-96 bg-panel-dark border-l-4 border-comic-red z-[70] transform translate-x-full transition-transform duration-300 flex flex-col"
+       role="dialog"
+       aria-label="Shopping cart">
+
+  <div class="flex items-center justify-between p-5 border-b-4 border-black bg-comic-red">
+    <h2 class="font-bangers text-3xl text-white tracking-wide">YOUR CART</h2>
+    <button id="cart-close" class="text-white hover:text-comic-yellow transition-colors p-1">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
+
+  <div id="cart-items-container" class="flex-1 overflow-y-auto p-4 space-y-4">
+    <div id="cart-empty" class="flex flex-col items-center justify-center h-full text-center py-16">
+      <div class="text-6xl mb-4">🛒</div>
+      <p class="font-bangers text-2xl text-gray-400 tracking-wide">YOUR CART IS EMPTY</p>
+      <p class="font-source text-gray-500 mt-2 text-sm">Add some epic wall art to get started!</p>
+    </div>
+    <div id="cart-list" class="hidden space-y-4"></div>
+  </div>
+
+  <div id="cart-footer" class="hidden border-t-4 border-black p-5 bg-black">
+    <div class="flex justify-between items-center mb-4">
+      <span class="font-russo text-off-white uppercase tracking-wide">Subtotal</span>
+      <span id="cart-subtotal" class="font-bangers text-comic-yellow text-2xl">£0.00</span>
+    </div>
+    <p class="font-source text-gray-400 text-xs mb-4">Free UK P&P included. Made to order.</p>
+    <button id="checkout-btn" class="btn-primary w-full text-center block mb-3">CHECKOUT</button>
+    <p id="checkout-error" class="hidden font-source text-comic-red text-xs text-center mb-2"></p>
+    <button id="continue-shopping" class="w-full text-center font-russo text-sm text-gray-400 hover:text-comic-cyan transition-colors uppercase tracking-wide py-2">
+      Continue Shopping
+    </button>
+  </div>
+</aside>
+
+<script>
+  import { cartOpen, cartItems, cartTotal, removeFromCart, updateQuantity } from '../stores/cart';
+  import type { CartItem } from '../stores/cart';
+
+  const panel = document.getElementById('cart-panel');
+  const overlay = document.getElementById('cart-overlay');
+  const closeBtn = document.getElementById('cart-close');
+  const continueShopping = document.getElementById('continue-shopping');
+  const cartEmpty = document.getElementById('cart-empty');
+  const cartList = document.getElementById('cart-list');
+  const cartFooter = document.getElementById('cart-footer');
+  const cartSubtotal = document.getElementById('cart-subtotal');
+
+  function openCart() {
+    panel?.classList.remove('translate-x-full');
+    overlay?.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeCart() {
+    panel?.classList.add('translate-x-full');
+    overlay?.classList.add('hidden');
+    document.body.style.overflow = '';
+    cartOpen.set(false);
+  }
+
+  cartOpen.subscribe((open) => {
+    if (open) openCart();
+    else closeCart();
+  });
+
+  closeBtn?.addEventListener('click', closeCart);
+  overlay?.addEventListener('click', closeCart);
+  continueShopping?.addEventListener('click', closeCart);
+
+  const FORMAT_LABELS: Record<string, string> = {
+    poster: 'Poster Print',
+    'canvas-standard': 'Canvas (Standard)',
+    'canvas-gallery': 'Canvas (Gallery)',
+  };
+
+  const SIZE_LABELS: Record<string, string> = {
+    small: 'Small (12x8")',
+    medium: 'Medium (16x12")',
+    large: 'Large (24x16")',
+  };
+
+  function renderCartItems(items: CartItem[]) {
+    if (!cartList || !cartEmpty || !cartFooter) return;
+
+    if (items.length === 0) {
+      cartEmpty.classList.remove('hidden');
+      cartList.classList.add('hidden');
+      cartFooter.classList.add('hidden');
+    } else {
+      cartEmpty.classList.add('hidden');
+      cartList.classList.remove('hidden');
+      cartFooter.classList.remove('hidden');
+
+      cartList.innerHTML = items.map(item => `
+        <div class="bg-charcoal border-4 border-black p-3" data-item-id="${item.id}">
+          <div class="flex gap-3">
+            <div class="w-16 h-16 bg-mid-grey border-2 border-gray-600 flex items-center justify-center flex-shrink-0">
+              <span class="text-gray-500 text-xs font-russo">IMG</span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="font-russo text-off-white text-sm leading-tight truncate">${item.title}</p>
+              <p class="font-source text-gray-400 text-xs mt-1">${FORMAT_LABELS[item.format] || item.format}</p>
+              <p class="font-source text-gray-400 text-xs">${SIZE_LABELS[item.size] || item.size}</p>
+              <div class="flex items-center justify-between mt-2">
+                <div class="flex items-center gap-2">
+                  <button class="qty-btn w-6 h-6 bg-mid-grey text-off-white hover:bg-comic-red transition-colors text-sm font-bold flex items-center justify-center" data-action="dec" data-id="${item.id}">-</button>
+                  <span class="font-russo text-off-white text-sm">${item.quantity}</span>
+                  <button class="qty-btn w-6 h-6 bg-mid-grey text-off-white hover:bg-comic-red transition-colors text-sm font-bold flex items-center justify-center" data-action="inc" data-id="${item.id}">+</button>
+                </div>
+                <span class="font-bangers text-comic-yellow text-lg">£${(item.unitPrice * item.quantity).toFixed(2)}</span>
+              </div>
+            </div>
+            <button class="remove-btn text-gray-500 hover:text-comic-red transition-colors self-start" data-id="${item.id}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      cartList.querySelectorAll('.remove-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = (e.currentTarget as HTMLElement).dataset.id;
+          if (id) removeFromCart(id);
+        });
+      });
+
+      cartList.querySelectorAll('.qty-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const el = e.currentTarget as HTMLElement;
+          const id = el.dataset.id;
+          const action = el.dataset.action;
+          const item = cartItems.get().find(i => i.id === id);
+          if (item && id) {
+            updateQuantity(id, action === 'inc' ? item.quantity + 1 : item.quantity - 1);
+          }
+        });
+      });
+    }
+  }
+
+  cartItems.subscribe(renderCartItems);
+
+  cartTotal.subscribe((total) => {
+    if (cartSubtotal) {
+      cartSubtotal.textContent = `£${total.toFixed(2)}`;
+    }
+  });
+
+  // Checkout handler
+  const checkoutBtn = document.getElementById('checkout-btn');
+  const checkoutError = document.getElementById('checkout-error');
+
+  checkoutBtn?.addEventListener('click', async () => {
+    const items = cartItems.get();
+    if (items.length === 0) return;
+
+    // Disable button and show loading
+    checkoutBtn.textContent = 'PROCESSING...';
+    checkoutBtn.setAttribute('disabled', 'true');
+    checkoutBtn.classList.add('opacity-60', 'cursor-not-allowed');
+    if (checkoutError) checkoutError.classList.add('hidden');
+
+    try {
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: items.map((item) => ({
+            productId: item.productId,
+            slug: item.slug,
+            title: item.title,
+            format: item.format,
+            size: item.size,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || 'Checkout failed');
+      }
+    } catch (err) {
+      console.error('Checkout error:', err);
+      if (checkoutError) {
+        checkoutError.textContent = 'Something went wrong. Please try again.';
+        checkoutError.classList.remove('hidden');
+      }
+      checkoutBtn.textContent = 'CHECKOUT';
+      checkoutBtn.removeAttribute('disabled');
+      checkoutBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+    }
+  });
+</script>

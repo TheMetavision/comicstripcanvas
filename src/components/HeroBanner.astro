@@ -1,0 +1,82 @@
+---
+interface Props {
+  title: string;
+  subtitle?: string;
+  ctaText?: string;
+  ctaHref?: string;
+  ctaSecondary?: string;
+  ctaSecondaryHref?: string;
+  tagline?: string;
+  size?: 'full' | 'page';
+  speechBubble?: string;
+}
+
+const {
+  title,
+  subtitle,
+  ctaText,
+  ctaHref = '/store',
+  ctaSecondary,
+  ctaSecondaryHref,
+  tagline,
+  size = 'full',
+  speechBubble,
+} = Astro.props;
+---
+
+<section class={`relative bg-charcoal halftone-bg overflow-hidden ${size === 'full' ? 'clip-diagonal' : ''}`}
+         style={size === 'full' ? 'padding-bottom: 8rem;' : ''}>
+  <div class="absolute inset-0 bg-gradient-to-br from-black via-charcoal to-panel-dark opacity-80"></div>
+  <div class="absolute inset-0" style="background-image: radial-gradient(circle at 20% 50%, rgba(236,0,140,0.15) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(0,174,239,0.1) 0%, transparent 40%);"></div>
+
+  <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-32">
+    <div class="max-w-3xl">
+      {speechBubble && (
+        <div class="speech-bubble mb-8 inline-block">
+          {speechBubble}
+        </div>
+      )}
+
+      {tagline && (
+        <div class="kapow-badge mb-6 inline-block">
+          {tagline}
+        </div>
+      )}
+
+      <h1 class={`font-bangers text-off-white leading-none mb-6 ${size === 'full' ? 'text-5xl sm:text-6xl lg:text-8xl' : 'text-4xl sm:text-5xl lg:text-6xl'}`}
+          style="letter-spacing: 0.03em; text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        {title}
+      </h1>
+
+      {subtitle && (
+        <p class="font-source text-gray-300 text-lg lg:text-xl leading-relaxed mb-8 max-w-xl">
+          {subtitle}
+        </p>
+      )}
+
+      <div class="flex flex-wrap gap-4">
+        {ctaText && (
+          <a href={ctaHref} class="btn-primary text-lg">
+            {ctaText}
+          </a>
+        )}
+        {ctaSecondary && ctaSecondaryHref && (
+          <a href={ctaSecondaryHref} class="btn-secondary text-lg">
+            {ctaSecondary}
+          </a>
+        )}
+      </div>
+    </div>
+  </div>
+
+  <div class="absolute top-10 right-10 hidden lg:block opacity-30">
+    <div class="font-bangers text-8xl text-comic-yellow" style="letter-spacing: 0.05em; -webkit-text-stroke: 2px rgba(255,242,0,0.5);">
+      POW!
+    </div>
+  </div>
+  <div class="absolute bottom-20 right-1/4 hidden xl:block opacity-20">
+    <div class="font-bangers text-5xl text-comic-red rotate-12">
+      KA-ZAM!
+    </div>
+  </div>
+</section>

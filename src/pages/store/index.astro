@@ -1,0 +1,163 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import { sanityClient } from '../../lib/sanity';
+import { allProductsQuery } from '../../lib/queries';
+import { PRICES } from '../../data/products';
+
+const products = await sanityClient.fetch(allProductsQuery);
+
+const categories = [
+  { value: 'all', label: 'All' },
+  { value: 'comic-book-covers', label: 'Comic Book Covers' },
+  { value: 'comic-book-icons', label: 'Comic Book Icons' },
+  { value: 'comic-book-strips', label: 'Comic Book Strips' },
+  { value: 'personalised', label: 'Personalised' },
+];
+---
+
+<BaseLayout
+  title="Store — Comic Wall Art Prints"
+  description="Shop bold comic-book style canvas prints, framed prints & posters from £9.99. Free UK P&P. Browse all styles including personalised options."
+>
+  <section class="relative bg-panel-dark halftone-bg py-16 overflow-hidden">
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 70% 50%, rgba(236,0,140,0.1) 0%, transparent 55%);"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <span class="text-off-white">Store</span>
+      </nav>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        THE <span class="text-comic-yellow">STORE</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg">Browse our full collection of bold comic-book wall art.</p>
+    </div>
+  </section>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+
+    <div class="flex flex-col sm:flex-row gap-4 mb-8 items-start sm:items-center justify-between">
+      <div class="flex flex-wrap gap-2">
+        {categories.map((cat) => (
+          <button
+            class="category-filter-btn font-russo text-sm uppercase tracking-wide px-4 py-2 border-4 border-black transition-all duration-200"
+            style="box-shadow: 2px 2px 0 #000;"
+            data-category={cat.value}>
+            {cat.label}
+          </button>
+        ))}
+      </div>
+      <div class="flex gap-3 items-center">
+        <div class="relative">
+          <input
+            type="text"
+            placeholder="Search..."
+            id="search-input"
+            class="bg-panel-dark border-4 border-black text-off-white pl-10 pr-4 py-2 font-source text-sm focus:outline-none focus:border-comic-yellow transition-colors w-48"
+          />
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <select id="sort-select"
+                class="bg-panel-dark border-4 border-black text-off-white px-4 py-2 font-source text-sm focus:outline-none focus:border-comic-yellow transition-colors">
+          <option value="newest">Newest</option>
+          <option value="price-asc">Price: Low-High</option>
+          <option value="price-desc">Price: High-Low</option>
+          <option value="name-az">Name: A-Z</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      {products.map((product: any) => (
+        <div class="product-item" data-category={product.category} data-title={product.title.toLowerCase()} data-price={PRICES.poster.small}>
+          <ProductCard product={product} />
+        </div>
+      ))}
+    </div>
+
+    <div id="no-results" class="hidden text-center py-20">
+      <p class="font-bangers text-4xl text-gray-500 tracking-wide">NO RESULTS FOUND</p>
+      <p class="font-source text-gray-500 mt-2">Try a different search or category.</p>
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  const filterBtns = document.querySelectorAll('.category-filter-btn');
+  const searchInput = document.getElementById('search-input') as HTMLInputElement;
+  const sortSelect = document.getElementById('sort-select') as HTMLSelectElement;
+  const productGrid = document.getElementById('product-grid');
+  const noResults = document.getElementById('no-results');
+  const items = Array.from(document.querySelectorAll('.product-item'));
+
+  let activeCategory = 'all';
+  let searchQuery = '';
+
+  function activateBtn(btn: Element) {
+    filterBtns.forEach((b) => {
+      b.classList.remove('bg-comic-red', 'text-white');
+      b.classList.add('bg-panel-dark', 'text-gray-400');
+    });
+    btn.classList.add('bg-comic-red', 'text-white');
+    btn.classList.remove('bg-panel-dark', 'text-gray-400');
+  }
+
+  function filterAndRender() {
+    let visible = 0;
+    items.forEach((item) => {
+      const el = item as HTMLElement;
+      const cat = el.dataset.category || '';
+      const title = el.dataset.title || '';
+      const matchCat = activeCategory === 'all' || cat === activeCategory;
+      const matchSearch = !searchQuery || title.includes(searchQuery.toLowerCase());
+      if (matchCat && matchSearch) {
+        el.style.display = '';
+        visible++;
+      } else {
+        el.style.display = 'none';
+      }
+    });
+    if (noResults) noResults.classList.toggle('hidden', visible > 0);
+    if (productGrid) productGrid.classList.toggle('hidden', visible === 0);
+  }
+
+  filterBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeCategory = (btn as HTMLElement).dataset.category || 'all';
+      activateBtn(btn);
+      filterAndRender();
+    });
+  });
+
+  function sortItems() {
+    const val = sortSelect?.value;
+    if (!productGrid) return;
+    const sorted = [...items];
+    if (val === 'price-asc') {
+      sorted.sort((a, b) => parseFloat((a as HTMLElement).dataset.price || '0') - parseFloat((b as HTMLElement).dataset.price || '0'));
+    } else if (val === 'price-desc') {
+      sorted.sort((a, b) => parseFloat((b as HTMLElement).dataset.price || '0') - parseFloat((a as HTMLElement).dataset.price || '0'));
+    } else if (val === 'name-az') {
+      sorted.sort((a, b) => ((a as HTMLElement).dataset.title || '').localeCompare((b as HTMLElement).dataset.title || ''));
+    }
+    sorted.forEach((item) => productGrid.appendChild(item));
+  }
+
+  searchInput?.addEventListener('input', () => {
+    searchQuery = searchInput.value;
+    filterAndRender();
+  });
+
+  sortSelect?.addEventListener('change', () => {
+    sortItems();
+    filterAndRender();
+  });
+
+  const firstBtn = filterBtns[0];
+  if (firstBtn) activateBtn(firstBtn);
+</script>
