@@ -21,9 +21,9 @@ const hasMultiple = images.length > 1;
 ---
 
 <a href={href}
-   class={`group block bg-panel-dark border-4 ${classes.border} transition-all duration-300 hover:-translate-y-2 hover:scale-[1.02] overflow-hidden`}
+   class={`group block bg-panel-dark border-4 ${classes.border} p-6 transition-all duration-300 hover:-translate-y-2 hover:scale-[1.02]`}
    style={`box-shadow: 4px 4px 0 #000000;`}>
-  <div class="aspect-[3/4] relative overflow-hidden bg-mid-grey" id={carouselId}>
+  <div class="aspect-square relative overflow-hidden bg-mid-grey mb-5" id={carouselId}>
     {images.length > 0 ? (
       images.map((img, i) => (
         <img
@@ -41,19 +41,17 @@ const hasMultiple = images.length > 1;
     )}
     <div class={`absolute inset-0 ${classes.bg} opacity-0 group-hover:opacity-10 transition-opacity duration-300`}></div>
   </div>
-  <div class="p-5">
-    <h3 class={`font-bangers text-2xl tracking-wide ${classes.text} group-hover:text-off-white transition-colors duration-200 uppercase`}>
-      {title}
-    </h3>
-    {description && (
-      <p class="font-source text-gray-400 text-sm mt-2 leading-relaxed">{description}</p>
-    )}
-    <div class={`mt-3 inline-flex items-center gap-2 font-russo text-sm ${classes.text} group-hover:gap-3 transition-all uppercase tracking-wide`}>
-      Shop Now
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-      </svg>
-    </div>
+  <h3 class={`font-bangers text-2xl tracking-wide ${classes.text} group-hover:text-off-white transition-colors duration-200 uppercase`}>
+    {title}
+  </h3>
+  {description && (
+    <p class="font-source text-gray-400 text-sm mt-2 leading-relaxed">{description}</p>
+  )}
+  <div class={`mt-3 inline-flex items-center gap-2 font-russo text-sm ${classes.text} group-hover:gap-3 transition-all uppercase tracking-wide`}>
+    Shop Now
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+    </svg>
   </div>
 </a>
 
