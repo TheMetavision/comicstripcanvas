@@ -244,6 +244,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     data-product-slug={product.slug}
     data-product-title={product.title}
     data-product-accent={product.accentColor || '#EC008C'}
+    data-product-image={mainImageUrl || ''}
   ></div>
 
   <script>
@@ -258,6 +259,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     const productSlug = dataEl?.dataset.productSlug || '';
     const productTitle = dataEl?.dataset.productTitle || '';
     const productAccent = dataEl?.dataset.productAccent || '#EC008C';
+    const productImage = dataEl?.dataset.productImage || '';
 
     let selectedFormat = 'poster';
     let selectedSize = 'small';
@@ -328,6 +330,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
         quantity,
         unitPrice,
         accentColor: productAccent,
+        imageUrl: productImage,
       });
     });
 

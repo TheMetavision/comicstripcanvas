@@ -105,8 +105,11 @@
       cartList.innerHTML = items.map(item => `
         <div class="bg-charcoal border-4 border-black p-3" data-item-id="${item.id}">
           <div class="flex gap-3">
-            <div class="w-16 h-16 bg-mid-grey border-2 border-gray-600 flex items-center justify-center flex-shrink-0">
-              <span class="text-gray-500 text-xs font-russo">IMG</span>
+            <div class="w-16 h-16 bg-mid-grey border-2 border-gray-600 flex items-center justify-center flex-shrink-0 overflow-hidden">
+              ${item.imageUrl
+                ? `<img src="${item.imageUrl}" alt="${item.title}" class="w-full h-full object-contain" />`
+                : `<span class="text-gray-500 text-xs font-russo">IMG</span>`
+              }
             </div>
             <div class="flex-1 min-w-0">
               <p class="font-russo text-off-white text-sm leading-tight truncate">${item.title}</p>
