@@ -18,19 +18,15 @@ const navLinks = [
 ];
 ---
 
-<nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300 bg-transparent">
+<nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300 bg-black">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
     <div class="flex items-center justify-between h-24 lg:h-28">
       <a href="/" class="flex-shrink-0">
-        <div class="border-2 border-gray-600 p-1">
-          <div class="border border-gray-700 p-2 bg-black">
-            <img
-              src="/logo.png"
-              alt="Comic Strip Canvas"
-              class="h-16 lg:h-20 w-auto object-contain"
-            />
-          </div>
-        </div>
+        <img
+          src="/logo.png"
+          alt="Comic Strip Canvas"
+          class="h-20 lg:h-24 w-auto object-contain"
+        />
       </a>
 
       <div class="hidden lg:flex items-center space-x-6">
@@ -124,11 +120,9 @@ const navLinks = [
 
   function updateNavState(scrolled: boolean) {
     if (scrolled) {
-      navbar?.classList.add('bg-black', 'border-b-2', 'border-comic-red');
-      navbar?.classList.remove('bg-transparent');
+      navbar?.classList.add('border-b-2', 'border-comic-red');
     } else {
-      navbar?.classList.remove('bg-black', 'border-b-2', 'border-comic-red');
-      navbar?.classList.add('bg-transparent');
+      navbar?.classList.remove('border-b-2', 'border-comic-red');
     }
   }
 
