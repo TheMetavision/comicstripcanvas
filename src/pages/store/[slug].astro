@@ -68,26 +68,27 @@ const seoDesc = product.seo?.metaDescription || product.description;
         <!-- Image Column -->
         <div>
           <div id="main-image"
-               class="bg-mid-grey border-4 border-black mb-4 overflow-hidden group cursor-zoom-in flex items-center justify-center"
+               class="bg-mid-grey border-4 border-black mb-4 overflow-hidden flex items-center justify-center cursor-pointer"
                style="box-shadow: 6px 6px 0 #000000; min-height: 400px; max-height: 600px;">
             {mainImageUrl ? (
               <img
                 src={mainImageUrl}
                 alt={product.images[0]?.alt || product.title}
-                class="max-w-full max-h-[580px] object-contain transition-transform duration-500 group-hover:scale-110"
+                class="max-w-full max-h-[580px] object-contain"
+                id="main-product-img"
               />
             ) : (
               <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">PRODUCT IMAGE</span>
             )}
           </div>
           {hasImages && product.images.length > 1 && (
-            <div class="flex gap-3">
+            <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
               {product.images.map((img: any, i: number) => {
                 const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).url() : null;
                 return thumbUrl ? (
                   <button
-                    class="w-20 h-16 border-2 border-gray-700 cursor-pointer hover:border-comic-yellow transition-colors overflow-hidden bg-mid-grey flex items-center justify-center thumb-btn"
-                    data-full={urlFor(img).width(800).url()}
+                    class="w-20 h-16 flex-shrink-0 border-2 border-gray-700 cursor-pointer hover:border-comic-yellow transition-colors overflow-hidden bg-mid-grey flex items-center justify-center thumb-btn"
+                    data-full={urlFor(img).width(1200).url()}
                     data-alt={img.alt || product.title}
                   >
                     <img src={thumbUrl} alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
@@ -337,12 +338,56 @@ const seoDesc = product.seo?.metaDescription || product.description;
     // Thumbnail click to swap main image
     document.querySelectorAll('.thumb-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const mainImg = document.querySelector('#main-image img');
+        const mainImg = document.querySelector('#main-product-img') as HTMLImageElement;
         if (mainImg) {
-          (mainImg as HTMLImageElement).src = (btn as HTMLElement).dataset.full || '';
-          (mainImg as HTMLImageElement).alt = (btn as HTMLElement).dataset.alt || '';
+          mainImg.src = (btn as HTMLElement).dataset.full || '';
+          mainImg.alt = (btn as HTMLElement).dataset.alt || '';
         }
+        // Highlight active thumbnail
+        document.querySelectorAll('.thumb-btn').forEach(b => b.classList.replace('border-comic-yellow', 'border-gray-700'));
+        btn.classList.replace('border-gray-700', 'border-comic-yellow');
+      });
+    });
+
+    // Lightbox zoom on main image click
+    document.getElementById('main-image')?.addEventListener('click', () => {
+      const mainImg = document.querySelector('#main-product-img') as HTMLImageElement;
+      if (!mainImg?.src) return;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center p-4 cursor-zoom-out';
+      overlay.style.backgroundColor = 'rgba(0,0,0,0.92)';
+      overlay.innerHTML = `
+        <img src="${mainImg.src}" alt="${mainImg.alt}" class="max-w-full max-h-full object-contain" />
+        <button class="absolute top-4 right-4 text-white hover:text-comic-yellow transition-colors">
+          <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      `;
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+
+      overlay.addEventListener('click', () => {
+        overlay.remove();
+        document.body.style.overflow = '';
       });
     });
   </script>
+
+  <style>
+    .scrollbar-thin::-webkit-scrollbar {
+      height: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-track {
+      background: #1A1A1A;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background: #444;
+      border-radius: 3px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+      background: #EC008C;
+    }
+  </style>
 </BaseLayout>
