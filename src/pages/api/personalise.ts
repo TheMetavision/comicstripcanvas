@@ -1,3 +1,6 @@
+$content = Get-Content "src\pages\api\personalise.ts" -Raw
+$newContent = "export const prerender = false;`n`n" + $content
+Set-Content "src\pages\api\personalise.ts" $newContent
 import type { APIRoute } from 'astro';
 import Stripe from 'stripe';
 
