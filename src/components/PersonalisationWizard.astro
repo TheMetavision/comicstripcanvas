@@ -340,6 +340,9 @@
   const previewContainer = document.getElementById('upload-previews');
   const uploadPlaceholder = document.getElementById('upload-placeholder');
 
+  // Shared file store — collects files from both browse and drag-drop
+  const collectedFiles: File[] = [];
+
   function handleFiles(files: FileList) {
     if (!previewContainer || !uploadPlaceholder) return;
     uploadPlaceholder.classList.add('hidden');
@@ -347,6 +350,7 @@
     previewContainer.classList.add('flex');
 
     Array.from(files).forEach((file) => {
+      collectedFiles.push(file);
       const reader = new FileReader();
       reader.onload = (e) => {
         const div = document.createElement('div');
@@ -406,18 +410,17 @@
     try {
       // Step 1: Upload photos to Sanity first
       const photoUrls: string[] = [];
-      const fileInput = document.getElementById('file-input') as HTMLInputElement;
       
-      if (fileInput?.files && fileInput.files.length > 0) {
-        for (let i = 0; i < fileInput.files.length; i++) {
-          const file = fileInput.files[i];
+      if (collectedFiles.length > 0) {
+        for (let i = 0; i < collectedFiles.length; i++) {
+          const file = collectedFiles[i];
           
           // Validate file size (10MB limit)
           if (file.size > 10 * 1024 * 1024) {
             throw new Error(`File "${file.name}" is too large. Maximum size is 10MB.`);
           }
 
-          submitBtn.textContent = `UPLOADING PHOTO ${i + 1} OF ${fileInput.files.length}...`;
+          submitBtn.textContent = `UPLOADING PHOTO ${i + 1} OF ${collectedFiles.length}...`;
           
           const uploadForm = new FormData();
           uploadForm.append('file', file);
