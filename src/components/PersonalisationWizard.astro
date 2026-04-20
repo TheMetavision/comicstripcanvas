@@ -380,46 +380,81 @@
     if (e.dataTransfer?.files) handleFiles(e.dataTransfer.files);
   });
 
-  document.getElementById('submit-order')?.addEventListener('click', () => {
-    // Create branded confirmation modal
-    const overlay = document.createElement('div');
-    overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center p-4';
-    overlay.style.backgroundColor = 'rgba(0,0,0,0.85)';
-    overlay.innerHTML = `
-      <div class="bg-panel-dark border-4 border-comic-yellow max-w-md w-full p-8 text-center relative" style="box-shadow: 8px 8px 0 #000;">
-        <div class="w-16 h-16 bg-comic-yellow border-4 border-black flex items-center justify-center mx-auto mb-6" style="box-shadow: 3px 3px 0 #000;">
-          <svg class="w-8 h-8 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h2 class="font-bangers text-3xl text-comic-yellow tracking-wide mb-3" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.5);">ORDER SUBMITTED!</h2>
-        <p class="font-source text-gray-300 text-sm leading-relaxed mb-2">Thank you for your personalised order!</p>
-        <p class="font-source text-gray-300 text-sm leading-relaxed mb-6">We'll send you a digital proof within <strong class="text-comic-cyan">24-48 hours</strong>. Printing begins only after your approval.</p>
-        <div class="flex gap-3 justify-center">
-          <a href="/" class="btn-secondary text-sm">BACK TO HOME</a>
-          <a href="/store" class="btn-primary text-sm">BROWSE STORE</a>
-        </div>
-        <button id="close-modal" class="absolute top-3 right-3 text-gray-500 hover:text-off-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    document.body.style.overflow = 'hidden';
+  document.getElementById('submit-order')?.addEventListener('click', async () => {
+    const submitBtn = document.getElementById('submit-order') as HTMLButtonElement;
+    
+    // Collect all form data
+    const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
+    const format = (document.querySelector('input[name="wiz-format"]:checked') as HTMLInputElement)?.value || '';
+    const size = (document.querySelector('input[name="wiz-size"]:checked') as HTMLInputElement)?.value || '';
+    
+    const textInputs = document.querySelectorAll('#step-3 input[type="text"]');
+    const customName = (textInputs[0] as HTMLInputElement)?.value || '';
+    const caption = (textInputs[1] as HTMLInputElement)?.value || '';
+    const instructions = (document.querySelector('#step-3 textarea') as HTMLTextAreaElement)?.value || '';
 
-    // Close handlers
-    overlay.querySelector('#close-modal')?.addEventListener('click', () => {
-      overlay.remove();
-      document.body.style.overflow = '';
-    });
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        document.body.style.overflow = '';
+    if (!style || !format || !size) {
+      alert('Please complete all steps before submitting.');
+      return;
+    }
+
+    // Disable button
+    submitBtn.textContent = 'PROCESSING...';
+    submitBtn.setAttribute('disabled', 'true');
+    submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+
+    try {
+      // Build FormData with files
+      const formData = new FormData();
+      formData.append('style', style);
+      formData.append('format', format);
+      formData.append('size', size);
+      formData.append('customerTitle', customName);
+      formData.append('captionText', caption);
+      formData.append('instructions', instructions);
+      formData.append('email', 'customer@checkout.com'); // Stripe will collect real email
+      formData.append('name', customName);
+
+      // Append uploaded files
+      const fileInput = document.getElementById('file-input') as HTMLInputElement;
+      if (fileInput?.files) {
+        for (let i = 0; i < fileInput.files.length; i++) {
+          formData.append('photos', fileInput.files[i]);
+        }
       }
-    });
+
+      const response = await fetch('/api/personalise', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || 'Checkout failed');
+      }
+    } catch (err) {
+      console.error('Personalise checkout error:', err);
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center p-4';
+      overlay.style.backgroundColor = 'rgba(0,0,0,0.85)';
+      overlay.innerHTML = `
+        <div class="bg-panel-dark border-4 border-comic-red max-w-md w-full p-8 text-center relative" style="box-shadow: 8px 8px 0 #000;">
+          <h2 class="font-bangers text-3xl text-comic-red tracking-wide mb-3" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.5);">OOPS!</h2>
+          <p class="font-source text-gray-300 text-sm leading-relaxed mb-6">Something went wrong. Please try again or contact us if the problem persists.</p>
+          <button class="btn-primary text-sm" onclick="this.closest('.fixed').remove(); document.body.style.overflow = '';">TRY AGAIN</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+
+      submitBtn.textContent = 'SUBMIT ORDER';
+      submitBtn.removeAttribute('disabled');
+      submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+    }
   });
 
   updateProgressBar();

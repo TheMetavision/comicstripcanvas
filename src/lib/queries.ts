@@ -4,7 +4,7 @@
 // ─── Products ────────────────────────────────────────────────
 
 export const allProductsQuery = `
-  *[_type == "product"] | order(sortOrder asc) {
+  *[_type == "product" && category != "personalised"] | order(sortOrder asc) {
     _id,
     title,
     "slug": slug.current,
