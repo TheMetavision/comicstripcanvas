@@ -1,13 +1,8 @@
 export const prerender = false;
 
 import type { APIRoute } from 'astro';
+import { getSecret } from 'astro:env/server';
 import Stripe from 'stripe';
-
-const getStripe = () => {
-  const key = import.meta.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY;
-  if (!key) throw new Error('STRIPE_SECRET_KEY is not set');
-  return new Stripe(key);
-};
 
 const FORMAT_LABELS: Record<string, string> = {
   poster: 'Poster Print',
@@ -27,12 +22,10 @@ const PRICES: Record<string, Record<string, number>> = {
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
-// Map the short style values from the wizard to full labels and fees
 const STYLE_CONFIG: Record<string, { label: string; fee: number }> = {
   cover: { label: 'Comic Book Cover', fee: 10 },
   icon: { label: 'Comic Book Icon', fee: 10 },
   strip: { label: 'Comic Book Strip', fee: 25 },
-  // Also support the long-form keys in case they're sent
   'comic-book-cover': { label: 'Comic Book Cover', fee: 10 },
   'comic-book-icon': { label: 'Comic Book Icon', fee: 10 },
   'comic-book-strip': { label: 'Comic Book Strip', fee: 25 },
@@ -47,7 +40,12 @@ export const GET: APIRoute = async () => {
 
 export const POST: APIRoute = async ({ request }) => {
   try {
-    const stripe = getStripe();
+    const stripeKey = getSecret('STRIPE_SECRET_KEY');
+    if (!stripeKey) {
+      throw new Error('STRIPE_SECRET_KEY is not configured');
+    }
+    const stripe = new Stripe(stripeKey);
+
     let style = '';
     let format = '';
     let size = '';
@@ -82,11 +80,10 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    // Look up style config (handles both short and long-form keys)
     const styleConfig = STYLE_CONFIG[style] || { label: style, fee: 10 };
     const basePrice = PRICES[format]?.[size] || 9.99;
 
-    const siteUrl = import.meta.env.SITE_URL || import.meta.env.URL || 'https://comicstripcanvas.co.uk';
+    const siteUrl = getSecret('SITE_URL') || getSecret('URL') || 'https://comicstripcanvas.co.uk';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
