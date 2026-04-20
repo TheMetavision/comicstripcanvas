@@ -399,33 +399,59 @@
     }
 
     // Disable button
-    submitBtn.textContent = 'PROCESSING...';
+    submitBtn.textContent = 'UPLOADING PHOTOS...';
     submitBtn.setAttribute('disabled', 'true');
     submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
 
     try {
-      // Build FormData with files
-      const formData = new FormData();
-      formData.append('style', style);
-      formData.append('format', format);
-      formData.append('size', size);
-      formData.append('customerTitle', customName);
-      formData.append('captionText', caption);
-      formData.append('instructions', instructions);
-      formData.append('email', 'customer@checkout.com'); // Stripe will collect real email
-      formData.append('name', customName);
-
-      // Append uploaded files
+      // Step 1: Upload photos to Sanity first
+      const photoUrls: string[] = [];
       const fileInput = document.getElementById('file-input') as HTMLInputElement;
-      if (fileInput?.files) {
+      
+      if (fileInput?.files && fileInput.files.length > 0) {
         for (let i = 0; i < fileInput.files.length; i++) {
-          formData.append('photos', fileInput.files[i]);
+          const file = fileInput.files[i];
+          
+          // Validate file size (10MB limit)
+          if (file.size > 10 * 1024 * 1024) {
+            throw new Error(`File "${file.name}" is too large. Maximum size is 10MB.`);
+          }
+
+          submitBtn.textContent = `UPLOADING PHOTO ${i + 1} OF ${fileInput.files.length}...`;
+          
+          const uploadForm = new FormData();
+          uploadForm.append('file', file);
+          
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            body: uploadForm,
+          });
+          
+          if (!uploadRes.ok) {
+            const uploadErr = await uploadRes.json().catch(() => ({ error: 'Upload failed' }));
+            throw new Error(uploadErr.error || `Failed to upload ${file.name}`);
+          }
+          
+          const uploadData = await uploadRes.json();
+          photoUrls.push(uploadData.url);
         }
       }
 
+      // Step 2: Send order details + photo URLs (no files) to personalise
+      submitBtn.textContent = 'CREATING CHECKOUT...';
+
       const response = await fetch('/api/personalise', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          style,
+          format,
+          size,
+          customerTitle: customName,
+          captionText: caption,
+          instructions,
+          photoUrls,
+        }),
       });
 
       const data = await response.json();
@@ -435,7 +461,7 @@
       } else {
         throw new Error(data.error || 'Checkout failed');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Personalise checkout error:', err);
       
       const overlay = document.createElement('div');
@@ -444,7 +470,7 @@
       overlay.innerHTML = `
         <div class="bg-panel-dark border-4 border-comic-red max-w-md w-full p-8 text-center relative" style="box-shadow: 8px 8px 0 #000;">
           <h2 class="font-bangers text-3xl text-comic-red tracking-wide mb-3" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.5);">OOPS!</h2>
-          <p class="font-source text-gray-300 text-sm leading-relaxed mb-6">Something went wrong. Please try again or contact us if the problem persists.</p>
+          <p class="font-source text-gray-300 text-sm leading-relaxed mb-6">${err.message || 'Something went wrong. Please try again or contact us if the problem persists.'}</p>
           <button class="btn-primary text-sm" onclick="this.closest('.fixed').remove(); document.body.style.overflow = '';">TRY AGAIN</button>
         </div>
       `;

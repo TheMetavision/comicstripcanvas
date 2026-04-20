@@ -46,32 +46,14 @@ export const POST: APIRoute = async ({ request }) => {
     }
     const stripe = new Stripe(stripeKey);
 
-    let style = '';
-    let format = '';
-    let size = '';
-    let customerTitle = '';
-    let captionText = '';
-    let instructions = '';
-
-    const contentType = request.headers.get('content-type') || '';
-
-    if (contentType.includes('multipart/form-data')) {
-      const formData = await request.formData();
-      style = (formData.get('style') as string) || '';
-      format = (formData.get('format') as string) || '';
-      size = (formData.get('size') as string) || '';
-      customerTitle = (formData.get('customerTitle') as string) || '';
-      captionText = (formData.get('captionText') as string) || '';
-      instructions = (formData.get('instructions') as string) || '';
-    } else {
-      const body = await request.json();
-      style = body.style || '';
-      format = body.format || '';
-      size = body.size || '';
-      customerTitle = body.customerTitle || '';
-      captionText = body.captionText || '';
-      instructions = body.instructions || '';
-    }
+    const body = await request.json();
+    const style = body.style || '';
+    const format = body.format || '';
+    const size = body.size || '';
+    const customerTitle = body.customerTitle || '';
+    const captionText = body.captionText || '';
+    const instructions = body.instructions || '';
+    const photoUrls: string[] = body.photoUrls || [];
 
     if (!style || !format || !size) {
       return new Response(
@@ -84,6 +66,10 @@ export const POST: APIRoute = async ({ request }) => {
     const basePrice = PRICES[format]?.[size] || 9.99;
 
     const siteUrl = getSecret('SITE_URL') || getSecret('URL') || 'https://comicstripcanvas.co.uk';
+
+    // Stripe metadata values must be strings under 500 chars
+    // Store photo URLs as comma-separated, truncated if needed
+    const photoUrlsMeta = photoUrls.join(', ').substring(0, 490);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -138,6 +124,8 @@ export const POST: APIRoute = async ({ request }) => {
         instructions: instructions || '',
         basePrice: String(basePrice),
         artFee: String(styleConfig.fee),
+        photoCount: String(photoUrls.length),
+        photoUrls: photoUrlsMeta,
       },
       success_url: `${siteUrl}/personalise-confirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/personalise`,
