@@ -45,9 +45,39 @@
   const form = document.getElementById('newsletter-form') as HTMLFormElement;
   const success = document.getElementById('newsletter-success');
 
-  form?.addEventListener('submit', (e) => {
+  form?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    form.classList.add('hidden');
-    success?.classList.remove('hidden');
+
+    const emailInput = form.querySelector('input[name="email"]') as HTMLInputElement;
+    const email = emailInput?.value?.trim();
+    if (!email) return;
+
+    const btn = form.querySelector('button') as HTMLButtonElement;
+    const originalText = btn.textContent;
+    btn.textContent = 'SENDING...';
+    btn.disabled = true;
+
+    try {
+      const response = await fetch('/api/newsletter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        form.classList.add('hidden');
+        success?.classList.remove('hidden');
+      } else {
+        btn.textContent = originalText;
+        btn.disabled = false;
+        alert(data.error || 'Something went wrong. Please try again.');
+      }
+    } catch (err) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      alert('Failed to subscribe. Please try again.');
+    }
   });
 </script>
