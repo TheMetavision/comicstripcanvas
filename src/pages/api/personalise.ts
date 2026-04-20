@@ -3,7 +3,11 @@ export const prerender = false;
 import type { APIRoute } from 'astro';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(import.meta.env.STRIPE_SECRET_KEY);
+const getStripe = () => {
+  const key = import.meta.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY is not set');
+  return new Stripe(key);
+};
 
 const FORMAT_LABELS: Record<string, string> = {
   poster: 'Poster Print',
@@ -43,6 +47,7 @@ export const GET: APIRoute = async () => {
 
 export const POST: APIRoute = async ({ request }) => {
   try {
+    const stripe = getStripe();
     let style = '';
     let format = '';
     let size = '';
