@@ -61,8 +61,17 @@ export default async (req, context) => {
     try {
       const isPersonalised = session.metadata?.isPersonalised === 'true';
 
-      const shipping = session.shipping_details?.address || {};
-      const customerName = session.shipping_details?.name || session.customer_details?.name || 'Customer';
+      // Stripe API 2025+ moved shipping details under collected_information
+      const shipping =
+        session.collected_information?.shipping_details?.address ||
+        session.shipping_details?.address ||
+        session.customer_details?.address ||
+        {};
+      const customerName =
+        session.collected_information?.shipping_details?.name ||
+        session.shipping_details?.name ||
+        session.customer_details?.name ||
+        'Customer';
       const customerEmail = session.customer_details?.email || '';
       const totalAmount = (session.amount_total || 0) / 100;
 
