@@ -172,7 +172,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
           </button>
 
           {product.isPersonalised && (
-            <a href="/personalise" class="btn-secondary w-full text-xl text-center block mb-4">
+            <a href="/personalised" class="btn-secondary w-full text-xl text-center block mb-4">
               PERSONALISE THIS
             </a>
           )}
@@ -228,13 +228,15 @@ const seoDesc = product.seo?.metaDescription || product.description;
     "@context": "https://schema.org",
     "@type": "Product",
     "name": product.title,
-    "description": product.description,
+    "description": product.seo?.metaDescription || product.description,
     "image": mainImageUrl || undefined,
     "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
     "offers": {
-      "@type": "Offer",
-      "price": basePrice,
+      "@type": "AggregateOffer",
+      "lowPrice": 9.99,
+      "highPrice": 46.99,
       "priceCurrency": "GBP",
+      "offerCount": 9,
       "availability": "https://schema.org/InStock",
       "seller": { "@type": "Organization", "name": "Comic Strip Canvas" }
     }
@@ -343,7 +345,6 @@ const seoDesc = product.seo?.metaDescription || product.description;
           mainImg.src = (btn as HTMLElement).dataset.full || '';
           mainImg.alt = (btn as HTMLElement).dataset.alt || '';
         }
-        // Highlight active thumbnail
         document.querySelectorAll('.thumb-btn').forEach(b => b.classList.replace('border-comic-yellow', 'border-gray-700'));
         btn.classList.replace('border-gray-700', 'border-comic-yellow');
       });
