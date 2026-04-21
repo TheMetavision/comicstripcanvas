@@ -100,7 +100,15 @@ export const GET: APIRoute = async () => {
           const formatLabel = FORMAT_LABELS[format];
           const sizeLabel = SIZE_LABELS[size];
 
-          const itemId = `${product.slug}-${format}-${size}`;
+          // Short codes for ID to stay under Google's 50-char limit
+          // poster=p, canvas-standard=cs, canvas-gallery=cg | small=s, medium=m, large=l
+          const formatCode = format === 'poster' ? 'p' : format === 'canvas-standard' ? 'cs' : 'cg';
+          const sizeCode = size === 'small' ? 's' : size === 'medium' ? 'm' : 'l';
+
+          // Truncate slug if needed — 50 char limit minus "-XX-X" = ~44 chars max for slug
+          const slugForId = product.slug.length > 44 ? product.slug.substring(0, 44) : product.slug;
+          const itemId = `${slugForId}-${formatCode}-${sizeCode}`;
+
           const itemGroupId = product.slug;
           const variantTitle = `${product.title} — ${formatLabel} (${sizeLabel})`;
 
