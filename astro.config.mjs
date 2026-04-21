@@ -6,7 +6,14 @@ import sitemap from '@astrojs/sitemap';
 
 export default defineConfig({
   site: 'https://comicstripcanvas.co.uk',
-  integrations: [tailwind(), sitemap()],
+  integrations: [
+    tailwind(),
+    sitemap({
+      filter: (page) =>
+        page !== 'https://comicstripcanvas.co.uk/order-confirmation/' &&
+        page !== 'https://comicstripcanvas.co.uk/personalise-confirmation/'
+    }),
+  ],
   output: 'static',
   adapter: netlify(),
 });
