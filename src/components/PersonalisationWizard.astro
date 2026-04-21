@@ -330,6 +330,7 @@
     const reqCount = document.getElementById('photos-required-count');
     const reqHelp = document.getElementById('photos-required-help');
     const uploadedCount = document.getElementById('photos-uploaded-count');
+    const dropZoneEl = document.getElementById('drop-zone');
 
     if (req && reqBlock && reqCount && reqHelp && uploadedCount) {
       reqBlock.classList.remove('hidden');
@@ -344,6 +345,17 @@
         uploadedCount.className = 'text-comic-red';
       } else {
         uploadedCount.className = 'text-comic-yellow';
+      }
+
+      // Hide drop zone when the exact number of required photos has been uploaded
+      // This prevents users from adding extra photos for single-photo styles (cover, icon)
+      // For comic strips, the zone stays visible until all 12 are uploaded
+      if (dropZoneEl) {
+        if (collectedFiles.length >= req.count) {
+          dropZoneEl.classList.add('hidden');
+        } else {
+          dropZoneEl.classList.remove('hidden');
+        }
       }
     }
   }
