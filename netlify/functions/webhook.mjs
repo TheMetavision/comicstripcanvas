@@ -30,7 +30,7 @@ const SIZE_LABELS = {
 
 // Brand constants
 const BRAND = {
-  logo: 'https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg',
+  logo: 'https://comicstripcanvas.co.uk/logo.png',
   yellow: '#FFF200',
   pink: '#EC008C',
   cyan: '#00AEEF',
@@ -198,8 +198,8 @@ export default async (req, context) => {
       // ── Email templates ──────────────────────────────────────
       const emailHeader = `
         <div style="background: ${BRAND.dark}; padding: 32px 24px; text-align: center;">
-          <h1 style="color: ${BRAND.yellow}; margin: 0; font-size: 32px; font-family: 'Arial Black', Arial, sans-serif; letter-spacing: 2px;">COMIC STRIP CANVAS</h1>
-          <p style="color: #777; margin: 8px 0 0; font-size: 13px; letter-spacing: 1px;">BOLD POP CULTURE WALL ART</p>
+          <img src="${BRAND.logo}" alt="Comic Strip Canvas" style="max-width: 280px; height: auto; display: block; margin: 0 auto;" />
+          <p style="color: #777; margin: 16px 0 0; font-size: 13px; letter-spacing: 1px;">BOLD POP CULTURE WALL ART</p>
         </div>`;
 
       const emailFooter = `
