@@ -137,22 +137,33 @@
 
       <div>
         <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
-        <div class="grid grid-cols-3 gap-4">
-          {[
-            { value: 'small', label: 'Small', dim: '12x8"' },
-            { value: 'medium', label: 'Medium', dim: '16x12"' },
-            { value: 'large', label: 'Large', dim: '24x16"' },
-          ].map((s) => (
-            <label class="cursor-pointer">
-              <input type="radio" name="wiz-size" value={s.value} class="sr-only" />
-              <div class="size-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
-                   style="box-shadow: 2px 2px 0 #000;">
-                <p class="font-russo text-off-white text-sm">{s.label}</p>
-                <p class="font-source text-gray-400 text-xs mt-1">{s.dim}</p>
-              </div>
-            </label>
-          ))}
+        <div class="grid grid-cols-3 gap-4" id="size-grid">
+          <label class="cursor-pointer size-label" data-size="small">
+            <input type="radio" name="wiz-size" value="small" class="sr-only" />
+            <div class="size-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
+                 style="box-shadow: 2px 2px 0 #000;">
+              <p class="font-russo text-off-white text-sm">Small</p>
+              <p class="font-source text-gray-400 text-xs mt-1 size-dim">12x8"</p>
+            </div>
+          </label>
+          <label class="cursor-pointer size-label" data-size="medium">
+            <input type="radio" name="wiz-size" value="medium" class="sr-only" />
+            <div class="size-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
+                 style="box-shadow: 2px 2px 0 #000;">
+              <p class="font-russo text-off-white text-sm">Medium</p>
+              <p class="font-source text-gray-400 text-xs mt-1 size-dim">16x12"</p>
+            </div>
+          </label>
+          <label class="cursor-pointer size-label" data-size="large">
+            <input type="radio" name="wiz-size" value="large" class="sr-only" />
+            <div class="size-option bg-panel-dark border-4 border-black p-4 text-center transition-all hover:border-comic-yellow"
+                 style="box-shadow: 2px 2px 0 #000;">
+              <p class="font-russo text-off-white text-sm">Large</p>
+              <p class="font-source text-gray-400 text-xs mt-1 size-dim">24x16"</p>
+            </div>
+          </label>
         </div>
+        <p class="font-source text-gray-500 text-xs mt-3" id="orientation-hint"></p>
       </div>
     </div>
 
@@ -239,12 +250,76 @@
 
   let currentStep = 1;
 
+  // Size dimension presets based on style orientation
+  const SIZE_DIMENSIONS: Record<string, Record<string, string>> = {
+    portrait: {
+      small: '8x12"',
+      medium: '12x16"',
+      large: '16x24"',
+    },
+    landscape: {
+      small: '12x8"',
+      medium: '16x12"',
+      large: '24x16"',
+    },
+  };
+
+  // Map style to orientation behaviour
+  const STYLE_ORIENTATION: Record<string, 'portrait' | 'landscape' | 'both'> = {
+    cover: 'portrait',
+    icon: 'both',
+    strip: 'landscape',
+  };
+
+  function updateSizeOptions() {
+    const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
+    const orientation = STYLE_ORIENTATION[style] || 'both';
+    const hint = document.getElementById('orientation-hint');
+
+    // Clear any previous size selection since dimensions may differ
+    document.querySelectorAll('input[name="wiz-size"]').forEach((i) => {
+      (i as HTMLInputElement).checked = false;
+    });
+    document.querySelectorAll('.size-option').forEach((o) => {
+      o.classList.remove('border-comic-yellow');
+      o.classList.add('border-black');
+    });
+
+    let dimensionSet: Record<string, string>;
+    if (orientation === 'portrait') {
+      dimensionSet = SIZE_DIMENSIONS.portrait;
+      if (hint) hint.textContent = '↕ Portrait orientation — ideal for comic book covers';
+    } else if (orientation === 'landscape') {
+      dimensionSet = SIZE_DIMENSIONS.landscape;
+      if (hint) hint.textContent = '↔ Landscape orientation — sized for multi-panel comic strips';
+    } else {
+      // "both" — default to landscape dimensions; customer can contact for portrait
+      dimensionSet = SIZE_DIMENSIONS.landscape;
+      if (hint) hint.textContent = 'Available in landscape or portrait — mention preference in Step 3 instructions';
+    }
+
+    // Update displayed dimensions on each size card
+    document.querySelectorAll('.size-label').forEach((label) => {
+      const size = (label as HTMLElement).dataset.size || '';
+      const dimEl = label.querySelector('.size-dim');
+      if (dimEl && dimensionSet[size]) {
+        dimEl.textContent = dimensionSet[size];
+      }
+    });
+
+    // Update the global SIZE_LABELS so review/metadata stays consistent
+    SIZE_LABELS.small = `Small (${dimensionSet.small})`;
+    SIZE_LABELS.medium = `Medium (${dimensionSet.medium})`;
+    SIZE_LABELS.large = `Large (${dimensionSet.large})`;
+  }
+
   function goToStep(n: number) {
     document.querySelectorAll('.wizard-step').forEach((s) => s.classList.add('hidden'));
     const target = document.getElementById(`step-${n}`);
     target?.classList.remove('hidden');
     currentStep = n;
     updateProgressBar();
+    if (n === 4) updateSizeOptions();
     if (n === 5) updateReview();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
