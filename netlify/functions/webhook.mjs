@@ -198,8 +198,14 @@ export default async (req, context) => {
       // ── Email templates ──────────────────────────────────────
       const emailHeader = `
         <div style="background: ${BRAND.dark}; padding: 32px 24px; text-align: center;">
-          <img src="${BRAND.logo}" alt="Comic Strip Canvas" style="max-width: 280px; height: auto; display: block; margin: 0 auto;" />
-          <p style="color: #777; margin: 16px 0 0; font-size: 13px; letter-spacing: 1px;">BOLD POP CULTURE WALL ART</p>
+          <table role="presentation" style="margin: 0 auto; border-collapse: collapse;">
+            <tr>
+              <td style="text-align: center;">
+                <img src="${BRAND.logo}" alt="Comic Strip Canvas" width="280" style="max-width: 280px; width: 100%; height: auto; display: block; margin: 0 auto; border: 0;" />
+              </td>
+            </tr>
+          </table>
+          <p style="color: #777; margin: 16px 0 0; font-size: 13px; letter-spacing: 1px; text-align: center;">BOLD POP CULTURE WALL ART</p>
         </div>`;
 
       const emailFooter = `
