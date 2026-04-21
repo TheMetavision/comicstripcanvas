@@ -321,7 +321,14 @@
     updateProgressBar();
     if (n === 4) updateSizeOptions();
     if (n === 5) updateReview();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Scroll to the wizard container (not the top of the page)
+    // so customers stay oriented with the step they're on
+    const wizard = document.getElementById('wizard');
+    if (wizard) {
+      const top = wizard.getBoundingClientRect().top + window.pageYOffset - 80;
+      window.scrollTo({ top, behavior: 'smooth' });
+    }
   }
 
   function updateProgressBar() {
