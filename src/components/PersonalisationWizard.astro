@@ -371,9 +371,53 @@
   document.querySelectorAll('.next-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = parseInt((btn as HTMLElement).dataset.next || '1');
+
+      // Validate photo count when leaving Step 2
+      if (currentStep === 2) {
+        const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
+        const req = PHOTO_REQUIREMENTS[style];
+        if (req && collectedFiles.length !== req.count) {
+          showPhotoWarning(req.count, collectedFiles.length);
+          return;
+        } else {
+          hidePhotoWarning();
+        }
+      }
+
       goToStep(next);
     });
   });
+
+  function showPhotoWarning(required: number, current: number) {
+    let warningEl = document.getElementById('photo-warning');
+    if (!warningEl) {
+      warningEl = document.createElement('div');
+      warningEl.id = 'photo-warning';
+      warningEl.className = 'mb-4 p-4 border-4 border-comic-red bg-panel-dark';
+      warningEl.style.cssText = 'box-shadow: 3px 3px 0 rgba(236,0,140,0.5); animation: pulse 2s;';
+      const reqBlock = document.getElementById('photo-requirements');
+      reqBlock?.parentNode?.insertBefore(warningEl, reqBlock);
+    }
+
+    const diff = required - current;
+    let message: string;
+    if (current < required) {
+      message = `⚠️ <strong>${diff} more photo${diff > 1 ? 's' : ''} needed</strong> — please upload ${diff} more before continuing.`;
+    } else {
+      const extra = current - required;
+      message = `⚠️ <strong>Too many photos</strong> — please remove ${extra} photo${extra > 1 ? 's' : ''} (you've uploaded ${current} but this style uses exactly ${required}).`;
+    }
+
+    warningEl.innerHTML = `
+      <p class="font-russo text-comic-red text-sm uppercase tracking-wide mb-1">Hold up!</p>
+      <p class="font-source text-gray-200 text-sm">${message}</p>
+    `;
+    warningEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function hidePhotoWarning() {
+    document.getElementById('photo-warning')?.remove();
+  }
 
   document.querySelectorAll('.prev-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -431,6 +475,11 @@
         } else {
           dropZoneEl.classList.remove('hidden');
         }
+      }
+
+      // Auto-clear any warning if count now matches requirement
+      if (collectedFiles.length === req.count) {
+        hidePhotoWarning();
       }
     }
   }
