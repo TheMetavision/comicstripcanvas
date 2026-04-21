@@ -54,7 +54,12 @@
 
   <div id="step-2" class="wizard-step hidden">
     <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 2: UPLOAD YOUR PHOTO(S)</h2>
-    <p class="font-source text-gray-400 mb-8">Upload clear, high-quality photos for the best results. For Comic Strips, you can upload multiple photos.</p>
+    <p class="font-source text-gray-400 mb-4" id="step-2-description">Upload clear, high-quality photos for the best results.</p>
+    <div id="photo-requirements" class="mb-6 p-4 border-2 border-comic-cyan bg-panel-dark hidden" style="box-shadow: 2px 2px 0 rgba(0,174,239,0.3);">
+      <p class="font-russo text-comic-cyan text-sm uppercase tracking-wide mb-1">Photos required: <span id="photos-required-count">1</span></p>
+      <p class="font-source text-gray-300 text-xs" id="photos-required-help">You need to upload 1 clear photo for this style.</p>
+      <p class="font-russo text-sm mt-2"><span id="photos-uploaded-count" class="text-comic-yellow">0</span><span class="text-gray-400"> uploaded</span></p>
+    </div>
     <div id="drop-zone"
          class="border-4 border-dashed border-gray-600 bg-panel-dark p-10 text-center cursor-pointer transition-all duration-200 hover:border-comic-yellow"
          style="box-shadow: 3px 3px 0 #000;">
@@ -68,7 +73,7 @@
           Browse Files
           <input type="file" id="file-input" accept="image/*" multiple class="sr-only" />
         </label>
-        <p class="font-source text-gray-500 text-xs mt-4">JPG, PNG, WEBP — Max 20MB per file</p>
+        <p class="font-source text-gray-500 text-xs mt-4">JPG, PNG, WEBP — Max 10MB per file</p>
       </div>
       <div id="upload-previews" class="hidden flex-wrap gap-4 justify-center"></div>
     </div>
@@ -77,6 +82,7 @@
       <button class="btn-primary next-btn" data-next="3">Next: Customise Details &rarr;</button>
     </div>
   </div>
+
 
   <div id="step-3" class="wizard-step hidden">
     <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 3: CUSTOMISE YOUR DETAILS</h2>
@@ -301,6 +307,47 @@
     });
   });
 
+  // Photo requirements per style
+  const PHOTO_REQUIREMENTS: Record<string, { count: number; help: string }> = {
+    cover: {
+      count: 1,
+      help: 'Upload 1 clear photo of the person(s) to feature on the cover.',
+    },
+    icon: {
+      count: 1,
+      help: 'Upload 1 clear head-and-shoulders portrait photo.',
+    },
+    strip: {
+      count: 12,
+      help: 'Upload 12 photos to tell your story across the comic strip panels.',
+    },
+  };
+
+  function updatePhotoRequirements() {
+    const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
+    const req = PHOTO_REQUIREMENTS[style];
+    const reqBlock = document.getElementById('photo-requirements');
+    const reqCount = document.getElementById('photos-required-count');
+    const reqHelp = document.getElementById('photos-required-help');
+    const uploadedCount = document.getElementById('photos-uploaded-count');
+
+    if (req && reqBlock && reqCount && reqHelp && uploadedCount) {
+      reqBlock.classList.remove('hidden');
+      reqCount.textContent = String(req.count);
+      reqHelp.textContent = req.help;
+      uploadedCount.textContent = String(collectedFiles.length);
+
+      // Colour based on whether requirement is met
+      if (collectedFiles.length === req.count) {
+        uploadedCount.className = 'text-green-400';
+      } else if (collectedFiles.length > req.count) {
+        uploadedCount.className = 'text-comic-red';
+      } else {
+        uploadedCount.className = 'text-comic-yellow';
+      }
+    }
+  }
+
   document.querySelectorAll('.style-option input').forEach((input) => {
     input.addEventListener('change', () => {
       document.querySelectorAll('.style-option > div').forEach((d) => {
@@ -310,6 +357,7 @@
       const parent = input.closest('.style-option')?.querySelector('div');
       parent?.classList.add('border-comic-yellow');
       parent?.classList.remove('border-black');
+      updatePhotoRequirements();
     });
   });
 
@@ -363,6 +411,7 @@
       };
       reader.readAsDataURL(file);
     });
+    updatePhotoRequirements();
   }
 
   fileInput?.addEventListener('change', () => {
@@ -399,6 +448,13 @@
 
     if (!style || !format || !size) {
       alert('Please complete all steps before submitting.');
+      return;
+    }
+
+    // Validate photo count matches style requirement
+    const photoReq = PHOTO_REQUIREMENTS[style];
+    if (photoReq && collectedFiles.length !== photoReq.count) {
+      alert(`This style requires exactly ${photoReq.count} photo${photoReq.count > 1 ? 's' : ''}. You have uploaded ${collectedFiles.length}. Please go back to Step 2 and adjust.`);
       return;
     }
 
