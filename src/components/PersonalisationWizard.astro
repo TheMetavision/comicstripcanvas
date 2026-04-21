@@ -60,22 +60,22 @@
       <p class="font-source text-gray-300 text-xs" id="photos-required-help">You need to upload 1 clear photo for this style.</p>
       <p class="font-russo text-sm mt-2"><span id="photos-uploaded-count" class="text-comic-yellow">0</span><span class="text-gray-400"> uploaded</span></p>
     </div>
+    
+    <div id="upload-previews" class="hidden grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-4"></div>
+    
     <div id="drop-zone"
          class="border-4 border-dashed border-gray-600 bg-panel-dark p-10 text-center cursor-pointer transition-all duration-200 hover:border-comic-yellow"
          style="box-shadow: 3px 3px 0 #000;">
-      <div id="upload-placeholder">
-        <svg class="w-12 h-12 text-gray-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-        <p class="font-russo text-gray-400 mb-2">Drag & drop your photo here</p>
-        <p class="font-source text-gray-500 text-sm mb-4">or</p>
-        <label class="btn-primary cursor-pointer text-sm py-2 px-6">
-          Browse Files
-          <input type="file" id="file-input" accept="image/*" multiple class="sr-only" />
-        </label>
-        <p class="font-source text-gray-500 text-xs mt-4">JPG, PNG, WEBP — Max 10MB per file</p>
-      </div>
-      <div id="upload-previews" class="hidden flex-wrap gap-4 justify-center"></div>
+      <svg class="w-12 h-12 text-gray-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+      <p class="font-russo text-gray-400 mb-2" id="drop-zone-text">Drag & drop your photo here</p>
+      <p class="font-source text-gray-500 text-sm mb-4">or</p>
+      <label class="btn-primary cursor-pointer text-sm py-2 px-6">
+        <span id="browse-button-text">Browse Files</span>
+        <input type="file" id="file-input" accept="image/*" multiple class="sr-only" />
+      </label>
+      <p class="font-source text-gray-500 text-xs mt-4">JPG, PNG, WEBP — Max 10MB per file</p>
     </div>
     <div class="flex justify-between mt-8">
       <button class="btn-secondary prev-btn" data-prev="1">&larr; Back</button>
@@ -386,32 +386,72 @@
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
   const previewContainer = document.getElementById('upload-previews');
-  const uploadPlaceholder = document.getElementById('upload-placeholder');
 
   // Shared file store — collects files from both browse and drag-drop
   const collectedFiles: File[] = [];
 
-  function handleFiles(files: FileList) {
-    if (!previewContainer || !uploadPlaceholder) return;
-    uploadPlaceholder.classList.add('hidden');
-    previewContainer.classList.remove('hidden');
-    previewContainer.classList.add('flex');
+  function updateDropZoneText() {
+    const dropText = document.getElementById('drop-zone-text');
+    const browseText = document.getElementById('browse-button-text');
+    if (collectedFiles.length > 0) {
+      if (dropText) dropText.textContent = `Add more photos (drag & drop)`;
+      if (browseText) browseText.textContent = 'Add More Files';
+    } else {
+      if (dropText) dropText.textContent = 'Drag & drop your photo here';
+      if (browseText) browseText.textContent = 'Browse Files';
+    }
+  }
 
-    Array.from(files).forEach((file) => {
-      collectedFiles.push(file);
+  function rerenderPreviews() {
+    if (!previewContainer) return;
+    previewContainer.innerHTML = '';
+    if (collectedFiles.length === 0) {
+      previewContainer.classList.add('hidden');
+      previewContainer.classList.remove('grid');
+      return;
+    }
+    previewContainer.classList.remove('hidden');
+    previewContainer.classList.add('grid');
+
+    collectedFiles.forEach((file, idx) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const div = document.createElement('div');
-        div.className = 'relative';
+        div.className = 'relative group';
         div.innerHTML = `
-          <img src="${e.target?.result}" alt="Preview" class="w-24 h-24 object-cover border-4 border-black" />
-          <p class="font-source text-gray-400 text-xs mt-1 truncate w-24">${file.name}</p>
+          <div class="relative aspect-square border-4 border-black overflow-hidden" style="box-shadow: 2px 2px 0 #000;">
+            <img src="${e.target?.result}" alt="Preview" class="w-full h-full object-cover" />
+            <button type="button" data-remove-idx="${idx}" class="absolute top-1 right-1 bg-comic-red text-white w-6 h-6 font-bold text-xs flex items-center justify-center hover:bg-black transition-colors" style="box-shadow: 1px 1px 0 #000;" title="Remove photo">✕</button>
+            <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs px-2 py-1 text-center font-russo">${idx + 1}</div>
+          </div>
+          <p class="font-source text-gray-400 text-xs mt-1 truncate">${file.name}</p>
         `;
         previewContainer.appendChild(div);
+
+        // Wire up remove button
+        const removeBtn = div.querySelector('[data-remove-idx]') as HTMLButtonElement;
+        removeBtn?.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const removeIdx = parseInt(removeBtn.dataset.removeIdx || '0');
+          collectedFiles.splice(removeIdx, 1);
+          rerenderPreviews();
+          updatePhotoRequirements();
+          updateDropZoneText();
+        });
       };
       reader.readAsDataURL(file);
     });
+  }
+
+  function handleFiles(files: FileList) {
+    Array.from(files).forEach((file) => {
+      collectedFiles.push(file);
+    });
+    rerenderPreviews();
     updatePhotoRequirements();
+    updateDropZoneText();
+    // Reset the input so the same file can be re-added after removal
+    if (fileInput) fileInput.value = '';
   }
 
   fileInput?.addEventListener('change', () => {
