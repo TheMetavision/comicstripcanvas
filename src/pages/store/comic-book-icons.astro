@@ -8,13 +8,13 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
 ---
 
 <BaseLayout
-  title="Comic Book Icon Prints"
-  description="Bold pop-art graphic portraits and iconic character studies. Available as posters, canvas prints, and framed prints. From £9.99 with free UK P&P."
+  title="Comic Book Icon Art UK — Legends Reimagined in Bold Colour"
+  description="Bold pop culture icon art prints. Legends from film, music and sport rendered in vivid comic book style. Canvas prints, framed prints & posters from £9.99. Free UK P&P."
 >
   <section class="relative bg-panel-dark py-16 overflow-hidden">
     <div class="absolute inset-0 halftone-bg opacity-40"></div>
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
-    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(255,242,0,0.1) 0%, transparent 50%);"></div>
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(255,210,0,0.12) 0%, transparent 50%);"></div>
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
       <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
         <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
@@ -23,13 +23,13 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
         <span>/</span>
         <span class="text-off-white">Comic Book Icons</span>
       </nav>
-      <div class="kapow-badge inline-block mb-4">Pop Art Inspired</div>
+      <div class="kapow-badge inline-block mb-4">Single Frame. Maximum Impact.</div>
       <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
           style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
-        COMIC BOOK <span class="text-comic-yellow">ICONS</span>
+        COMIC BOOK <span class="text-comic-yellow">ICON ART UK</span>
       </h1>
       <p class="font-source text-gray-300 text-lg max-w-2xl">
-        Bold graphic portraits with a pop-art edge. Clean lines, vivid colours, and maximum visual impact. Portraits that demand attention.
+        Legendary figures from film, music, and sport — transformed into bold, single-frame comic book icon prints. One frame. Maximum impact. The art your wall has been waiting for.
       </p>
     </div>
   </section>
@@ -40,12 +40,32 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
         <ProductCard product={product} />
       ))}
     </div>
-    <div class="mt-12 text-center bg-panel-dark border-4 border-comic-yellow p-8" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.3);">
-      <h2 class="font-bangers text-3xl text-off-white mb-3 tracking-wide">BECOME A POP ART ICON</h2>
-      <p class="font-source text-gray-300 mb-6">We can transform your portrait into a stunning personalised pop-art graphic icon.</p>
-      <a href="/personalise" class="btn-primary">CREATE YOUR ICON</a>
+    <div class="mt-12 text-center bg-panel-dark border-4 border-comic-yellow p-8" style="box-shadow: 4px 4px 0 #000;">
+      <h2 class="font-bangers text-3xl text-off-white mb-3 tracking-wide">WANT YOUR FACE AS AN ICON?</h2>
+      <p class="font-source text-gray-300 mb-6">We can turn your photo into a personalised comic icon portrait. You become the legend.</p>
+      <a href="/personalised" class="btn-primary">CREATE YOUR ICON</a>
     </div>
   </div>
+
+  <!-- SEO Content Block -->
+  <section class="bg-charcoal border-t-4 border-black py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="prose-comic">
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          Some people are simply iconic. They don't need a story spread across panels — they need a single frame that captures exactly why they matter, rendered in bold comic book style with the colour and intensity their legend deserves. That's what the Comic Strip Canvas Comic Book Icon collection is built to deliver.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          Each piece in the range takes a legendary figure from film, music, or sport and transforms them into a high-impact, single-figure comic art print — complete with their most defining visual elements and the graphic energy of the comic book format at its best. Kill Bill's Bride. Juice Wrld's artistry. Diego Maradona's footballing genius. Cristiano Ronaldo's CR7 swagger. Leo Messi in one impossibly decorated career. ZZ Top's unmistakable cool, and a roster of pop culture icon canvas pieces that spans era, genre, and legend.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          Every piece is available in three formats — canvas print, framed print, and poster — and in three sizes. All made to order, dispatched from the UK, and built to occupy wall space with authority. Comic art prints UK buyers can genuinely be proud to display.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed">
+          For Father's Day, birthdays, and Christmas, the right icon art is the gift that makes a fan feel truly seen. For the fan who has everything — except this. Want to commission your own icon portrait from your photo? <a href="/personalised" class="text-comic-yellow hover:text-comic-red transition-colors font-semibold">See our personalised range →</a>
+        </p>
+      </div>
+    </div>
+  </section>
 
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",

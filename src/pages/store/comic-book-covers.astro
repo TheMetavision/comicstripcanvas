@@ -8,8 +8,8 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
 ---
 
 <BaseLayout
-  title="Comic Book Cover Prints"
-  description="Bold, vintage-style comic book cover art prints. Available as posters, standard canvas, and gallery canvas. From £9.99 with free UK P&P."
+  title="Comic Book Cover Art UK — Icons as You've Never Seen Them Before"
+  description="Bold, vintage-style comic book cover art prints. Iconic figures reimagined as dramatic magazine cover stars. Canvas prints, framed prints & posters from £9.99. Free UK P&P."
 >
   <section class="relative bg-panel-dark py-16 overflow-hidden">
     <div class="absolute inset-0 halftone-bg opacity-40"></div>
@@ -26,10 +26,10 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
       <div class="kapow-badge inline-block mb-4">Bold & Dramatic</div>
       <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
           style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
-        COMIC BOOK <span class="text-comic-red">COVERS</span>
+        COMIC BOOK <span class="text-comic-red">COVER ART UK</span>
       </h1>
       <p class="font-source text-gray-300 text-lg max-w-2xl">
-        Dramatic, vintage-inspired cover art with bold compositions and classic comic book colour palettes. Make your walls the hero of the room.
+        Dramatic, vintage-inspired cover art with bold compositions and classic comic book colour palettes. Icons reimagined as magazine cover stars — make your walls the hero of the room.
       </p>
     </div>
   </section>
@@ -43,9 +43,29 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
     <div class="mt-12 text-center bg-panel-dark border-4 border-comic-red p-8" style="box-shadow: 4px 4px 0 #000;">
       <h2 class="font-bangers text-3xl text-off-white mb-3 tracking-wide">WANT YOUR FACE ON THE COVER?</h2>
       <p class="font-source text-gray-300 mb-6">We can turn your photo into a personalised comic book cover. You become the hero.</p>
-      <a href="/personalise" class="btn-primary">START YOUR CUSTOM COVER</a>
+      <a href="/personalised" class="btn-primary">START YOUR CUSTOM COVER</a>
     </div>
   </div>
+
+  <!-- SEO Content Block -->
+  <section class="bg-charcoal border-t-4 border-black py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="prose-comic">
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          The comic book cover is one of the most striking visual formats ever created — bold typography, dramatic composition, a single iconic figure demanding your attention from the rack. Comic Strip Canvas takes that visual language and applies it to the icons who deserve it most: the film legends, music heroes, and cult characters who have earned their place on your wall.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          Each comic book canvas print reimagines a cultural icon as the star of their own magazine cover — with all the graphic drama, vivid colour, and KA-POW! energy that format commands. Browse pop culture wall art that spans the golden age of Hollywood through to cult cinema and contemporary legends, from Dirty Harry's unflinching cool to Marilyn Monroe's timeless presence. Three formats — canvas print, framed print, and poster — each available in three sizes.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
+          For the film obsessive who has seen everything. For the music lover who has heard everything. For the gift buyer who wants something genuinely original rather than another generic present. Comic book cover art is a gift with impact — the kind that earns a permanent spot on the wall rather than a polite thank you.
+        </p>
+        <p class="font-source text-gray-300 text-lg leading-relaxed">
+          If you want a comic book cover created from your own photo, that's exactly what we do too. <a href="/personalised" class="text-comic-red hover:text-comic-yellow transition-colors font-semibold">Discover our personalised comic book covers →</a>
+        </p>
+      </div>
+    </div>
+  </section>
 
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
