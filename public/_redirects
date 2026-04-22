@@ -1,72 +1,60 @@
 # ============================================================
-# Comic Strip Canvas — 301 Redirects
-# File: public/_redirects (Astro project root → public folder)
-# Platform: Netlify
-# Created: 2026-04-21
-#
-# PURPOSE: Redirect all old Zyro/Hostinger URLs to their new
-# Astro/Sanity equivalents. Every 404 below was a live,
-# Google-indexed page. These 301s preserve accumulated
-# ranking signals and prevent link equity loss.
-#
-# HOW TO USE:
-# Place this file at: public/_redirects in your Astro project
-# Deploy to Netlify — redirects activate immediately
-#
-# IMPORTANT: Specific rules must come BEFORE wildcard rules.
-# Netlify processes rules top-to-bottom and stops at first match.
+# Comic Strip Canvas — Netlify Redirect Rules
+# Generated: 2026-04-22 by Cog
+# Purpose: 301 redirects for 383 indexed 404 URLs following
+#          migration from Zyro/Hostinger to Astro/Sanity CMS
 # ============================================================
 
+# ---- PRODUCT PAGES — OLD ZYRO FORMAT ----
+# /product/{slug} → /store/{slug}/  (covers 113 unique slugs + ?related-products=1 variants)
+/product/:slug  /store/:slug/  301
 
-# ── CATEGORY PAGES ─────────────────────────────────────────
-/comic-book-covers                          /store/comic-book-covers/       301
-/comic-book-icons                           /store/comic-book-icons/        301
-/comic-book-strips                          /store/comic-book-strips/       301
-/personalised-products                      /store/personalised/            301
+# /index.php/product/{slug} → /store/{slug}/  (covers 79 unique slugs)
+/index.php/product/:slug  /store/:slug/  301
 
 
-# ── HIGH-PRIORITY PRODUCT PAGES (from GSC data) ────────────
-
-# Comic Book Icons — confirmed GSC impressions
-/kill-bill-comic-icons-art-available-in-3-formats-and-3-different-sizes             /store/kill-bill/           301
-/juice-wrld-comic-icons-art-available-in-3-formats-and-3-different-sizes            /store/juice-wrld/          301
-/diego-maradona-comic-icons-art-available-in-3-formats-and-3-different-sizes        /store/diego-maradona/      301
-/leo-messi-comic-icons-art-available-in-3-formats-and-3-different-sizes             /store/leo-messi/           301
-/xxx-tentacion-comic-icons-art-available-in-3-formats-and-3-different-sizes         /store/xxxtentacion/        301
-/zz-top-comic-icons-art-available-in-3-formats-and-3-different-sizes                /store/zz-top/              301
-/zz-top-comic-icons-art-available-in-3-formats-and-3-different-sizes1               /store/zz-top/              301
-
-# Ronaldo — no matching page on new site yet. UPDATE when created.
-/ronaldo-comic-icons-art-available-in-3-formats-and-3-different-sizes               /store/comic-book-icons/    301
+# ---- CATEGORY PAGES — OLD ZYRO FORMAT ----
+# Comic Icons (all pagination/sort variants redirect to category root)
+/category/comic-icons  /comic-book-icons  301
+/category/comic-icons/*  /comic-book-icons  301
+/index.php/category/comic-icons  /comic-book-icons  301
+/index.php/category/comic-icons/*  /comic-book-icons  301
 
 # Comic Book Covers
-/anthony-joshua-comic-book-cover-art-available-in-3-formats-and-3-different-sizes   /store/anthony-joshua/      301
+/category/comic-book-covers  /comic-book-covers  301
+/category/comic-book-covers/*  /comic-book-covers  301
+/index.php/category/comic-book-covers  /comic-book-covers  301
+/index.php/category/comic-book-covers/*  /comic-book-covers  301
 
-# Comic Book Strips
-/grease-comic-strip-art-available-in-3-formats-and-3-different-sizes                /store/grease/              301
-/grease-comic-strip-art-available-in-3-formats-and-3-different-sizes1               /store/grease/              301
-/ghostbusters-comic-strip-art-available-in-3-formats-and-3-different-sizes          /store/ghostbusters/        301
-/gremlins-comic-strip-art-available-in-3-formats-and-3-different-sizes              /store/gremlins/            301
-/back-to-the-future-comic-strip-art-available-in-3-formats-and-3-different-sizes    /store/back-to-the-future/  301
-
-# Non-standard Gremlins URL
-/gremlins-movie-art-poster                                                           /store/gremlins/            301
-
-
-# ── PLACEHOLDER PAGES ──────────────────────────────────────
-/artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes          /store/comic-book-icons/    301
-/artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes     /store/comic-book-covers/   301
+# Comic Strips
+/category/comic-strips  /comic-book-strips  301
+/category/comic-strips/*  /comic-book-strips  301
+/index.php/category/comic-strips  /comic-book-strips  301
+/index.php/category/comic-strips/*  /comic-book-strips  301
 
 
-# ── GHOST & UTILITY PAGES ──────────────────────────────────
-/page                                                                                /                           301
-/services                                                                            /services/                  301
+# ---- ALL PRODUCTS LISTING ----
+/products  /  301
+/products/*  /  301
+/index.php/products  /  301
+/index.php/products/*  /  301
 
 
-# ── WILDCARD FALLBACKS (must stay last) ────────────────────
-/*-comic-icons-art-available-in-3-formats-and-3-different-sizes                     /store/comic-book-icons/    301
-/*-comic-icons-art-available-in-3-formats-and-3-different-sizes1                    /store/comic-book-icons/    301
-/*-comic-book-cover-art-available-in-3-formats-and-3-different-sizes                /store/comic-book-covers/   301
-/*-comic-book-cover-art-available-in-3-formats-and-3-different-sizes1               /store/comic-book-covers/   301
-/*-comic-strip-art-available-in-3-formats-and-3-different-sizes                     /store/comic-book-strips/   301
-/*-comic-strip-art-available-in-3-formats-and-3-different-sizes1                    /store/comic-book-strips/   301
+# ---- STATIC PAGES — OLD FORMAT ----
+/page/pricing  /services  301
+/page/faqs  /services  301
+/page/how-we-do-it  /services  301
+/page/what-we-do  /services  301
+/index.php/page/how-we-do-it  /services  301
+/index.php/page/what-we-do  /services  301
+
+
+# ---- ZYRO NEW-FORMAT LONG-SUFFIX PRODUCT URLS ----
+# These are the Zyro-generated URLs that had a descriptive suffix appended
+/artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /comic-book-covers  301
+/artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes  /comic-book-icons  301
+/deadpool-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/deadpool/  301
+/batman-and-robin-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/batman-and-robin/  301
+/mad-max-comic-icons-art-available-in-3-formats-and-3-different-sizes1  /store/mad-max/  301
+/frank-sinatra-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/frank-sinatra/  301
+/lebron-james-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/lebron-james/  301
