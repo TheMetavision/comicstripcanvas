@@ -31,4 +31,81 @@ import PersonalisationWizard from '../components/PersonalisationWizard.astro';
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <PersonalisationWizard />
   </div>
+
+  <!-- FAQ -->
+  <section class="max-w-3xl mx-auto px-4 pb-16">
+    <h2 class="text-2xl font-extrabold uppercase mb-8 text-center">Frequently Asked Questions</h2>
+    <div class="space-y-6">
+      {[
+        {
+          q: 'How do I order a personalised comic canvas?',
+          a: 'Use the commission form above — choose your style (Cover, Icon, or Strip), upload your photo, add your customisation details, select your format and size, then submit. We\'ll send you a digital proof within 24–48 hours for your approval before anything goes to print.',
+        },
+        {
+          q: 'What photo do I need to send for a personalised comic canvas?',
+          a: 'We accept JPG (.jpg / .jpeg) and PNG files only. For the sharpest result, your image should be at least 2,000 pixels on the shortest side — for larger print sizes, 3,000 pixels or above will give the best quality. The better your photo, the bolder your finished piece — blurry or low-resolution originals can affect the clarity of the artwork, though we will always sharpen and enhance where we can. The pose in your photo is the pose in your artwork, so choose a photo that shows your subject how you want them to be remembered. For Comic Book Covers and Comic Book Icons, upload one photo. For Comic Book Strips, 12 photos are required — each panel is built from a different image, so all 12 slots need to be filled to complete your commission.',
+        },
+        {
+          q: 'Can I request changes to my proof?',
+          a: 'Yes — the proof stage is your opportunity to review the artwork before it goes to print. If you\'d like adjustments to colours, composition, or any detail, just let us know and we\'ll revise it. We want you to love it before we print it.',
+        },
+        {
+          q: 'What is the difference between a personalised Cover, Icon, and Strip?',
+          a: 'A Comic Book Cover is a bold, magazine-style design with your subject as the star. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip tells the story across multiple panels — ideal for capturing a sequence of moments. Covers and Icons have a £10 personalisation fee; Strips have a £25 fee reflecting the additional artwork complexity.',
+        },
+        {
+          q: 'How long does a personalised canvas take to arrive?',
+          a: 'We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses.',
+        },
+        {
+          q: 'How much does a personalised comic canvas cost?',
+          a: 'Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). Add £10 for a personalised Cover or Icon, or £25 for a personalised Strip. Canvas sizes (Small, Medium, Large) are priced separately.',
+        },
+      ].map(({ q, a }) => (
+        <div class="border-l-4 border-comic-red pl-5">
+          <h3 class="font-extrabold text-base mb-2">{q}</h3>
+          <p class="text-gray-600 text-sm leading-relaxed">{a}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <!-- FAQPage Schema -->
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "How do I order a personalised comic canvas?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Use the commission form above — choose your style (Cover, Icon, or Strip), upload your photo, add your customisation details, select your format and size, then submit. We'll send you a digital proof within 24–48 hours for your approval before anything goes to print." }
+      },
+      {
+        "@type": "Question",
+        "name": "What photo do I need to send for a personalised comic canvas?",
+        "acceptedAnswer": { "@type": "Answer", "text": "We accept JPG (.jpg / .jpeg) and PNG files only. For the sharpest result, your image should be at least 2,000 pixels on the shortest side — for larger print sizes, 3,000 pixels or above will give the best quality. The better your photo, the bolder your finished piece — blurry or low-resolution originals can affect the clarity of the artwork, though we will always sharpen and enhance where we can. The pose in your photo is the pose in your artwork, so choose a photo that shows your subject how you want them to be remembered. For Comic Book Covers and Comic Book Icons, upload one photo. For Comic Book Strips, 12 photos are required — each panel is built from a different image, so all 12 slots need to be filled to complete your commission." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I request changes to my proof?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — the proof stage is your opportunity to review the artwork before it goes to print. If you'd like adjustments to colours, composition, or any detail, just let us know and we'll revise it. We want you to love it before we print it." }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between a personalised Cover, Icon, and Strip?",
+        "acceptedAnswer": { "@type": "Answer", "text": "A Comic Book Cover is a bold, magazine-style design with your subject as the star. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip tells the story across multiple panels — ideal for capturing a sequence of moments. Covers and Icons have a £10 personalisation fee; Strips have a £25 fee reflecting the additional artwork complexity." }
+      },
+      {
+        "@type": "Question",
+        "name": "How long does a personalised canvas take to arrive?",
+        "acceptedAnswer": { "@type": "Answer", "text": "We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses." }
+      },
+      {
+        "@type": "Question",
+        "name": "How much does a personalised comic canvas cost?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). Add £10 for a personalised Cover or Icon, or £25 for a personalised Strip. Canvas sizes (Small, Medium, Large) are priced separately." }
+      }
+    ]
+  })} />
+
 </BaseLayout>
