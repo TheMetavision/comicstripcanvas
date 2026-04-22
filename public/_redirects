@@ -1,46 +1,32 @@
-# ============================================================
-# Comic Strip Canvas — Netlify Redirect Rules
-# Generated: 2026-04-22 by Cog
-# Purpose: 301 redirects for 383 indexed 404 URLs following
-#          migration from Zyro/Hostinger to Astro/Sanity CMS
-# ============================================================
-
-# ---- PRODUCT PAGES — OLD ZYRO FORMAT ----
-# /product/{slug} → /store/{slug}/  (covers 113 unique slugs + ?related-products=1 variants)
+# PRODUCT PAGES — wildcard rules (covers /product/:slug and /index.php/product/:slug patterns)
 /product/:slug  /store/:slug/  301
-
-# /index.php/product/{slug} → /store/{slug}/  (covers 79 unique slugs)
 /index.php/product/:slug  /store/:slug/  301
 
-
-# ---- CATEGORY PAGES — OLD ZYRO FORMAT ----
-# Comic Icons (all pagination/sort variants redirect to category root)
+# CATEGORY PAGES — comic icons
 /category/comic-icons  /comic-book-icons  301
 /category/comic-icons/*  /comic-book-icons  301
 /index.php/category/comic-icons  /comic-book-icons  301
 /index.php/category/comic-icons/*  /comic-book-icons  301
 
-# Comic Book Covers
+# CATEGORY PAGES — comic book covers
 /category/comic-book-covers  /comic-book-covers  301
 /category/comic-book-covers/*  /comic-book-covers  301
 /index.php/category/comic-book-covers  /comic-book-covers  301
 /index.php/category/comic-book-covers/*  /comic-book-covers  301
 
-# Comic Strips
+# CATEGORY PAGES — comic strips
 /category/comic-strips  /comic-book-strips  301
 /category/comic-strips/*  /comic-book-strips  301
 /index.php/category/comic-strips  /comic-book-strips  301
 /index.php/category/comic-strips/*  /comic-book-strips  301
 
-
-# ---- ALL PRODUCTS LISTING ----
+# PRODUCTS LISTING PAGES
 /products  /  301
 /products/*  /  301
 /index.php/products  /  301
 /index.php/products/*  /  301
 
-
-# ---- STATIC PAGES — OLD FORMAT ----
+# STATIC PAGES
 /page/pricing  /services  301
 /page/faqs  /services  301
 /page/how-we-do-it  /services  301
@@ -48,13 +34,37 @@
 /index.php/page/how-we-do-it  /services  301
 /index.php/page/what-we-do  /services  301
 
-
-# ---- ZYRO NEW-FORMAT LONG-SUFFIX PRODUCT URLS ----
-# These are the Zyro-generated URLs that had a descriptive suffix appended
+# ZYRO SUFFIX URLS — PLACEHOLDER ARTWORK NAMES
 /artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /comic-book-covers  301
 /artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes  /comic-book-icons  301
+
+# ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (original 6)
 /deadpool-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/deadpool/  301
 /batman-and-robin-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/batman-and-robin/  301
 /mad-max-comic-icons-art-available-in-3-formats-and-3-different-sizes1  /store/mad-max/  301
 /frank-sinatra-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/frank-sinatra/  301
 /lebron-james-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/lebron-james/  301
+
+# ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (appended 2026-04-22)
+/marty-mcfly-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/marty-mcfly/  301
+/audrey-hepburn-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/audrey-hepburn/  301
+/mark-renton-trainspotting-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/mark-renton-trainspotting/  301
+/xxx-tentacion-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/xxx-tentacion/  301
+/bricktop-snatch-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/bricktop-snatch/  301
+/bruno-mars-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/bruno-mars/  301
+/daniel-craig-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/daniel-craig-007/  301
+/hannibal-lecter-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/hannibal-lecter/  301
+/ice-cube-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/ice-cube/  301
+/jack-bauer-24-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/jack-bauer-24/  301
+/juice-wrld-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/juice-wrld/  301
+/kill-bill-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/kill-bill/  301
+/sean-connery-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/sean-connery-007/  301
+/suicide-boys-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/suicide-boys/  301
+/the-sex-pistols-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/the-sex-pistols/  301
+/tyler-durden-fight-club-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/tyler-durden-fight-club/  301
+/usain-bolt-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/usain-bolt/  301
+/zz-top-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/zz-top/  301
+/gremlins-comic-strip-art-available-in-3-formats-and-3-different-sizes  /store/gremlins/  301
+/ronaldo-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/ronaldo/  301
+/diego-maradona-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/diego-maradona/  301
+/leo-messi-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/leo-messi/  301
