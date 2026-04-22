@@ -16,7 +16,7 @@ interface Props {
 const {
   title,
   description = 'Comic Strip Canvas — UK-based pop culture wall art. Bold comic-book style canvas prints, framed prints, and posters. Personalised options available. Free UK P&P.',
-  ogImage = 'https://comicstripcanvas.co.uk/logo.png',
+  ogImage = 'https://assets.zyrosite.com/cdn-cgi/image/format=auto,w=768,fit=crop/dJobXo5wzMH13MyG/universal_upscale_0_378e8cac-370e-4b56-ab7d-cbb045eac260_0-AMqDnxJvzEiMXLvM.jpg',
   ogType = 'website',
   canonical,
   noindex = false,
@@ -100,12 +100,6 @@ const breadcrumbItems = [
       "@type": "Country",
       "name": "United Kingdom",
     },
-    "sameAs": [
-      "https://www.instagram.com/comicstripcanvas",
-      "https://www.facebook.com/ComicStripCanvas/",
-      "https://www.tiktok.com/@comicstripcanvas",
-      "https://x.com/Comicstripcanv",
-    ],
     "hasOfferCatalog": {
       "@type": "OfferCatalog",
       "name": "Comic Strip Canvas Products",
@@ -132,6 +126,7 @@ const breadcrumbItems = [
         },
       ],
     },
+    "sameAs": [],
   })}></script>
 
   <!-- BreadcrumbList Schema (all pages) -->
@@ -160,6 +155,80 @@ const breadcrumbItems = [
         "target": `${siteUrl}/store?q={search_term_string}`,
         "query-input": "required name=search_term_string",
       },
+    })}></script>
+  )}
+
+  <!-- FAQPage Schema (/personalise/) -->
+  {Astro.url.pathname === '/personalise/' && (
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How does the personalised service work?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Simply choose your style (Comic Book Cover, Pop Art Icon, or Comic Strip), upload your photo(s), provide any customisation details, and place your order. Our artists will create a digital proof within 24-48 hours. Once you approve the proof, we print and dispatch your artwork."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What sizes are available?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "We offer three sizes: Small (12x8\"), Medium (16x12\"), and Large (24x16\"). All sizes are available as Poster Prints, Canvas Standard Frame, and Canvas Gallery Frame."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What styles can I choose from?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "We offer three distinct styles: Comic Book Covers (bold, dramatic panel-style covers), Comic Book Icons (pop-art inspired graphic portraits), and Comic Book Strips (multi-panel sequential storytelling). Each style is also available as a ready-made design or fully personalised with your own photos."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will I get to see a proof before you print?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes! For all personalised orders, we send a digital proof via email within 24-48 hours of receiving your order. You can request up to two rounds of revisions before we go to print. We don't start printing until you've given your approval."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How long does delivery take?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For personalised items, please allow 3-6 working days from proof approval. For standard (non-personalised) prints, allow 3-5 working days. All orders are sent via tracked delivery. You'll receive a tracking number when your order ships."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do you ship internationally?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Currently we ship to mainland UK only, with free P&P included on all orders. We're working on expanding to Europe and further afield — sign up to our newsletter to be notified when international shipping launches."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is your returns policy?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Because our products are made to order, we cannot accept returns unless the item is faulty or damaged. If your order arrives damaged, please contact us within 48 hours with photos and we'll arrange a replacement. Personalised items cannot be returned unless they arrive with a printing defect."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What photo do I need to send for a personalised comic canvas?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The better your photo, the bolder your finished piece. We accept JPG (.jpg / .jpeg) and PNG files only. For the sharpest result, your image should be at least 2,000 pixels on the shortest side — for larger print sizes, 3,000 pixels or above will give you the best quality. If you are unsure, upload what you have and we will let you know within 24 hours. Photo quality matters. Blurry or low-resolution originals can affect the clarity of the finished artwork — we will always sharpen and enhance where we can, but a crisp, well-lit original will always produce the most vibrant result. The pose in your photo is the pose in your artwork. If your subject is facing away, looking to the side, or mid-action, that is exactly how your commission will be illustrated — so choose a photo that shows them how you want them to be remembered. For Comic Book Covers and Comic Book Icons, upload one photo. For Comic Book Strips, 12 photos are required — each panel in the strip is built from a different image, so all 12 slots need to be filled to complete your commission."
+          }
+        }
+      ]
     })}></script>
   )}
 </head>
