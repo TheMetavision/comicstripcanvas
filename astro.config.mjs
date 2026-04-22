@@ -16,4 +16,8 @@ export default defineConfig({
   ],
   output: 'static',
   adapter: netlify(),
+  redirects: {
+    '/personalised-products': '/personalise/',
+    '/personalised-products/': '/personalise/',
+  },
 });
