@@ -1,135 +1,208 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import ProductCard from '../../components/ProductCard.astro';
-import { sanityClient } from '../../lib/sanity';
-import { productsByCategoryQuery } from '../../lib/queries';
+import { createClient } from '@sanity/client';
 
-const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'personalised' });
+const client = createClient({
+  projectId: 'lwbwahym',
+  dataset: 'production',
+  useCdn: true,
+  apiVersion: '2024-01-01',
+});
+
+const products = await client.fetch(
+  `*[_type == "product" && category == "personalised"] | order(title asc) {
+    _id,
+    title,
+    slug,
+    description,
+    price,
+    images
+  }`
+);
 ---
 
 <BaseLayout
   title="Personalised Comic Art UK"
-  description="Turn your photo into stunning personalised comic art — hand-illustrated, made to order. Comic book covers, strips and icons. The ultimate unique gift. Order from Comic Strip Canvas."
+  description="Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Hand-illustrated, made to order in the UK. From £9.99. Free P&P."
 >
-  <section class="relative bg-panel-dark py-16 overflow-hidden">
-    <div class="absolute inset-0 halftone-bg opacity-40"></div>
-    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
-    <div class="absolute inset-0" style="background: radial-gradient(circle at 80% 50%, rgba(236,0,140,0.15) 0%, transparent 50%);"></div>
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
-        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
-        <span>/</span>
-        <span class="text-off-white">Personalised Comic Art</span>
-      </nav>
-      <div class="kapow-badge inline-block mb-4">Made for You. Only for You.</div>
-      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
-          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
-        PERSONALISED <span class="text-comic-red">COMIC ART UK</span>
-      </h1>
-      <p class="font-source text-gray-300 text-lg max-w-2xl">
-        Become the hero of your own story. We take your photo and hand-illustrate it into bold, vivid personalised comic art — made to order, unique to you.
-      </p>
-    </div>
-  </section>
 
-  <!-- Body copy above product showcase -->
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-6">
-    <div class="max-w-4xl">
-      <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
-        Your photo. Your moment. Your story — rendered in bold, vivid personalised comic art that stops people in their tracks. At Comic Strip Canvas, we take your image and transform it into the kind of wall art you genuinely can't find anywhere else: hand-illustrated, made to order, and built to hit the wall with maximum KA-POW!
-      </p>
-      <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
-        Choose from three personalised styles. A personalised comic book cover turns you — or the person you're buying for — into a magazine cover star, surrounded by bold graphic design and all the drama of a classic front page. A personalised comic strip tells a story across multiple panels: a wedding, a sporting moment, a family portrait that looks anything but ordinary. A personalised comic book icon piece captures a single subject with all the bold, graphic intensity the format commands.
-      </p>
-      <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
-        Every piece begins with your photo. You upload it through our simple upload portal, we create the artwork, and we share a preview for your approval before anything goes to print. The result is a hand-illustrated, made-to-order piece that is entirely and unmistakably yours.
-      </p>
-      <p class="font-source text-gray-300 text-lg leading-relaxed mb-6">
-        For birthdays, Father's Day, Mother's Day, Christmas, and anniversaries — this is the gift that lands differently. Not a voucher. Not a generic present. A piece of art made for a specific person, to celebrate a specific moment. The gift they will actually remember.
-      </p>
-      <a href="https://form.jotform.com/252743272336356" class="btn-primary inline-block" target="_blank" rel="noopener noreferrer">UPLOAD YOUR PHOTO AND START YOUR COMMISSION →</a>
-    </div>
-  </div>
+  <!-- Breadcrumb -->
+  <nav class="max-w-6xl mx-auto px-4 pt-4 pb-2 text-sm text-gray-500">
+    <a href="/" class="hover:text-comic-red">Home</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-800 font-medium">Personalised</span>
+  </nav>
+
+  <!-- Hero -->
+  <section class="max-w-6xl mx-auto px-4 pt-8 pb-6 text-center">
+    <h1 class="text-4xl md:text-5xl font-extrabold uppercase tracking-tight text-comic-red mb-4">
+      Personalised Comic Art
+    </h1>
+    <p class="text-xl text-gray-700 max-w-2xl mx-auto">
+      Your photo. Your legend. Your wall. Upload a photo and we'll transform it into bold, hand-illustrated comic art — made to order in the UK.
+    </p>
+  </section>
 
   <!-- Product Grid -->
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    {products.length > 0 && (
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {products.map((product) => (
-          <ProductCard product={product} />
-        ))}
+  <section class="max-w-6xl mx-auto px-4 pb-12">
+    {products.length === 0 ? (
+      <p class="text-center text-gray-500 py-12">No products found.</p>
+    ) : (
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+        {products.map((product) => {
+          const image = product.images?.[0];
+          const imageUrl = image?.asset?._ref
+            ? `https://cdn.sanity.io/images/lwbwahym/production/${image.asset._ref.replace('image-', '').replace(/-(\w+)$/, '.$1')}`
+            : null;
+
+          return (
+            <a
+              href={`/store/${product.slug.current}`}
+              class="group block bg-white border-2 border-black rounded-lg overflow-hidden shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-200"
+            >
+              {imageUrl && (
+                <div class="aspect-square overflow-hidden bg-gray-100">
+                  <img
+                    src={imageUrl}
+                    alt={image.alt || product.title}
+                    class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    loading="lazy"
+                  />
+                </div>
+              )}
+              <div class="p-4 border-t-2 border-black">
+                <p class="text-xs font-bold uppercase tracking-widest text-comic-red mb-1">Personalised</p>
+                <h2 class="text-lg font-extrabold uppercase text-black leading-tight mb-2">
+                  {product.title}
+                </h2>
+                <p class="text-sm text-gray-600 mb-3 line-clamp-2">{product.description}</p>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-bold text-black">From £9.99</span>
+                  <span class="text-sm font-bold text-comic-red uppercase tracking-wide group-hover:underline">
+                    View →
+                  </span>
+                </div>
+              </div>
+            </a>
+          );
+        })}
       </div>
     )}
-  </div>
+  </section>
 
-  <!-- FAQ Section -->
-  <section class="bg-charcoal border-t-4 border-black py-16">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-      <h2 class="font-bangers text-4xl text-off-white tracking-wide mb-10"
-          style="text-shadow: 3px 3px 0 rgba(0,0,0,0.5);">
-        FREQUENTLY ASKED <span class="text-comic-red">QUESTIONS</span>
+  <!-- CTA Banner -->
+  <section class="bg-comic-red text-white py-14 px-4">
+    <div class="max-w-3xl mx-auto text-center">
+      <p class="text-xs font-bold uppercase tracking-widest mb-3 opacity-80">Made For You</p>
+      <h2 class="text-3xl md:text-4xl font-extrabold uppercase mb-4">
+        Make Yourself the Hero
       </h2>
-
-      <div class="space-y-8">
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">Can I get personalised comic art made from my own photo?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            Yes — that is exactly what we do. At Comic Strip Canvas, every personalised piece starts with your photo. You upload it through our secure portal, our artists hand-illustrate your commission in bold comic book style, and we share a preview for your approval before it goes to print. The result is a one-of-a-kind piece of personalised comic art made entirely for you.
-          </p>
-        </div>
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">How do I order a personalised comic canvas from Comic Strip Canvas?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            Ordering personalised comic art from Comic Strip Canvas is simple. First, upload your chosen photo using our <a href="https://form.jotform.com/252743272336356" class="text-comic-red hover:text-comic-yellow transition-colors font-semibold" target="_blank" rel="noopener noreferrer">personalisation upload portal</a>. We review your image within 24 hours and confirm your commission. Our artists then hand-illustrate your piece, and we send you a preview to approve. Once you give the green light, your canvas goes to print and is dispatched to your door.
-          </p>
-        </div>
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">What personalised comic styles are available?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            We offer three personalised formats. A personalised comic book cover reimagines you as a magazine cover star — bold, graphic, and genuinely impressive. A personalised comic strip tells your story across multiple dramatic panels. A personalised comic book icon piece captures a single subject in vivid, high-impact comic style. All three are available in multiple sizes and formats.
-          </p>
-        </div>
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">How long does a personalised comic canvas take to make?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            Each personalised comic art piece is hand-illustrated and made to order. Once you upload your photo, you'll receive a digital proof within 24–48 hours. After you approve it, printing and delivery to any UK mainland address takes a further 3–6 working days. We always recommend ordering well in advance for gifting occasions — particularly Father's Day, Christmas, and birthdays — to make sure your piece arrives with time to spare.
-          </p>
-        </div>
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">Is personalised comic art a good gift idea?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            It is one of the most original gifts you can give. Personalised comic art from Comic Strip Canvas takes a generic "I didn't know what to get" problem and turns it into a bold, emotional, one-of-a-kind piece of wall art. It works brilliantly for birthdays, Father's Day, Mother's Day, Christmas, and anniversaries — and it is the kind of gift that gets framed, displayed, and talked about for years. Perfect for someone who has everything. Perfect for someone who means everything.
-          </p>
-        </div>
-
-        <div class="border-l-4 border-comic-red pl-6">
-          <h3 class="font-russo text-off-white text-lg mb-3">What photo do I need to send for a personalised comic canvas?</h3>
-          <p class="font-source text-gray-300 leading-relaxed">
-            For best results, we recommend a clear, well-lit photograph where the subject's face is visible and unobstructed. A high-resolution image will always produce the sharpest, most vibrant result. If you are unsure whether your photo will work, upload it through our portal and our team will review it within 24 hours — we will let you know if we need anything different before your commission begins.
-          </p>
-        </div>
-
-      </div>
-
-      <div class="mt-12 text-center">
-        <a href="https://form.jotform.com/252743272336356" class="btn-primary inline-block" target="_blank" rel="noopener noreferrer">START YOUR COMMISSION →</a>
-      </div>
+      <p class="text-lg mb-6 opacity-90 max-w-xl mx-auto">
+        Choose your style, upload your photo, approve your proof — your personalised comic art is printed and dispatched within 3–6 working days.
+      </p>
+      <a
+        href="/personalise"
+        class="inline-block bg-white text-comic-red font-extrabold uppercase tracking-wider px-8 py-4 rounded-full hover:bg-yellow-300 hover:text-black transition-colors duration-200 text-lg"
+      >
+        Start Your Commission →
+      </a>
     </div>
   </section>
 
+  <!-- How It Works -->
+  <section class="max-w-5xl mx-auto px-4 py-14">
+    <h2 class="text-2xl font-extrabold uppercase text-center mb-10">How It Works</h2>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 text-center">
+      {[
+        { step: '01', label: 'Choose Your Style', desc: 'Cover, Icon, or Strip — pick the format that suits your photo and your wall.' },
+        { step: '02', label: 'Upload Your Photo', desc: 'Submit your photo via our order form. Clear, well-lit photos work best.' },
+        { step: '03', label: 'Approve Your Proof', desc: 'We send your proof within 24–48 hours. Request changes until it\'s perfect.' },
+        { step: '04', label: 'It Arrives', desc: 'Printed and dispatched within 3–6 working days. Free P&P to UK mainland.' },
+      ].map(({ step, label, desc }) => (
+        <div class="flex flex-col items-center">
+          <span class="text-5xl font-extrabold text-comic-red opacity-20 mb-2">{step}</span>
+          <h3 class="font-extrabold uppercase text-sm tracking-wide mb-2">{label}</h3>
+          <p class="text-sm text-gray-600">{desc}</p>
+        </div>
+      ))}
+    </div>
+    <div class="text-center mt-10">
+      <a
+        href="/personalise"
+        class="inline-block bg-comic-red text-white font-extrabold uppercase tracking-wider px-8 py-4 rounded-full hover:bg-black transition-colors duration-200"
+      >
+        Create Your Comic Art →
+      </a>
+    </div>
+  </section>
+
+  <!-- Content Block -->
+  <section class="max-w-3xl mx-auto px-4 pb-10 text-gray-700 text-base leading-relaxed">
+    <h2 class="text-xl font-extrabold uppercase mb-4">Personalised Comic Art — Made to Order in the UK</h2>
+    <p class="mb-4">
+      Comic Strip Canvas personalised products turn your photos into bold, graphic comic-book art — the kind that stops people mid-step when they see it on the wall. Whether it's a gift for someone special or a piece that celebrates a moment that matters to you, every personalised commission is hand-illustrated and made to order in the UK.
+    </p>
+    <p class="mb-4">
+      Choose from three formats: a <a href="/store/comic-book-covers" class="text-comic-red font-semibold hover:underline">Comic Book Cover</a> that puts your subject centre stage, a <a href="/store/comic-book-icons" class="text-comic-red font-semibold hover:underline">Comic Book Icon</a> with bold graphic impact, or a <a href="/store/comic-book-strips" class="text-comic-red font-semibold hover:underline">Comic Book Strip</a> that tells the story across three unforgettable panels.
+    </p>
+    <p>
+      Poster prints start from £9.99. Canvas prints from £26.99. Personalisation fee: +£10 for Covers and Icons, +£25 for Strips. All orders include free P&P to UK mainland addresses.
+    </p>
+  </section>
+
+  <!-- FAQ -->
+  <section class="max-w-3xl mx-auto px-4 pb-16">
+    <h2 class="text-2xl font-extrabold uppercase mb-8 text-center">Frequently Asked Questions</h2>
+    <div class="space-y-6">
+      {[
+        {
+          q: 'How do I order a personalised comic canvas?',
+          a: 'Use our commission form at /personalise — choose your style (Cover, Icon, or Strip), upload your photo, add your customisation details, select your format and size, then submit. We\'ll send you a digital proof within 24–48 hours for your approval before anything goes to print.',
+        },
+        {
+          q: 'What photo do I need to send for a personalised comic canvas?',
+          a: 'We accept JPG (.jpg / .jpeg) and PNG files only. For the sharpest result, your image should be at least 2,000 pixels on the shortest side — for larger print sizes, 3,000 pixels or above will give the best quality. The better your photo, the bolder your finished piece — blurry or low-resolution originals can affect the clarity of the artwork, though we will always sharpen and enhance where we can. The pose in your photo is the pose in your artwork, so choose a photo that shows your subject how you want them to be remembered. For Comic Book Covers and Comic Book Icons, upload one photo. For Comic Book Strips, 12 photos are required — each panel is built from a different image, so all 12 slots need to be filled to complete your commission.',
+        },
+        {
+          q: 'Can I request changes to my proof?',
+          a: 'Yes — the proof stage is your opportunity to review the artwork before it goes to print. If you\'d like adjustments to colours, composition, or any detail, just let us know and we\'ll revise it. We want you to love it before we print it.',
+        },
+        {
+          q: 'What is the difference between a personalised Cover, Icon, and Strip?',
+          a: 'A Comic Book Cover is a bold, magazine-style design with your subject as the star. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip tells the story across three panels — ideal for capturing a sequence of moments. Covers and Icons have a £10 personalisation fee; Strips have a £25 fee reflecting the additional artwork complexity.',
+        },
+        {
+          q: 'How long does a personalised canvas take to arrive?',
+          a: 'We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses.',
+        },
+        {
+          q: 'How much does a personalised comic canvas cost?',
+          a: 'Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). Add £10 for a personalised Cover or Icon, or £25 for a personalised Strip. Canvas sizes (Small, Medium, Large) are priced separately.',
+        },
+      ].map(({ q, a }) => (
+        <div class="border-l-4 border-comic-red pl-5">
+          <h3 class="font-extrabold text-base mb-2">{q}</h3>
+          <p class="text-gray-600 text-sm leading-relaxed">{a}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <!-- Schema -->
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comicstripcanvas.co.uk" },
-      { "@type": "ListItem", "position": 2, "name": "Personalised Comic Art", "item": "https://comicstripcanvas.co.uk/personalised" }
-    ]
-  })}></script>
+    "@type": "CollectionPage",
+    "name": "Personalised Comic Art UK",
+    "description": "Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Hand-illustrated, made to order in the UK.",
+    "url": "https://www.comicstripcanvas.co.uk/store/personalised",
+    "breadcrumb": {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.comicstripcanvas.co.uk" },
+        { "@type": "ListItem", "position": 2, "name": "Personalised", "item": "https://www.comicstripcanvas.co.uk/store/personalised" }
+      ]
+    }
+  })} />
 
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
@@ -137,34 +210,35 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
     "mainEntity": [
       {
         "@type": "Question",
-        "name": "Can I get personalised comic art made from my own photo?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Yes — that is exactly what we do. At Comic Strip Canvas, every personalised piece starts with your photo. You upload it through our secure portal, our artists hand-illustrate your commission in bold comic book style, and we share a preview for your approval before it goes to print." }
-      },
-      {
-        "@type": "Question",
-        "name": "How do I order a personalised comic canvas from Comic Strip Canvas?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Upload your chosen photo using our personalisation upload portal at https://form.jotform.com/252743272336356. We review your image within 24 hours and confirm your commission. Our artists hand-illustrate your piece, send you a preview to approve, then print and dispatch." }
-      },
-      {
-        "@type": "Question",
-        "name": "What personalised comic styles are available?",
-        "acceptedAnswer": { "@type": "Answer", "text": "We offer three personalised formats: a comic book cover, a comic strip across multiple panels, and a single-subject comic icon piece. All three are available in multiple sizes and formats." }
-      },
-      {
-        "@type": "Question",
-        "name": "How long does a personalised comic canvas take to make?",
-        "acceptedAnswer": { "@type": "Answer", "text": "You'll receive a digital proof within 24–48 hours of uploading. After approval, printing and UK mainland delivery takes a further 3–6 working days." }
-      },
-      {
-        "@type": "Question",
-        "name": "Is personalised comic art a good gift idea?",
-        "acceptedAnswer": { "@type": "Answer", "text": "It is one of the most original gifts you can give — a bold, emotional, one-of-a-kind piece of wall art. Works brilliantly for birthdays, Father's Day, Mother's Day, Christmas, and anniversaries." }
+        "name": "How do I order a personalised comic canvas?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Use our commission form — choose your style (Cover, Icon, or Strip), upload your photo, add your customisation details, select your format and size, then submit. We'll send you a digital proof within 24–48 hours for your approval before anything goes to print." }
       },
       {
         "@type": "Question",
         "name": "What photo do I need to send for a personalised comic canvas?",
-        "acceptedAnswer": { "@type": "Answer", "text": "A clear, well-lit photograph where the subject's face is visible and unobstructed. High resolution gives the sharpest result. Upload it and our team will review it within 24 hours." }
+        "acceptedAnswer": { "@type": "Answer", "text": "We accept JPG (.jpg / .jpeg) and PNG files only. For the sharpest result, your image should be at least 2,000 pixels on the shortest side — for larger print sizes, 3,000 pixels or above will give the best quality. The better your photo, the bolder your finished piece — blurry or low-resolution originals can affect the clarity of the artwork, though we will always sharpen and enhance where we can. The pose in your photo is the pose in your artwork, so choose a photo that shows your subject how you want them to be remembered. For Comic Book Covers and Comic Book Icons, upload one photo. For Comic Book Strips, 12 photos are required — each panel is built from a different image, so all 12 slots need to be filled to complete your commission." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I request changes to my proof?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — the proof stage is your opportunity to review the artwork before it goes to print. If you'd like adjustments to colours, composition, or any detail, just let us know and we'll revise it." }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between a personalised Cover, Icon, and Strip?",
+        "acceptedAnswer": { "@type": "Answer", "text": "A Comic Book Cover is a bold, magazine-style design with your subject as the star. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip tells the story across three panels. Covers and Icons have a £10 personalisation fee; Strips have a £25 fee." }
+      },
+      {
+        "@type": "Question",
+        "name": "How long does a personalised canvas take to arrive?",
+        "acceptedAnswer": { "@type": "Answer", "text": "We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses." }
+      },
+      {
+        "@type": "Question",
+        "name": "How much does a personalised comic canvas cost?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). Add £10 for a personalised Cover or Icon, or £25 for a personalised Strip." }
       }
     ]
-  })}></script>
+  })} />
+
 </BaseLayout>
