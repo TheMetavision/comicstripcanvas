@@ -39,32 +39,80 @@
 /artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes  /comic-book-icons  301
 
 # ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (original 6)
-/deadpool-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/deadpool/  301
+/deadpool-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/deadpool-icon/  301
 /batman-and-robin-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/batman-and-robin/  301
 /mad-max-comic-icons-art-available-in-3-formats-and-3-different-sizes1  /store/mad-max/  301
 /frank-sinatra-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/frank-sinatra/  301
-/lebron-james-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/lebron-james/  301
+/lebron-james-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/lebron-james-cover/  301
 
 # ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (appended 2026-04-22)
-/marty-mcfly-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/marty-mcfly/  301
+/marty-mcfly-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/marty-mcfly-cover/  301
 /audrey-hepburn-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/audrey-hepburn/  301
 /mark-renton-trainspotting-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/mark-renton-trainspotting/  301
-/xxx-tentacion-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/xxx-tentacion/  301
-/bricktop-snatch-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/bricktop-snatch/  301
+/xxx-tentacion-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/xxxtentacion/  301
+/bricktop-snatch-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/bricktop/  301
 /bruno-mars-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/bruno-mars/  301
-/daniel-craig-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/daniel-craig-007/  301
+/daniel-craig-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/007/  301
 /hannibal-lecter-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/hannibal-lecter/  301
 /ice-cube-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/ice-cube/  301
-/jack-bauer-24-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/jack-bauer-24/  301
+/jack-bauer-24-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/jack-bauer/  301
 /juice-wrld-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/juice-wrld/  301
 /kill-bill-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/kill-bill/  301
-/sean-connery-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/sean-connery-007/  301
+/sean-connery-007-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/007/  301
 /suicide-boys-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/suicide-boys/  301
 /the-sex-pistols-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/the-sex-pistols/  301
-/tyler-durden-fight-club-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/tyler-durden-fight-club/  301
-/usain-bolt-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/usain-bolt/  301
+/tyler-durden-fight-club-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/tyler-durden-cover/  301
+/usain-bolt-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/usain-bolt-cover/  301
 /zz-top-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/zz-top/  301
 /gremlins-comic-strip-art-available-in-3-formats-and-3-different-sizes  /store/gremlins/  301
 /ronaldo-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/ronaldo/  301
 /diego-maradona-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/diego-maradona/  301
-/leo-messi-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/leo-messi/  301
+/leo-messi-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/leo-messi-icon/  301
+
+# DUPLICATE SLUG MIGRATION (2026-04-22) — base slugs redirect to icon variant
+# After de-duplication, each character has multiple slugs (ayrton-senna-icon, ayrton-senna-cover).
+# The original base slug redirects to the icon variant (historically the primary category).
+/store/ayrton-senna  /store/ayrton-senna-icon/  301
+/store/ayrton-senna/  /store/ayrton-senna-icon/  301
+/store/billie-eilish  /store/billie-eilish-icon/  301
+/store/billie-eilish/  /store/billie-eilish-icon/  301
+/store/bob-marley  /store/bob-marley-icon/  301
+/store/bob-marley/  /store/bob-marley-icon/  301
+/store/bruce-lee  /store/bruce-lee-icon/  301
+/store/bruce-lee/  /store/bruce-lee-icon/  301
+/store/che-guevera  /store/che-guevera-icon/  301
+/store/che-guevera/  /store/che-guevera-icon/  301
+/store/deadpool  /store/deadpool-icon/  301
+/store/deadpool/  /store/deadpool-icon/  301
+/store/indiana-jones  /store/indiana-jones-icon/  301
+/store/indiana-jones/  /store/indiana-jones-icon/  301
+/store/jimi-hendrix  /store/jimi-hendrix-icon/  301
+/store/jimi-hendrix/  /store/jimi-hendrix-icon/  301
+/store/kurt-cobain  /store/kurt-cobain-icon/  301
+/store/kurt-cobain/  /store/kurt-cobain-icon/  301
+/store/lebron-james  /store/lebron-james-icon/  301
+/store/lebron-james/  /store/lebron-james-icon/  301
+/store/leo-messi  /store/leo-messi-icon/  301
+/store/leo-messi/  /store/leo-messi-icon/  301
+/store/madonna  /store/madonna-icon/  301
+/store/madonna/  /store/madonna-icon/  301
+/store/marty-mcfly  /store/marty-mcfly-icon/  301
+/store/marty-mcfly/  /store/marty-mcfly-icon/  301
+/store/pele  /store/pele-icon/  301
+/store/pele/  /store/pele-icon/  301
+/store/rafael-nadal  /store/rafael-nadal-icon/  301
+/store/rafael-nadal/  /store/rafael-nadal-icon/  301
+/store/rocky  /store/rocky-icon/  301
+/store/rocky/  /store/rocky-icon/  301
+/store/roger-federer  /store/roger-federer-icon/  301
+/store/roger-federer/  /store/roger-federer-icon/  301
+/store/scarface  /store/scarface-icon/  301
+/store/scarface/  /store/scarface-icon/  301
+/store/tiger-woods  /store/tiger-woods-icon/  301
+/store/tiger-woods/  /store/tiger-woods-icon/  301
+/store/travis-bickle  /store/travis-bickle-icon/  301
+/store/travis-bickle/  /store/travis-bickle-icon/  301
+/store/tyler-durden  /store/tyler-durden-icon/  301
+/store/tyler-durden/  /store/tyler-durden-icon/  301
+/store/usain-bolt  /store/usain-bolt-icon/  301
+/store/usain-bolt/  /store/usain-bolt-icon/  301
