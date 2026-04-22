@@ -96,7 +96,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
         {[
           { title: 'Comic Book Covers', accent: 'border-comic-red', accentText: 'text-comic-red', desc: 'Bold, dramatic artwork inspired by the golden and silver ages of comic books. Perfect for fans of classic superhero aesthetics, with vibrant colour palettes and dynamic compositions.', fee: 'Personalisation: +£10', imgs: coverImgs, id: 'style-covers' },
           { title: 'Comic Book Icons', accent: 'border-comic-yellow', accentText: 'text-comic-yellow', desc: 'Graphic, pop-art inspired portraits and iconic character studies. Clean lines, flat colour, and maximum visual impact. Ideal for a contemporary, gallery-style finish.', fee: 'Personalisation: +£10', imgs: iconImgs, id: 'style-icons' },
-          { title: 'Comic Book Strips', accent: 'border-comic-cyan', accentText: 'text-comic-cyan', desc: 'Multi-panel sequential art that tells a story. From three panels to six, these pieces are narrative-driven, humorous, or action-packed — often all three at once.', fee: 'Personalisation: +£25', imgs: stripImgs, id: 'style-strips' },
+          { title: 'Comic Book Strips', accent: 'border-comic-cyan', accentText: 'text-comic-cyan', desc: 'A single canvas featuring twelve comic art images laid out across a bold comic-book spread. Narrative-driven, humorous, or action-packed — often all three at once.', fee: 'Personalisation: +£25', imgs: stripImgs, id: 'style-strips' },
         ].map((item) => (
           <div class={`bg-panel-dark border-4 ${item.accent} p-6`} style="box-shadow: 4px 4px 0 #000;">
             <div class="aspect-square bg-mid-grey mb-5 overflow-hidden relative" id={item.id}>
