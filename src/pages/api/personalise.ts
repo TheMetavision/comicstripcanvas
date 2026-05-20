@@ -71,6 +71,12 @@ export const POST: APIRoute = async ({ request }) => {
     // Store photo URLs as comma-separated, truncated if needed
     const photoUrlsMeta = photoUrls.join(', ').substring(0, 490);
 
+    // Free postage threshold and standard rate — keep in sync with /api/checkout and src/stores/cart.ts
+    const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
+    const STANDARD_SHIPPING_PENCE = 495;        // £4.95
+    const subtotalPence = Math.round((basePrice + styleConfig.fee) * 100);
+    const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
@@ -105,8 +111,13 @@ export const POST: APIRoute = async ({ request }) => {
         {
           shipping_rate_data: {
             type: 'fixed_amount',
-            fixed_amount: { amount: 0, currency: 'gbp' },
-            display_name: 'Free UK P&P',
+            fixed_amount: {
+              amount: qualifiesForFreeShipping ? 0 : STANDARD_SHIPPING_PENCE,
+              currency: 'gbp',
+            },
+            display_name: qualifiesForFreeShipping
+              ? 'FREE UK delivery (orders over £50)'
+              : 'Standard UK delivery',
             delivery_estimate: {
               minimum: { unit: 'business_day', value: 5 },
               maximum: { unit: 'business_day', value: 10 },

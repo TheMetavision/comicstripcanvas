@@ -23,7 +23,7 @@ const products = await client.fetch(
 
 <BaseLayout
   title="Personalised Comic Art UK"
-  description="Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Bespoke comic art, made to order in the UK. From £9.99. Free P&P."
+  description="Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Bespoke comic art, made to order in the UK. From £9.99. FREE UK P&P on orders over £50."
 >
 
   <!-- Breadcrumb -->
@@ -117,7 +117,7 @@ const products = await client.fetch(
         { step: '01', label: 'Choose Your Style', desc: 'Cover, Icon, or Strip — pick the format that suits your photo and your wall.' },
         { step: '02', label: 'Upload Your Photo', desc: 'Submit your photo via our order form. Clear, well-lit photos work best.' },
         { step: '03', label: 'Approve Your Proof', desc: 'We send your proof within 24–48 hours. Request changes until it\'s perfect.' },
-        { step: '04', label: 'It Arrives', desc: 'Printed and dispatched within 3–6 working days. Free P&P to UK mainland.' },
+        { step: '04', label: 'It Arrives', desc: 'Printed and dispatched within 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95.' },
       ].map(({ step, label, desc }) => (
         <div class="flex flex-col items-center">
           <span class="text-5xl font-extrabold text-comic-red opacity-20 mb-2">{step}</span>
@@ -146,7 +146,7 @@ const products = await client.fetch(
       Choose from three formats: a <a href="/store/comic-book-covers" class="text-comic-red font-semibold hover:underline">Comic Book Cover</a> that puts your subject centre stage, a <a href="/store/comic-book-icons" class="text-comic-red font-semibold hover:underline">Comic Book Icon</a> with bold graphic impact, or a <a href="/store/comic-book-strips" class="text-comic-red font-semibold hover:underline">Comic Book Strip</a> — a single canvas of twelve bold comic art images that tells the full story.
     </p>
     <p>
-      Poster prints start from £9.99. Canvas prints from £26.99. Personalisation fee: +£10 for Covers and Icons, +£25 for Strips. All orders include free P&P to UK mainland addresses.
+      Poster prints start from £9.99. Canvas prints from £26.99. Personalisation fee: +£10 for Covers and Icons, +£25 for Strips. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.
     </p>
   </section>
 
@@ -173,7 +173,7 @@ const products = await client.fetch(
         },
         {
           q: 'How long does a personalised canvas take to arrive?',
-          a: 'We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses.',
+          a: 'We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.',
         },
         {
           q: 'How much does a personalised comic canvas cost?',
@@ -231,7 +231,7 @@ const products = await client.fetch(
       {
         "@type": "Question",
         "name": "How long does a personalised canvas take to arrive?",
-        "acceptedAnswer": { "@type": "Answer", "text": "We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. All orders include free P&P to UK mainland addresses." }
+        "acceptedAnswer": { "@type": "Answer", "text": "We send your proof within 24–48 hours of receiving your order. Once you approve it, production and dispatch takes 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery." }
       },
       {
         "@type": "Question",

@@ -13,11 +13,17 @@
 
   <div class="flex items-center justify-between p-5 border-b-4 border-black bg-comic-red">
     <h2 class="font-bangers text-3xl text-white tracking-wide">YOUR CART</h2>
-    <button id="cart-close" class="text-white hover:text-comic-yellow transition-colors p-1">
-      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-      </svg>
-    </button>
+    <div class="flex items-center gap-3">
+      <button id="cart-clear"
+              class="hidden font-russo text-xs text-white/80 hover:text-white uppercase tracking-wide underline underline-offset-2">
+        Clear
+      </button>
+      <button id="cart-close" class="text-white hover:text-comic-yellow transition-colors p-1" aria-label="Close cart">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   </div>
 
   <div id="cart-items-container" class="flex-1 overflow-y-auto p-4 space-y-4">
@@ -30,11 +36,22 @@
   </div>
 
   <div id="cart-footer" class="hidden border-t-4 border-black p-5 bg-black">
+
+    <!-- Live free-shipping progress -->
+    <div id="shipping-progress" class="mb-4 p-3 border-2 border-gray-700 bg-black">
+      <p id="shipping-msg" class="font-russo text-xs uppercase tracking-wide text-gray-300 text-center mb-2">
+        Add £50.00 more for FREE UK P&amp;P
+      </p>
+      <div class="h-1 bg-gray-800 overflow-hidden">
+        <div id="shipping-fill" class="h-full bg-comic-yellow transition-all duration-500" style="width: 0%"></div>
+      </div>
+    </div>
+
     <div class="flex justify-between items-center mb-4">
       <span class="font-russo text-off-white uppercase tracking-wide">Subtotal</span>
       <span id="cart-subtotal" class="font-bangers text-comic-yellow text-2xl">£0.00</span>
     </div>
-    <p class="font-source text-gray-400 text-xs mb-4">Free UK P&P included. Made to order.</p>
+
     <button id="checkout-btn" class="btn-primary w-full text-center block mb-3">CHECKOUT</button>
     <p id="checkout-error" class="hidden font-source text-comic-red text-xs text-center mb-2"></p>
     <button id="continue-shopping" class="w-full text-center font-russo text-sm text-gray-400 hover:text-comic-cyan transition-colors uppercase tracking-wide py-2">
@@ -44,17 +61,31 @@
 </aside>
 
 <script>
-  import { cartOpen, cartItems, cartTotal, removeFromCart, updateQuantity } from '../stores/cart';
+  import {
+    cartOpen,
+    cartItems,
+    cartTotal,
+    qualifiesForFreeShipping,
+    amountToFreeShipping,
+    FREE_SHIPPING_THRESHOLD,
+    removeFromCart,
+    updateQuantity,
+    clearCart,
+  } from '../stores/cart';
   import type { CartItem } from '../stores/cart';
 
   const panel = document.getElementById('cart-panel');
   const overlay = document.getElementById('cart-overlay');
   const closeBtn = document.getElementById('cart-close');
+  const clearBtn = document.getElementById('cart-clear');
   const continueShopping = document.getElementById('continue-shopping');
   const cartEmpty = document.getElementById('cart-empty');
   const cartList = document.getElementById('cart-list');
   const cartFooter = document.getElementById('cart-footer');
   const cartSubtotal = document.getElementById('cart-subtotal');
+  const shippingMsg = document.getElementById('shipping-msg');
+  const shippingFill = document.getElementById('shipping-fill');
+  const shippingProgress = document.getElementById('shipping-progress');
 
   function openCart() {
     panel?.classList.remove('translate-x-full');
@@ -78,6 +109,18 @@
   overlay?.addEventListener('click', closeCart);
   continueShopping?.addEventListener('click', closeCart);
 
+  clearBtn?.addEventListener('click', () => {
+    if (cartItems.get().length === 0) return;
+    if (window.confirm('Empty your cart? This can\u2019t be undone.')) {
+      clearCart();
+    }
+  });
+
+  // Escape to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && cartOpen.get()) closeCart();
+  });
+
   const FORMAT_LABELS: Record<string, string> = {
     poster: 'Poster Print',
     'canvas-standard': 'Canvas (Standard)',
@@ -91,16 +134,18 @@
   };
 
   function renderCartItems(items: CartItem[]) {
-    if (!cartList || !cartEmpty || !cartFooter) return;
+    if (!cartList || !cartEmpty || !cartFooter || !clearBtn) return;
 
     if (items.length === 0) {
       cartEmpty.classList.remove('hidden');
       cartList.classList.add('hidden');
       cartFooter.classList.add('hidden');
+      clearBtn.classList.add('hidden');
     } else {
       cartEmpty.classList.add('hidden');
       cartList.classList.remove('hidden');
       cartFooter.classList.remove('hidden');
+      clearBtn.classList.remove('hidden');
 
       cartList.innerHTML = items.map(item => `
         <div class="bg-charcoal border-4 border-black p-3" data-item-id="${item.id}">
@@ -124,7 +169,7 @@
                 <span class="font-bangers text-comic-yellow text-lg">£${(item.unitPrice * item.quantity).toFixed(2)}</span>
               </div>
             </div>
-            <button class="remove-btn text-gray-500 hover:text-comic-red transition-colors self-start" data-id="${item.id}">
+            <button class="remove-btn text-gray-500 hover:text-comic-red transition-colors self-start" data-id="${item.id}" aria-label="Remove item">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
@@ -160,7 +205,36 @@
     if (cartSubtotal) {
       cartSubtotal.textContent = `£${total.toFixed(2)}`;
     }
+
+    // Update progress bar fill
+    if (shippingFill) {
+      const pct = Math.min(100, (total / FREE_SHIPPING_THRESHOLD) * 100);
+      shippingFill.style.width = `${pct}%`;
+    }
   });
+
+  // Free shipping messaging — switches between "add £X more" and "you've unlocked"
+  function updateShippingMessage() {
+    if (!shippingMsg || !shippingProgress) return;
+    const qualified = qualifiesForFreeShipping.get();
+    const remaining = amountToFreeShipping.get();
+    if (qualified) {
+      shippingMsg.textContent = "🎉 You've unlocked FREE UK P&P";
+      shippingMsg.classList.remove('text-gray-300');
+      shippingMsg.classList.add('text-comic-yellow');
+      shippingProgress.classList.remove('border-gray-700');
+      shippingProgress.classList.add('border-comic-yellow');
+    } else {
+      shippingMsg.textContent = `Add £${remaining.toFixed(2)} more for FREE UK P&P`;
+      shippingMsg.classList.remove('text-comic-yellow');
+      shippingMsg.classList.add('text-gray-300');
+      shippingProgress.classList.remove('border-comic-yellow');
+      shippingProgress.classList.add('border-gray-700');
+    }
+  }
+
+  qualifiesForFreeShipping.subscribe(updateShippingMessage);
+  amountToFreeShipping.subscribe(updateShippingMessage);
 
   // Checkout handler
   const checkoutBtn = document.getElementById('checkout-btn');
@@ -170,7 +244,6 @@
     const items = cartItems.get();
     if (items.length === 0) return;
 
-    // Disable button and show loading
     checkoutBtn.textContent = 'PROCESSING...';
     checkoutBtn.setAttribute('disabled', 'true');
     checkoutBtn.classList.add('opacity-60', 'cursor-not-allowed');
@@ -189,6 +262,7 @@
             size: item.size,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
+            imageUrl: item.imageUrl,
           })),
         }),
       });
