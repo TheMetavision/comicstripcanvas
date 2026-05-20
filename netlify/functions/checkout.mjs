@@ -16,6 +16,10 @@ const SIZE_LABELS = {
   large: 'Large (24×16")',
 };
 
+// Free postage threshold and standard rate — keep in sync with src/stores/cart.ts and /api/personalise
+const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
+const STANDARD_SHIPPING_PENCE = 495;        // £4.95
+
 export default async (req, context) => {
   // Only allow POST
   if (req.method !== 'POST') {
@@ -35,6 +39,27 @@ export default async (req, context) => {
       });
     }
 
+    // Validate items + compute subtotal server-side. Never trust client prices
+    // for the shipping decision.
+    let subtotalPence = 0;
+    for (const item of items) {
+      if (
+        typeof item.unitPrice !== 'number' ||
+        typeof item.quantity !== 'number' ||
+        item.unitPrice <= 0 ||
+        item.quantity <= 0 ||
+        item.quantity > 99
+      ) {
+        return new Response(JSON.stringify({ error: 'Invalid item in cart' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      subtotalPence += Math.round(item.unitPrice * 100) * item.quantity;
+    }
+
+    const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
+
     // Build Stripe line items
     const lineItems = items.map((item) => ({
       price_data: {
@@ -49,7 +74,7 @@ export default async (req, context) => {
             size: item.size,
           },
         },
-        unit_amount: Math.round(item.unitPrice * 100), // Convert to pence
+        unit_amount: Math.round(item.unitPrice * 100),
       },
       quantity: item.quantity,
     }));
@@ -72,14 +97,19 @@ export default async (req, context) => {
       mode: 'payment',
       line_items: lineItems,
       shipping_address_collection: {
-        allowed_countries: ['GB', 'IE', 'US', 'CA', 'AU', 'NZ', 'FR', 'DE', 'ES', 'IT', 'NL', 'BE'],
+        allowed_countries: ['GB'],
       },
       shipping_options: [
         {
           shipping_rate_data: {
             type: 'fixed_amount',
-            fixed_amount: { amount: 0, currency: 'gbp' },
-            display_name: 'Free UK P&P',
+            fixed_amount: {
+              amount: qualifiesForFreeShipping ? 0 : STANDARD_SHIPPING_PENCE,
+              currency: 'gbp',
+            },
+            display_name: qualifiesForFreeShipping
+              ? 'FREE UK delivery (orders over £50)'
+              : 'Standard UK delivery',
             delivery_estimate: {
               minimum: { unit: 'business_day', value: 3 },
               maximum: { unit: 'business_day', value: 6 },
