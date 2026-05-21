@@ -60,6 +60,47 @@
   </div>
 </aside>
 
+<!-- Clear cart confirmation modal — themed to match CSC comic aesthetic -->
+<div id="clear-confirm-overlay"
+     class="fixed inset-0 bg-black bg-opacity-80 z-[80] hidden items-center justify-center p-4"
+     aria-hidden="true">
+  <div id="clear-confirm-modal"
+       class="bg-panel-dark border-4 border-comic-red max-w-sm w-full transform scale-95 opacity-0 transition-all duration-200"
+       style="box-shadow: 8px 8px 0 #000000;"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="clear-confirm-title">
+
+    <div class="bg-comic-red border-b-4 border-black p-4 flex items-center justify-between">
+      <h3 id="clear-confirm-title" class="font-bangers text-2xl text-white tracking-wide">
+        EMPTY YOUR CART?
+      </h3>
+      <span class="font-bangers text-2xl text-white opacity-70" aria-hidden="true">!</span>
+    </div>
+
+    <div class="p-5">
+      <p class="font-source text-off-white text-sm leading-relaxed mb-2">
+        You're about to remove <span id="clear-confirm-count" class="font-russo text-comic-yellow">0 items</span> from your cart.
+      </p>
+      <p class="font-source text-gray-400 text-xs leading-relaxed mb-5">
+        This can't be undone — but you can always add them back from the store.
+      </p>
+
+      <div class="flex flex-col gap-2">
+        <button id="clear-confirm-yes"
+                class="w-full bg-comic-yellow hover:bg-comic-red text-black hover:text-white font-bangers text-xl tracking-wide py-3 border-2 border-black transition-colors"
+                style="box-shadow: 3px 3px 0 #000000;">
+          YES, EMPTY IT
+        </button>
+        <button id="clear-confirm-no"
+                class="w-full bg-transparent hover:bg-gray-800 text-gray-300 font-russo text-sm uppercase tracking-wide py-2 border-2 border-gray-700 transition-colors">
+          Keep my cart
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   import {
     cartOpen,
@@ -111,14 +152,65 @@
 
   clearBtn?.addEventListener('click', () => {
     if (cartItems.get().length === 0) return;
-    if (window.confirm('Empty your cart? This can\u2019t be undone.')) {
-      clearCart();
-    }
+    openClearConfirm();
   });
 
-  // Escape to close
+  // ============================================================
+  // Clear-cart confirmation modal
+  // ============================================================
+  const clearOverlay = document.getElementById('clear-confirm-overlay');
+  const clearModal = document.getElementById('clear-confirm-modal');
+  const clearYes = document.getElementById('clear-confirm-yes');
+  const clearNo = document.getElementById('clear-confirm-no');
+  const clearCount = document.getElementById('clear-confirm-count');
+
+  function openClearConfirm() {
+    if (!clearOverlay || !clearModal || !clearCount) return;
+
+    const items = cartItems.get();
+    const totalQty = items.reduce((sum, i) => sum + i.quantity, 0);
+    clearCount.textContent = totalQty === 1 ? '1 item' : `${totalQty} items`;
+
+    clearOverlay.classList.remove('hidden');
+    clearOverlay.classList.add('flex');
+    // Trigger the pop-in animation
+    requestAnimationFrame(() => {
+      clearModal.classList.remove('scale-95', 'opacity-0');
+      clearModal.classList.add('scale-100', 'opacity-100');
+    });
+  }
+
+  function closeClearConfirm() {
+    if (!clearOverlay || !clearModal) return;
+    clearModal.classList.remove('scale-100', 'opacity-100');
+    clearModal.classList.add('scale-95', 'opacity-0');
+    // Wait for animation, then hide
+    setTimeout(() => {
+      clearOverlay.classList.add('hidden');
+      clearOverlay.classList.remove('flex');
+    }, 200);
+  }
+
+  clearYes?.addEventListener('click', () => {
+    clearCart();
+    closeClearConfirm();
+  });
+
+  clearNo?.addEventListener('click', closeClearConfirm);
+
+  // Click outside the modal to dismiss
+  clearOverlay?.addEventListener('click', (e) => {
+    if (e.target === clearOverlay) closeClearConfirm();
+  });
+
+  // Escape to close — modal takes precedence over cart
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && cartOpen.get()) closeCart();
+    if (e.key !== 'Escape') return;
+    if (clearOverlay && !clearOverlay.classList.contains('hidden')) {
+      closeClearConfirm();
+    } else if (cartOpen.get()) {
+      closeCart();
+    }
   });
 
   const FORMAT_LABELS: Record<string, string> = {
