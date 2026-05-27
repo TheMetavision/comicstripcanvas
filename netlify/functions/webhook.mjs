@@ -38,6 +38,44 @@ const BRAND = {
   site: 'https://comicstripcanvas.co.uk',
 };
 
+const ORDER_COUNTER_ID = 'orderCounter';
+
+/**
+ * Atomically allocate the next order number, e.g. "CSC-1001".
+ * Uses a Sanity transaction with a patch precondition so two simultaneous
+ * orders can never receive the same number.
+ */
+async function getNextOrderNumber() {
+  // Ensure the counter document exists (no-op if it already does).
+  await sanity.createIfNotExists({
+    _id: ORDER_COUNTER_ID,
+    _type: 'orderCounter',
+    lastOrderNumber: 1000,
+  });
+
+  // Retry loop in case of a concurrent write collision.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const counter = await sanity.getDocument(ORDER_COUNTER_ID);
+    const current = counter?.lastOrderNumber || 1000;
+    const next = current + 1;
+
+    try {
+      await sanity
+        .patch(ORDER_COUNTER_ID, {
+          // Only apply if nobody else has changed it since we read it.
+          ifRevisionID: counter._rev,
+        })
+        .set({ lastOrderNumber: next })
+        .commit();
+      return `CSC-${next}`;
+    } catch (err) {
+      // Revision mismatch — someone else incremented it. Retry.
+      if (attempt === 4) throw err;
+    }
+  }
+  throw new Error('Could not allocate order number after 5 attempts');
+}
+
 export default async (req, context) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
@@ -75,6 +113,13 @@ export default async (req, context) => {
       const customerEmail = session.customer_details?.email || '';
       const totalAmount = (session.amount_total || 0) / 100;
 
+      // Real shipping cost from the Stripe session (pence -> pounds).
+      const shippingPence = session.shipping_cost?.amount_total || 0;
+      const shippingCost = shippingPence / 100;
+      const shippingLabel =
+        shippingPence === 0 ? 'FREE UK P&P' : `£${shippingCost.toFixed(2)}`;
+      const shippingColor = shippingPence === 0 ? '#28a745' : '#333333';
+
       let lineItems;
       let personalisationDetails = undefined;
       let itemRows;
@@ -85,15 +130,23 @@ export default async (req, context) => {
         const size = session.metadata?.size || '';
         const basePrice = parseFloat(session.metadata?.basePrice || '0');
         const artFee = parseFloat(session.metadata?.artFee || '0');
-        const customerTitle = session.metadata?.customerTitle || '';
-        const captionText = session.metadata?.captionText || '';
-        const instructions = session.metadata?.instructions || '';
 
-        // Parse photo URLs — stored as comma-separated string in metadata
-        const photoUrlsRaw = session.metadata?.photoUrls || '';
-        const photoUrls = photoUrlsRaw
-          ? photoUrlsRaw.split(', ').map((u) => u.trim()).filter(Boolean)
-          : [];
+        // Fetch the full personalisation brief from the pending document.
+        // This carries ALL photo URLs with no length limit.
+        const personalisationRef = session.metadata?.personalisationRef || '';
+        let pending = null;
+        if (personalisationRef) {
+          try {
+            pending = await sanity.getDocument(personalisationRef);
+          } catch (err) {
+            console.error(`Could not fetch pending personalisation ${personalisationRef}:`, err.message);
+          }
+        }
+
+        const customerTitle = pending?.customerTitle || '';
+        const captionText = pending?.captionText || '';
+        const instructions = pending?.instructions || '';
+        const photoUrls = Array.isArray(pending?.uploadedImages) ? pending.uploadedImages : [];
 
         lineItems = [
           {
@@ -138,6 +191,15 @@ export default async (req, context) => {
             <td style="padding: 12px 16px; border-bottom: 1px solid #eee;" colspan="3">Custom artwork creation</td>
             <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: right;">£${artFee.toFixed(2)}</td>
           </tr>`;
+
+        // Clean up the pending document — its data now lives on the order.
+        if (personalisationRef) {
+          try {
+            await sanity.delete(personalisationRef);
+          } catch (err) {
+            console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
+          }
+        }
       } else {
         const cartItems = JSON.parse(session.metadata?.cartItems || '[]');
 
@@ -165,9 +227,19 @@ export default async (req, context) => {
           .join('');
       }
 
+      // Allocate the human-readable order number.
+      let orderNumber;
+      try {
+        orderNumber = await getNextOrderNumber();
+      } catch (err) {
+        console.error('Order number allocation failed, falling back to payment intent:', err.message);
+        orderNumber = `CSC-${session.payment_intent}`;
+      }
+
       // Create order in Sanity
       const orderDoc = {
         _type: 'order',
+        orderNumber,
         stripeSessionId: session.id,
         stripePaymentId: session.payment_intent,
         customerName,
@@ -181,9 +253,11 @@ export default async (req, context) => {
           country: shipping.country || '',
         },
         lineItems,
+        shippingCost,
         totalAmount,
         status: 'received',
         isPersonalised,
+        shippingEmailSent: false,
         createdAt: new Date().toISOString(),
       };
 
@@ -193,7 +267,7 @@ export default async (req, context) => {
 
       await sanity.create(orderDoc);
 
-      console.log(`${isPersonalised ? 'Personalised o' : 'O'}rder created in Sanity for session ${session.id}`);
+      console.log(`${isPersonalised ? 'Personalised o' : 'O'}rder ${orderNumber} created in Sanity for session ${session.id}`);
 
       // ── Email templates ──────────────────────────────────────
       const emailHeader = `
@@ -233,7 +307,7 @@ export default async (req, context) => {
           <tfoot>
             <tr style="background: #f9f9f9;">
               <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">Shipping:</td>
-              <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #28a745;">FREE UK P&P</td>
+              <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: ${shippingColor};">${shippingLabel}</td>
             </tr>
             <tr style="background: ${BRAND.dark};">
               <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #fff; font-size: 16px;">Total:</td>
@@ -276,8 +350,8 @@ export default async (req, context) => {
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [customerEmail],
           subject: isPersonalised
-            ? `🎨 Custom Order Confirmed — Comic Strip Canvas`
-            : `Order Confirmed — Comic Strip Canvas`,
+            ? `🎨 Custom Order Confirmed (${orderNumber}) — Comic Strip Canvas`
+            : `Order Confirmed (${orderNumber}) — Comic Strip Canvas`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               ${emailHeader}
@@ -312,7 +386,7 @@ export default async (req, context) => {
                 </p>
                 
                 <p style="color: #aaa; margin-top: 24px; font-size: 12px;">
-                  Order ref: ${session.payment_intent}<br/>
+                  Order number: <strong style="color: ${BRAND.pink};">${orderNumber}</strong><br/>
                   Placed: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </p>
               </div>
@@ -332,12 +406,13 @@ export default async (req, context) => {
         await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [teamEmail],
-          subject: `${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER — £${totalAmount.toFixed(2)} — ${customerName}`,
+          subject: `${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">
                 <h1 style="color: #fff; margin: 0; font-size: 22px; letter-spacing: 1px;">${isPersonalised ? '🎨 PERSONALISED ORDER' : '📦 NEW ORDER RECEIVED'}</h1>
-                <p style="color: rgba(255,255,255,0.8); margin: 6px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                <p style="color: rgba(255,255,255,0.9); margin: 6px 0 0; font-size: 15px; font-weight: bold;">${orderNumber}</p>
+                <p style="color: rgba(255,255,255,0.8); margin: 4px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
               
               <div style="padding: 24px;">
@@ -379,7 +454,7 @@ export default async (req, context) => {
                 </div>
                 
                 <p style="color: #aaa; margin-top: 20px; font-size: 11px;">
-                  Stripe: ${session.id} | Payment: ${session.payment_intent}
+                  ${orderNumber} | Stripe: ${session.id} | Payment: ${session.payment_intent}
                 </p>
               </div>
             </div>

@@ -6,6 +6,13 @@ export default defineType({
   type: 'document',
   fields: [
     defineField({
+      name: 'orderNumber',
+      title: 'Order Number',
+      type: 'string',
+      readOnly: true,
+      description: 'Human-readable order reference, e.g. CSC-1001',
+    }),
+    defineField({
       name: 'stripeSessionId',
       title: 'Stripe Session ID',
       type: 'string',
@@ -75,6 +82,13 @@ export default defineType({
           },
         },
       ],
+    }),
+    defineField({
+      name: 'shippingCost',
+      title: 'Shipping Cost (£)',
+      type: 'number',
+      readOnly: true,
+      description: 'Actual P&P charged. 0 = free shipping.',
     }),
     defineField({
       name: 'totalAmount',
@@ -157,6 +171,14 @@ export default defineType({
       options: { collapsible: true, collapsed: false },
     }),
     defineField({
+      name: 'shippingEmailSent',
+      title: 'Shipping Email Sent',
+      type: 'boolean',
+      initialValue: false,
+      readOnly: true,
+      description: 'Set automatically once the dispatch notification email has been sent to the customer.',
+    }),
+    defineField({
       name: 'createdAt',
       title: 'Order Date',
       type: 'datetime',
@@ -165,12 +187,13 @@ export default defineType({
   ],
   preview: {
     select: {
+      orderNumber: 'orderNumber',
       customer: 'customerName',
       status: 'status',
       total: 'totalAmount',
       date: 'createdAt',
     },
-    prepare({ customer, status, total, date }) {
+    prepare({ orderNumber, customer, status, total, date }) {
       const statusLabels: Record<string, string> = {
         received: '📥 Received',
         'in-production': '🎨 In Production',
@@ -178,7 +201,7 @@ export default defineType({
         delivered: '✅ Delivered',
       };
       return {
-        title: customer || 'Unknown Customer',
+        title: `${orderNumber ? orderNumber + ' — ' : ''}${customer || 'Unknown Customer'}`,
         subtitle: `${statusLabels[status] || status} — £${(total || 0).toFixed(2)} — ${date ? new Date(date).toLocaleDateString('en-GB') : ''}`,
       };
     },

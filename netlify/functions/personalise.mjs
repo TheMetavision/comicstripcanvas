@@ -1,28 +1,37 @@
-export const prerender = false;
-
-import type { APIRoute } from 'astro';
-import { getSecret } from 'astro:env/server';
 import Stripe from 'stripe';
+import { createClient } from '@sanity/client';
 
-const FORMAT_LABELS: Record<string, string> = {
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2024-12-18.acacia',
+});
+
+const sanity = createClient({
+  projectId: 'lwbwahym',
+  dataset: 'production',
+  apiVersion: '2026-04-11',
+  token: process.env.SANITY_WRITE_TOKEN,
+  useCdn: false,
+});
+
+const FORMAT_LABELS = {
   poster: 'Poster Print',
   'canvas-standard': 'Canvas (Standard Frame)',
   'canvas-gallery': 'Canvas (Gallery Frame)',
 };
 
-const SIZE_LABELS: Record<string, string> = {
+const SIZE_LABELS = {
   small: 'Small (12×8")',
   medium: 'Medium (16×12")',
   large: 'Large (24×16")',
 };
 
-const PRICES: Record<string, Record<string, number>> = {
+const PRICES = {
   poster: { small: 9.99, medium: 12.99, large: 16.99 },
   'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
-const STYLE_CONFIG: Record<string, { label: string; fee: number }> = {
+const STYLE_CONFIG = {
   cover: { label: 'Comic Book Cover', fee: 10 },
   icon: { label: 'Comic Book Icon', fee: 10 },
   strip: { label: 'Comic Book Strip', fee: 25 },
@@ -31,29 +40,27 @@ const STYLE_CONFIG: Record<string, { label: string; fee: number }> = {
   'comic-book-strip': { label: 'Comic Book Strip', fee: 25 },
 };
 
-export const GET: APIRoute = async () => {
-  return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-    status: 405,
-    headers: { 'Content-Type': 'application/json' },
-  });
-};
+// Keep in sync with checkout.mjs
+const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
+const STANDARD_SHIPPING_PENCE = 495;        // £4.95
 
-export const POST: APIRoute = async ({ request }) => {
+export default async (req, context) => {
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
-    const stripeKey = getSecret('STRIPE_SECRET_KEY');
-    if (!stripeKey) {
-      throw new Error('STRIPE_SECRET_KEY is not configured');
-    }
-    const stripe = new Stripe(stripeKey);
-
-    const body = await request.json();
+    const body = await req.json();
     const style = body.style || '';
     const format = body.format || '';
     const size = body.size || '';
     const customerTitle = body.customerTitle || '';
     const captionText = body.captionText || '';
     const instructions = body.instructions || '';
-    const photoUrls: string[] = body.photoUrls || [];
+    const photoUrls = Array.isArray(body.photoUrls) ? body.photoUrls : [];
 
     if (!style || !format || !size) {
       return new Response(
@@ -64,18 +71,23 @@ export const POST: APIRoute = async ({ request }) => {
 
     const styleConfig = STYLE_CONFIG[style] || { label: style, fee: 10 };
     const basePrice = PRICES[format]?.[size] || 9.99;
-
-    const siteUrl = getSecret('SITE_URL') || getSecret('URL') || 'https://comicstripcanvas.co.uk';
-
-    // Stripe metadata values must be strings under 500 chars
-    // Store photo URLs as comma-separated, truncated if needed
-    const photoUrlsMeta = photoUrls.join(', ').substring(0, 490);
-
-    // Free postage threshold and standard rate — keep in sync with /api/checkout and src/stores/cart.ts
-    const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
-    const STANDARD_SHIPPING_PENCE = 495;        // £4.95
-    const subtotalPence = Math.round((basePrice + styleConfig.fee) * 100);
+    const subtotalPence = Math.round(basePrice * 100) + Math.round(styleConfig.fee * 100);
     const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
+
+    const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
+
+    // ── Write the full personalisation brief to Sanity FIRST ──────────────
+    // This carries ALL photo URLs with no length limit. Only the document _id
+    // travels through Stripe metadata.
+    const pendingDoc = await sanity.create({
+      _type: 'pendingPersonalisation',
+      style: styleConfig.label,
+      customerTitle,
+      captionText,
+      instructions,
+      uploadedImages: photoUrls,
+      createdAt: new Date().toISOString(),
+    });
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -119,24 +131,20 @@ export const POST: APIRoute = async ({ request }) => {
               ? 'FREE UK delivery (orders over £50)'
               : 'Standard UK delivery',
             delivery_estimate: {
-              minimum: { unit: 'business_day', value: 5 },
-              maximum: { unit: 'business_day', value: 10 },
+              minimum: { unit: 'business_day', value: 3 },
+              maximum: { unit: 'business_day', value: 6 },
             },
           },
         },
       ],
       metadata: {
         isPersonalised: 'true',
+        personalisationRef: pendingDoc._id,
         style: styleConfig.label,
         format: FORMAT_LABELS[format] || format,
         size: SIZE_LABELS[size] || size,
-        customerTitle: customerTitle || '',
-        captionText: captionText || '',
-        instructions: instructions || '',
         basePrice: String(basePrice),
         artFee: String(styleConfig.fee),
-        photoCount: String(photoUrls.length),
-        photoUrls: photoUrlsMeta,
       },
       success_url: `${siteUrl}/personalise-confirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/personalise`,
@@ -146,11 +154,15 @@ export const POST: APIRoute = async ({ request }) => {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Personalisation error:', error);
     return new Response(
       JSON.stringify({ error: error.message || 'Failed to process submission' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+};
+
+export const config = {
+  path: '/api/personalise',
 };

@@ -4,6 +4,8 @@ import testimonial from './testimonial';
 import faq from './faq';
 import siteSettings from './siteSettings';
 import order from './order';
+import pendingPersonalisation from './pendingPersonalisation';
+import orderCounter from './orderCounter';
 
 export const schemaTypes = [
   product,
@@ -12,4 +14,6 @@ export const schemaTypes = [
   faq,
   siteSettings,
   order,
+  pendingPersonalisation,
+  orderCounter,
 ];
