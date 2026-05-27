@@ -116,12 +116,41 @@ export default defineType({
         layout: 'radio',
       },
       initialValue: 'received',
+      description: 'Setting this to Dispatched (with a Tracking Number filled in) will automatically send a shipping notification email to the customer.',
     }),
     defineField({
       name: 'trackingNumber',
       title: 'Tracking Number',
       type: 'string',
-      description: 'Add when dispatched',
+      description: 'Add when dispatched. ⚠ Adding this and setting status to Dispatched will trigger an automatic shipping email to the customer.',
+    }),
+    defineField({
+      name: 'carrier',
+      title: 'Carrier',
+      type: 'string',
+      options: {
+        list: [
+          { title: 'UPS', value: 'ups' },
+          { title: 'Royal Mail', value: 'royal-mail' },
+          { title: 'Other', value: 'other' },
+        ],
+        layout: 'radio',
+      },
+      description: 'Auto-detected from line items at dispatch time (Canvas → UPS, Poster only → Royal Mail). Leave blank for auto-detect, or set manually + tick "Override carrier" below to force a specific carrier.',
+    }),
+    defineField({
+      name: 'carrierOverride',
+      title: 'Override carrier',
+      type: 'boolean',
+      initialValue: false,
+      description: 'Tick this if you want to manually override the auto-detected carrier. Otherwise the system will pick UPS / Royal Mail based on line items.',
+    }),
+    defineField({
+      name: 'carrierOther',
+      title: 'Other Carrier Name',
+      type: 'string',
+      description: 'If carrier = Other, enter the carrier name here (e.g. "Evri", "DPD"). The shipping email will show this name and a plain tracking number (no auto link).',
+      hidden: ({ document }) => document?.carrier !== 'other',
     }),
     defineField({
       name: 'notes',
@@ -177,6 +206,13 @@ export default defineType({
       initialValue: false,
       readOnly: true,
       description: 'Set automatically once the dispatch notification email has been sent to the customer.',
+    }),
+    defineField({
+      name: 'shippingEmailSentAt',
+      title: 'Shipping Email Sent At',
+      type: 'datetime',
+      readOnly: true,
+      description: 'Timestamp of when the shipping notification was sent.',
     }),
     defineField({
       name: 'createdAt',
