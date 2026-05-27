@@ -1,6 +1,6 @@
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
-import { createHmac } from 'node:crypto';
+import { isValidSignature, SIGNATURE_HEADER_NAME } from '@sanity/webhook';
 
 /**
  * order-shipped.mjs
@@ -10,17 +10,14 @@ import { createHmac } from 'node:crypto';
  * AND has not already been emailed, send the customer a branded shipping
  * notification email and mark the order as emailed.
  *
- * The Sanity webhook is configured in sanity.io/manage to fire on:
- *   - Dataset: production
- *   - Filter: _type == "order" && status == "dispatched"
- *   - Method: POST
- *   - Projection: (default — the whole document)
- *   - Secret: matches the SANITY_WEBHOOK_SECRET env var below
+ * Signature verification uses the official @sanity/webhook toolkit so the
+ * format always matches whatever Sanity is currently sending. The shared
+ * secret is the SANITY_WEBHOOK_SECRET env var, which must match the secret
+ * configured on the Sanity webhook in sanity.io/manage.
  *
  * The `shippingEmailSent` flag on the order document is the safety net that
- * prevents duplicates if Sanity fires the webhook more than once (e.g. you
- * edit the tracking number after dispatch). Once true, this function does
- * nothing.
+ * prevents duplicates if Sanity fires the webhook more than once. Once true,
+ * this function does nothing.
  */
 
 const sanity = createClient({
@@ -88,61 +85,27 @@ function carrierDisplayName(carrier, otherName) {
   return otherName || 'Courier';
 }
 
-/**
- * Verify the Sanity webhook signature.
- * Sanity sends a `sanity-webhook-signature` header in the form:
- *   t=<timestamp>,v1=<hmac-sha256-of-"<timestamp>.<body>">
- * We re-compute the HMAC with our shared secret and compare.
- *
- * If SANITY_WEBHOOK_SECRET is not configured we fail closed (reject).
- */
-function verifySignature(rawBody, signatureHeader, secret) {
-  if (!secret) {
-    console.error('SANITY_WEBHOOK_SECRET is not configured — rejecting request.');
-    return false;
-  }
-  if (!signatureHeader) {
-    console.error('Missing sanity-webhook-signature header.');
-    return false;
-  }
-
-  // Parse header: "t=<ts>,v1=<sig>"
-  const parts = signatureHeader.split(',').reduce((acc, part) => {
-    const [k, v] = part.split('=');
-    if (k && v) acc[k.trim()] = v.trim();
-    return acc;
-  }, {});
-
-  const ts = parts.t;
-  const sig = parts.v1;
-  if (!ts || !sig) {
-    console.error('Malformed signature header:', signatureHeader);
-    return false;
-  }
-
-  const payload = `${ts}.${rawBody}`;
-  const expected = createHmac('sha256', secret).update(payload).digest('hex');
-
-  // Constant-time compare via Buffer
-  const expectedBuf = Buffer.from(expected, 'hex');
-  const receivedBuf = Buffer.from(sig, 'hex');
-  if (expectedBuf.length !== receivedBuf.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < expectedBuf.length; i++) {
-    mismatch |= expectedBuf[i] ^ receivedBuf[i];
-  }
-  return mismatch === 0;
-}
-
 export default async (req, context) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
 
   const rawBody = await req.text();
-  const sigHeader = req.headers.get('sanity-webhook-signature');
+  const sigHeader = req.headers.get(SIGNATURE_HEADER_NAME);
+  const secret = process.env.SANITY_WEBHOOK_SECRET;
 
-  if (!verifySignature(rawBody, sigHeader, process.env.SANITY_WEBHOOK_SECRET)) {
+  // ── Signature verification (using Sanity's official toolkit) ────────────
+  if (!secret) {
+    console.error('SANITY_WEBHOOK_SECRET is not configured — rejecting request.');
+    return new Response('Server misconfigured', { status: 500 });
+  }
+  if (!sigHeader) {
+    console.error(`Missing ${SIGNATURE_HEADER_NAME} header — rejecting request.`);
+    return new Response('Missing signature', { status: 401 });
+  }
+  const valid = await isValidSignature(rawBody, sigHeader, secret);
+  if (!valid) {
+    console.error('Sanity webhook signature failed verification.');
     return new Response('Invalid signature', { status: 401 });
   }
 
