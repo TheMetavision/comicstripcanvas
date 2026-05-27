@@ -86,8 +86,10 @@
 
   <div id="step-3" class="wizard-step hidden">
     <h2 class="font-bangers text-3xl text-comic-yellow mb-2 tracking-wide">STEP 3: CUSTOMISE YOUR DETAILS</h2>
-    <p class="font-source text-gray-400 mb-8">Give us the details to make your artwork truly personal.</p>
-    <div class="space-y-5">
+    <p class="font-source text-gray-400 mb-8" id="step-3-intro">Give us the details to make your artwork truly personal.</p>
+
+    <!-- Cover / Icon fields (shown by default) -->
+    <div id="step-3-textfields" class="space-y-5">
       <div>
         <label class="block font-russo text-off-white text-sm mb-2 uppercase tracking-wide">Name / Title</label>
         <input type="text" placeholder="e.g., 'The Amazing Dave' or 'Super Mum'"
@@ -104,6 +106,33 @@
                   class="w-full bg-panel-dark border-4 border-black text-off-white px-4 py-3 font-source focus:outline-none focus:border-comic-yellow transition-colors placeholder:text-gray-600 resize-none"></textarea>
       </div>
     </div>
+
+    <!-- Strip-specific informational block (hidden by default, shown when style=strip) -->
+    <div id="step-3-strip" class="hidden">
+      <div class="bg-panel-dark border-4 border-comic-cyan p-6 mb-6" style="box-shadow: 3px 3px 0 rgba(0,174,239,0.3);">
+        <div class="flex gap-3 items-start">
+          <svg class="w-6 h-6 text-comic-cyan flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <h3 class="font-russo text-comic-cyan text-sm uppercase tracking-wide mb-2">Photo Order</h3>
+            <p class="font-source text-gray-200 text-sm leading-relaxed mb-3">
+              Your 12 photos will appear on the canvas in the order you uploaded them, reading <strong>left-to-right, top-to-bottom</strong> across the panels.
+            </p>
+            <p class="font-source text-gray-400 text-xs leading-relaxed">
+              A visual drag-and-drop panel arranger is coming soon. For now, if you'd like to reorder your photos, go back to Step 2 and remove/re-add them in your preferred sequence.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="block font-russo text-off-white text-sm mb-2 uppercase tracking-wide">Any extra notes about your order? <span class="text-gray-500 normal-case font-source">(optional)</span></label>
+        <textarea id="strip-instructions" rows="4" placeholder="Anything you'd like our artists to know — colour preferences, panel-specific notes, captions you'd like added, etc."
+                  class="w-full bg-panel-dark border-4 border-black text-off-white px-4 py-3 font-source focus:outline-none focus:border-comic-yellow transition-colors placeholder:text-gray-600 resize-none"></textarea>
+      </div>
+    </div>
+
     <div class="flex justify-between mt-8">
       <button class="btn-secondary prev-btn" data-prev="2">&larr; Back</button>
       <button class="btn-primary next-btn" data-next="4">Next: Choose Format &rarr;</button>
@@ -217,7 +246,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <p class="font-source text-gray-300 text-sm">
-          We'll send you a digital proof within <strong class="text-comic-cyan">24-48 hours</strong> of receiving your order. Printing begins only after your approval.
+          We'll send you a digital proof within <strong class="text-comic-cyan">2-3 working days</strong> of receiving your order. Printing begins only after your approval.
         </p>
       </div>
     </div>
@@ -313,12 +342,32 @@
     SIZE_LABELS.large = `Large (${dimensionSet.large})`;
   }
 
+  // Show the appropriate Step 3 content depending on the chosen style.
+  // Cover / Icon → text fields. Strip → photo-order notice + optional notes.
+  function updateStep3Content() {
+    const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
+    const textFields = document.getElementById('step-3-textfields');
+    const stripBlock = document.getElementById('step-3-strip');
+    const intro = document.getElementById('step-3-intro');
+
+    if (style === 'strip') {
+      textFields?.classList.add('hidden');
+      stripBlock?.classList.remove('hidden');
+      if (intro) intro.textContent = 'For comic strips, the brief is in the photos themselves — but here\'s a chance to add any extra notes for our artists.';
+    } else {
+      textFields?.classList.remove('hidden');
+      stripBlock?.classList.add('hidden');
+      if (intro) intro.textContent = 'Give us the details to make your artwork truly personal.';
+    }
+  }
+
   function goToStep(n: number) {
     document.querySelectorAll('.wizard-step').forEach((s) => s.classList.add('hidden'));
     const target = document.getElementById(`step-${n}`);
     target?.classList.remove('hidden');
     currentStep = n;
     updateProgressBar();
+    if (n === 3) updateStep3Content();
     if (n === 4) updateSizeOptions();
     if (n === 5) updateReview();
 
@@ -623,11 +672,22 @@
     const style = (document.querySelector('input[name="style"]:checked') as HTMLInputElement)?.value || '';
     const format = (document.querySelector('input[name="wiz-format"]:checked') as HTMLInputElement)?.value || '';
     const size = (document.querySelector('input[name="wiz-size"]:checked') as HTMLInputElement)?.value || '';
-    
-    const textInputs = document.querySelectorAll('#step-3 input[type="text"]');
-    const customName = (textInputs[0] as HTMLInputElement)?.value || '';
-    const caption = (textInputs[1] as HTMLInputElement)?.value || '';
-    const instructions = (document.querySelector('#step-3 textarea') as HTMLTextAreaElement)?.value || '';
+
+    // Collect Step 3 fields based on style.
+    // Strip orders use a single optional textarea; Cover/Icon use the three text fields.
+    let customName = '';
+    let caption = '';
+    let instructions = '';
+
+    if (style === 'strip') {
+      const stripNotes = (document.getElementById('strip-instructions') as HTMLTextAreaElement)?.value || '';
+      instructions = stripNotes;
+    } else {
+      const textInputs = document.querySelectorAll('#step-3-textfields input[type="text"]');
+      customName = (textInputs[0] as HTMLInputElement)?.value || '';
+      caption = (textInputs[1] as HTMLInputElement)?.value || '';
+      instructions = (document.querySelector('#step-3-textfields textarea') as HTMLTextAreaElement)?.value || '';
+    }
 
     if (!style || !format || !size) {
       alert('Please complete all steps before submitting.');

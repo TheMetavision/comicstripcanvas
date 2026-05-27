@@ -4,13 +4,11 @@ import PersonalisationWizard from '../components/PersonalisationWizard.astro';
 import FAQAccordion from '../components/FAQAccordion.astro';
 import { sanityClient } from '../lib/sanity';
 import { faqsByPageQuery } from '../lib/queries';
-
 const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
 ---
-
 <BaseLayout
   title="Personalise Your Comic Art"
-  description="Create a personalised comic book canvas print, framed print, or poster from your own photos. Comic covers, pop icons, and strip art. Made to order with 24-48hr proof."
+  description="Create a personalised comic book canvas print, framed print, or poster from your own photos. Comic covers, pop icons, and strip art. Made to order with a 2-3 working day proof."
 >
   <section class="relative bg-panel-dark halftone-bg py-16 overflow-hidden">
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
@@ -28,15 +26,13 @@ const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
         <span class="text-comic-yellow block">COMIC MASTERPIECE</span>
       </h1>
       <p class="font-source text-gray-300 text-lg max-w-2xl">
-        Follow the steps below to design your personalised comic art. We'll send you a proof within 24-48 hours and get your artwork printed once you're happy.
+        Follow the steps below to design your personalised comic art. We'll send you a proof within 2-3 working days and get your artwork printed once you're happy.
       </p>
     </div>
   </section>
-
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <PersonalisationWizard />
   </div>
-
   <!-- FAQ -->
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
     <section class="mb-20 reveal">
@@ -44,7 +40,6 @@ const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
         <h2 class="section-heading">FREQUENTLY ASKED QUESTIONS</h2>
       </div>
       <FAQAccordion faqs={faqs} />
-
       <script type="application/ld+json" set:html={JSON.stringify({
         "@context": "https://schema.org",
         "@type": "FAQPage",
@@ -59,5 +54,4 @@ const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
       })}></script>
     </section>
   </div>
-
 </BaseLayout>

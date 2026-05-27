@@ -123,6 +123,9 @@ export default async (req, context) => {
       let lineItems;
       let personalisationDetails = undefined;
       let itemRows;
+      // Track whether this is specifically a Comic Book Strip order, so the
+      // email copy can be tailored (no Name/Title or Caption references).
+      let isStrip = false;
 
       if (isPersonalised) {
         const style = session.metadata?.style || '';
@@ -130,6 +133,7 @@ export default async (req, context) => {
         const size = session.metadata?.size || '';
         const basePrice = parseFloat(session.metadata?.basePrice || '0');
         const artFee = parseFloat(session.metadata?.artFee || '0');
+        isStrip = style.toLowerCase().includes('strip');
 
         // Fetch the full personalisation brief from the pending document.
         // This carries ALL photo URLs with no length limit.
@@ -331,20 +335,29 @@ export default async (req, context) => {
       // Photo gallery block for personalised orders (team email only)
       const photoGallery = isPersonalised && personalisationDetails?.uploadedImages?.length > 0
         ? `<div style="margin: 20px 0; padding: 20px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid ${BRAND.cyan};">
-            <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.cyan};">Customer Photos (${personalisationDetails.uploadedImages.length})</strong><br/><br/>
+            <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.cyan};">Customer Photos (${personalisationDetails.uploadedImages.length})${isStrip ? ' — IN PANEL ORDER 1→12' : ''}</strong><br/><br/>
             ${personalisationDetails.uploadedImages.map((url, i) => `
-              <div style="display: inline-block; margin: 4px;">
+              <div style="display: inline-block; margin: 4px; text-align: center;">
                 <a href="${url}" target="_blank" style="text-decoration: none;">
                   <img src="${url}?w=150&h=150&fit=crop" alt="Photo ${i + 1}" style="width: 120px; height: 120px; object-fit: cover; border: 2px solid ${BRAND.cyan}; border-radius: 4px;" />
                 </a>
+                <div style="font-size: 11px; color: ${BRAND.cyan}; font-weight: bold; margin-top: 4px;">${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</div>
               </div>
             `).join('')}
             <br/><br/>
-            ${personalisationDetails.uploadedImages.map((url, i) => `<a href="${url}" style="color: ${BRAND.cyan}; margin-right: 12px;">Full-size Photo ${i + 1}</a>`).join('')}
+            ${personalisationDetails.uploadedImages.map((url, i) => `<a href="${url}" style="color: ${BRAND.cyan}; margin-right: 12px;">Full-size ${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</a>`).join('')}
           </div>`
         : '';
 
       // ── Send customer confirmation email ──────────────────────
+      // Personalised orders get a Strip-aware intro line — strips don't mention
+      // Name/Title or Caption because those fields aren't collected for strips.
+      const customerIntroText = !isPersonalised
+        ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch.'
+        : isStrip
+        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels and create a digital proof within <strong style="color: ' + BRAND.cyan + ';">2-3 working days</strong>. We won\'t print until you\'ve approved it — so keep an eye on your inbox.'
+        : 'Your personalised order has been received! Our artists will create a digital proof within <strong style="color: ' + BRAND.cyan + ';">2-3 working days</strong>. We won\'t print until you\'ve approved it — so keep an eye on your inbox.';
+
       try {
         await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
@@ -361,9 +374,7 @@ export default async (req, context) => {
                   ${isPersonalised ? '🎨 ' : ''}Thanks for your order, ${customerName}!
                 </h2>
                 <p style="color: #666; line-height: 1.7; margin: 0 0 24px; font-size: 15px;">
-                  ${isPersonalised
-                    ? 'Your personalised order has been received! Our artists will create a digital proof within <strong style="color: ' + BRAND.cyan + ';">24-48 hours</strong>. We won\'t print until you\'ve approved it — so keep an eye on your inbox.'
-                    : 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch.'}
+                  ${customerIntroText}
                 </p>
                 
                 ${orderTable}
@@ -373,8 +384,8 @@ export default async (req, context) => {
                 <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${BRAND.cyan};">
                   <strong style="color: ${BRAND.cyan}; font-size: 14px;">What happens next?</strong>
                   <ol style="color: #555; line-height: 2; margin: 12px 0 0; padding-left: 20px;">
-                    <li>Our artists review your photos and brief</li>
-                    <li>We create a digital proof (24-48 hours)</li>
+                    <li>Our artists review your ${isStrip ? 'photos and arrange them across the panels' : 'photos and brief'}</li>
+                    <li>We create a digital proof (2-3 working days)</li>
                     <li>You review and approve (up to 2 revisions included)</li>
                     <li>We print and dispatch (3-6 working days after approval)</li>
                   </ol>
@@ -434,9 +445,10 @@ export default async (req, context) => {
                   <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #b8860b;">Personalisation Brief</strong><br/><br/>
                   <table style="font-size: 14px; color: #333;">
                     <tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Style:</td><td style="padding: 4px 0;">${personalisationDetails.style}</td></tr>
-                    ${personalisationDetails.customerTitle ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Name/Title:</td><td style="padding: 4px 0;">${personalisationDetails.customerTitle}</td></tr>` : ''}
-                    ${personalisationDetails.captionText ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Caption:</td><td style="padding: 4px 0;">${personalisationDetails.captionText}</td></tr>` : ''}
-                    ${personalisationDetails.instructions ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Instructions:</td><td style="padding: 4px 0;">${personalisationDetails.instructions}</td></tr>` : ''}
+                    ${!isStrip && personalisationDetails.customerTitle ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Name/Title:</td><td style="padding: 4px 0;">${personalisationDetails.customerTitle}</td></tr>` : ''}
+                    ${!isStrip && personalisationDetails.captionText ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Caption:</td><td style="padding: 4px 0;">${personalisationDetails.captionText}</td></tr>` : ''}
+                    ${personalisationDetails.instructions ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">${isStrip ? 'Notes:' : 'Instructions:'}</td><td style="padding: 4px 0;">${personalisationDetails.instructions}</td></tr>` : ''}
+                    ${isStrip ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Panel Order:</td><td style="padding: 4px 0;">Photos appear in upload order — Panel 1 to Panel 12, left-to-right, top-to-bottom.</td></tr>` : ''}
                   </table>
                 </div>
 
@@ -448,7 +460,7 @@ export default async (req, context) => {
                   <ol style="color: #444; line-height: 2; margin: 0; padding-left: 20px; font-size: 14px;">
                     <li>Open <a href="https://comicstripcanvas.sanity.studio" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
                     ${isPersonalised
-                      ? '<li>Download customer photos from links above</li><li>Create artwork proof and email to customer</li><li>Once approved → print and dispatch</li>'
+                      ? '<li>Download customer photos from links above</li><li>Create artwork proof and email to customer (target: 2-3 working days)</li><li>Once approved → print and dispatch</li>'
                       : '<li>Prepare artwork for printing</li><li>Update status to "In Production"</li><li>Add tracking and update to "Dispatched"</li>'}
                   </ol>
                 </div>
