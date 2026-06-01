@@ -1,0 +1,328 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import NewsletterSignup from '../components/NewsletterSignup.astro';
+---
+
+<BaseLayout
+  title="Contact"
+  description="Get in touch with Comic Strip Canvas — custom orders, print enquiries, licensing, wholesale, and press. We aim to reply within 48 hours."
+>
+  <!-- Hero -->
+  <section class="relative bg-panel-dark halftone-bg py-20 overflow-hidden">
+    <div class="absolute inset-0" style="background: radial-gradient(circle at 20% 50%, rgba(0,174,239,0.18) 0%, transparent 55%);"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-cyan"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <span class="text-off-white">Contact</span>
+      </nav>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-4"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        DROP US
+        <span class="text-comic-cyan block">A LINE</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg max-w-2xl">
+        Questions about a print, a custom order, licensing, or wholesale? Send us a message and we'll get back to you within 48 hours.
+      </p>
+    </div>
+  </section>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
+
+      <!-- Form column ============================================ -->
+      <div class="lg:col-span-2 reveal">
+        <div class="bg-panel-dark border-4 border-black p-6 md:p-10" style="box-shadow: 6px 6px 0 #000;">
+          <div class="speech-bubble inline-block mb-4">Send a message</div>
+          <h2 class="section-heading mb-2">GET IN TOUCH</h2>
+          <p class="font-source text-gray-400 text-sm mb-8">
+            All fields marked <span class="text-comic-red font-bold">*</span> are required.
+          </p>
+
+          <form id="contact-form" class="space-y-5" novalidate>
+            <input type="checkbox" name="botcheck" class="hidden" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;" aria-hidden="true" />
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label for="name" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
+                  Name <span class="text-comic-red">*</span>
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  required
+                  placeholder="Your full name"
+                  class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors"
+                />
+              </div>
+              <div>
+                <label for="email" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
+                  Email <span class="text-comic-red">*</span>
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  required
+                  placeholder="your@email.com"
+                  class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label for="phone" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
+                  Phone <span class="text-gray-500 font-source normal-case text-xs">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  id="phone"
+                  name="phone"
+                  placeholder="Easier than email for some chats"
+                  class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors"
+                />
+              </div>
+              <div>
+                <label for="subject" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
+                  Subject <span class="text-comic-red">*</span>
+                </label>
+                <select
+                  id="subject"
+                  name="subject"
+                  required
+                  class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source focus:border-comic-yellow focus:outline-none transition-colors"
+                >
+                  <option value="" disabled selected>Choose a topic...</option>
+                  <option value="Custom Order / Commission">Custom Order / Commission</option>
+                  <option value="Print Question">Print Question</option>
+                  <option value="Licensing & Reproduction">Licensing &amp; Reproduction</option>
+                  <option value="Bulk / Wholesale">Bulk / Wholesale</option>
+                  <option value="Press & Media">Press &amp; Media</option>
+                  <option value="General Enquiry">General Enquiry</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label for="message" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
+                Message <span class="text-comic-red">*</span>
+              </label>
+              <textarea
+                id="message"
+                name="message"
+                required
+                rows="6"
+                placeholder="Tell us about what you're after — the more detail, the better the reply."
+                class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors resize-y"
+              ></textarea>
+            </div>
+
+            <div class="pt-2">
+              <button
+                type="submit"
+                id="form-submit"
+                class="btn-primary text-xl w-full md:w-auto"
+              >
+                <span class="submit-text">SEND MESSAGE &rarr;</span>
+                <span class="submit-sending" style="display:none;">SENDING...</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Success state -->
+        <div
+          id="form-success"
+          class="hidden mt-6 bg-panel-dark border-4 border-comic-yellow p-6 md:p-10"
+          style="box-shadow: 6px 6px 0 rgba(255,242,0,0.3);"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="flex items-start gap-5">
+            <div class="flex-shrink-0 w-14 h-14 bg-comic-yellow border-4 border-black flex items-center justify-center">
+              <svg class="w-7 h-7 text-black" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+            </div>
+            <div class="flex-1">
+              <div class="kapow-badge inline-block mb-3">KAPOW!</div>
+              <h3 class="font-bangers text-3xl md:text-4xl text-off-white tracking-wide mb-2"
+                  style="text-shadow: 3px 3px 0 rgba(0,0,0,0.4);">
+                MESSAGE SENT
+              </h3>
+              <p class="font-source text-gray-300 mb-5 leading-relaxed">
+                Thanks for getting in touch. We aim to reply within 48 hours — usually a lot sooner.
+                Check your inbox (and the spam folder, just in case) for our reply.
+              </p>
+              <div class="flex flex-wrap gap-3">
+                <a href="/store" class="btn-primary text-sm">BROWSE THE STORE</a>
+                <a href="/personalise" class="btn-secondary text-sm">START A CUSTOM ORDER</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error state -->
+        <div
+          id="form-error"
+          class="hidden mt-6 bg-panel-dark border-4 border-comic-red p-6 md:p-10"
+          style="box-shadow: 6px 6px 0 rgba(236,0,140,0.3);"
+          role="alert"
+          aria-live="polite"
+        >
+          <div class="flex items-start gap-5">
+            <div class="flex-shrink-0 w-14 h-14 bg-comic-red border-4 border-black flex items-center justify-center">
+              <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </div>
+            <div class="flex-1">
+              <div class="speech-bubble inline-block mb-3">Hold up!</div>
+              <h3 class="font-bangers text-3xl md:text-4xl text-off-white tracking-wide mb-2"
+                  style="text-shadow: 3px 3px 0 rgba(0,0,0,0.4);">
+                SOMETHING WENT WRONG
+              </h3>
+              <p class="font-source text-gray-300 mb-5 leading-relaxed">
+                We couldn't send your message. Try again, or email
+                <a href="mailto:contact@comicstripcanvas.co.uk" class="text-comic-yellow underline hover:text-comic-cyan transition-colors">contact@comicstripcanvas.co.uk</a>
+                directly.
+              </p>
+              <button type="button" id="form-retry" class="btn-secondary text-sm">
+                TRY AGAIN
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info column ============================================== -->
+      <aside class="space-y-6 reveal">
+
+        <div class="bg-panel-dark border-4 border-comic-yellow p-6" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.2);">
+          <div class="w-12 h-12 bg-comic-yellow border-4 border-black flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-black" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8l9 6 9-6M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <h3 class="font-russo text-off-white text-lg uppercase tracking-wide mb-2">Email Us Direct</h3>
+          <p class="font-source text-gray-300 leading-relaxed text-sm mb-3">
+            Prefer to skip the form? Send us a note straight to our inbox.
+          </p>
+          <a
+            href="mailto:contact@comicstripcanvas.co.uk"
+            class="font-russo text-comic-cyan hover:text-comic-yellow transition-colors text-sm break-all"
+          >
+            contact@comicstripcanvas.co.uk
+          </a>
+        </div>
+
+        <div class="bg-panel-dark border-4 border-comic-cyan p-6" style="box-shadow: 4px 4px 0 rgba(0,174,239,0.2);">
+          <div class="w-12 h-12 bg-comic-cyan border-4 border-black flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-black" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <h3 class="font-russo text-off-white text-lg uppercase tracking-wide mb-2">Response Time</h3>
+          <p class="font-source text-gray-300 leading-relaxed text-sm">
+            We aim to reply within <strong class="text-off-white">48 hours</strong>, Monday through Friday.
+            Custom-order discussions sometimes take a little longer — we want to get them right.
+          </p>
+        </div>
+
+        <div class="bg-panel-dark border-4 border-comic-red p-6" style="box-shadow: 4px 4px 0 rgba(236,0,140,0.2);">
+          <div class="w-12 h-12 bg-comic-red border-4 border-black flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/>
+              <rect x="8" y="2" width="8" height="4" rx="1"/>
+            </svg>
+          </div>
+          <h3 class="font-russo text-off-white text-lg uppercase tracking-wide mb-2">Custom Orders</h3>
+          <p class="font-source text-gray-300 leading-relaxed text-sm mb-3">
+            Got an idea? Send us a brief — concept, sizes, deadline — and we'll quote back.
+          </p>
+          <a href="/personalise" class="font-russo text-comic-cyan hover:text-comic-yellow transition-colors text-sm uppercase tracking-wide">
+            Start a custom order &rarr;
+          </a>
+        </div>
+
+      </aside>
+
+    </div>
+
+  </div>
+
+  <NewsletterSignup />
+</BaseLayout>
+
+<script>
+  const form = document.getElementById('contact-form') as HTMLFormElement | null;
+  const successEl = document.getElementById('form-success');
+  const errorEl = document.getElementById('form-error');
+  const submitBtn = document.getElementById('form-submit') as HTMLButtonElement | null;
+  const sendText = form?.querySelector('.submit-text') as HTMLElement | null;
+  const sending = form?.querySelector('.submit-sending') as HTMLElement | null;
+  const retryBtn = document.getElementById('form-retry');
+  const formCard = form?.closest('.bg-panel-dark') as HTMLElement | null;
+
+  function setSending(on: boolean) {
+    if (submitBtn) submitBtn.disabled = on;
+    if (sendText) sendText.style.display = on ? 'none' : '';
+    if (sending) sending.style.display = on ? 'inline' : 'none';
+  }
+
+  function resetState() {
+    successEl?.classList.add('hidden');
+    errorEl?.classList.add('hidden');
+    if (formCard) formCard.style.display = '';
+    setSending(false);
+  }
+
+  retryBtn?.addEventListener('click', resetState);
+
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!form) return;
+    setSending(true);
+
+    const fd = new FormData(form);
+    const payload = {
+      name: String(fd.get('name') || '').trim(),
+      email: String(fd.get('email') || '').trim(),
+      phone: String(fd.get('phone') || '').trim(),
+      subject: String(fd.get('subject') || '').trim() || 'General Enquiry',
+      message: String(fd.get('message') || '').trim(),
+      // Honeypot is a checkbox positioned off-screen — bots that auto-tick everything will trip it.
+      botcheck: fd.get('botcheck') ? 'on' : '',
+      pageUri: window.location.href,
+    };
+
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        if (formCard) formCard.style.display = 'none';
+        successEl?.classList.remove('hidden');
+        // Scroll the success card into view — top-aligned, polite.
+        successEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        throw new Error(data?.error || 'Submission failed');
+      }
+    } catch {
+      if (formCard) formCard.style.display = 'none';
+      errorEl?.classList.remove('hidden');
+      errorEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } finally {
+      setSending(false);
+    }
+  });
+</script>

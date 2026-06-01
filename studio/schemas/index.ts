@@ -6,6 +6,7 @@ import siteSettings from './siteSettings';
 import order from './order';
 import pendingPersonalisation from './pendingPersonalisation';
 import orderCounter from './orderCounter';
+import contactSubmission from './contactSubmission';
 
 export const schemaTypes = [
   product,
@@ -16,4 +17,5 @@ export const schemaTypes = [
   order,
   pendingPersonalisation,
   orderCounter,
+  contactSubmission,
 ];

@@ -7,3 +7,12 @@
 
 [functions]
   directory = "netlify/functions"
+
+# Route /api/* requests to Netlify Functions.
+# Required for the contact form (src/pages/contact.astro POSTs to /api/contact
+# which gets rewritten to /.netlify/functions/contact).
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = true
