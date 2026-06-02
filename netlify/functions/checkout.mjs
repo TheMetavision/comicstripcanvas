@@ -93,7 +93,7 @@ export default async (req, context) => {
     const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ['card', 'klarna'],
       mode: 'payment',
       line_items: lineItems,
       shipping_address_collection: {
