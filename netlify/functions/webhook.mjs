@@ -97,6 +97,18 @@ export default async (req, context) => {
     const session = event.data.object;
 
     try {
+      // ── Idempotency guard (C3) ───────────────────────────────
+      // Stripe may deliver the same event more than once. Use a deterministic
+      // order _id derived from the session id, and bail out before ANY side
+      // effect (order-number increment, pending delete, email sends) if an
+      // order for this session already exists.
+      const orderId = `order-${session.id}`;
+      const alreadyProcessed = await sanity.getDocument(orderId);
+      if (alreadyProcessed) {
+        console.log(`Duplicate webhook for session ${session.id} — order ${alreadyProcessed.orderNumber} already exists. Skipping.`);
+        return new Response('Already processed', { status: 200 });
+      }
+
       const isPersonalised = session.metadata?.isPersonalised === 'true';
 
       // Stripe API 2025+ moved shipping details under collected_information
@@ -123,6 +135,7 @@ export default async (req, context) => {
       let lineItems;
       let personalisationDetails = undefined;
       let itemRows;
+      let personalisationRef = '';
       // Track whether this is specifically a Comic Book Strip order, so the
       // email copy can be tailored (no Name/Title or Caption references).
       let isStrip = false;
@@ -137,7 +150,7 @@ export default async (req, context) => {
 
         // Fetch the full personalisation brief from the pending document.
         // This carries ALL photo URLs with no length limit.
-        const personalisationRef = session.metadata?.personalisationRef || '';
+        personalisationRef = session.metadata?.personalisationRef || '';
         let pending = null;
         if (personalisationRef) {
           try {
@@ -194,15 +207,6 @@ export default async (req, context) => {
             <td style="padding: 12px 16px; border-bottom: 1px solid #eee;" colspan="3">Custom artwork creation</td>
             <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: right;">£${artFee.toFixed(2)}</td>
           </tr>`;
-
-        // Clean up the pending document — its data now lives on the order.
-        if (personalisationRef) {
-          try {
-            await sanity.delete(personalisationRef);
-          } catch (err) {
-            console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
-          }
-        }
       } else {
         const cartItems = JSON.parse(session.metadata?.cartItems || '[]');
 
@@ -239,8 +243,9 @@ export default async (req, context) => {
         orderNumber = `CSC-${session.payment_intent}`;
       }
 
-      // Create order in Sanity
+      // Create order in Sanity (deterministic _id = idempotency key)
       const orderDoc = {
+        _id: orderId,
         _type: 'order',
         orderNumber,
         stripeSessionId: session.id,
@@ -268,9 +273,31 @@ export default async (req, context) => {
         orderDoc.personalisationDetails = personalisationDetails;
       }
 
-      await sanity.create(orderDoc);
+      try {
+        await sanity.create(orderDoc);
+      } catch (err) {
+        // 409 = a concurrent delivery already created this order. Treat as
+        // already-processed: don't re-send emails or delete anything twice.
+        if (err?.statusCode === 409 || /already exist/i.test(err?.message || '')) {
+          console.log(`Concurrent duplicate for session ${session.id} — order already created. Skipping.`);
+          return new Response('Already processed', { status: 200 });
+        }
+        throw err; // real failure → outer catch → 500 → Stripe retries
+      }
 
       console.log(`${isPersonalised ? 'Personalised o' : 'O'}rder ${orderNumber} created in Sanity for session ${session.id}`);
+
+      // Now that the order is safely persisted, remove the pending
+      // personalisation doc (its data now lives on the order). Deferred to
+      // here so a failed/retried run never deletes the brief before the
+      // order exists.
+      if (personalisationRef) {
+        try {
+          await sanity.delete(personalisationRef);
+        } catch (err) {
+          console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
+        }
+      }
 
       // ── Email templates ──────────────────────────────────────
       const emailHeader = `
@@ -465,7 +492,9 @@ export default async (req, context) => {
       }
     } catch (err) {
       console.error('Error processing checkout.session.completed:', err);
-      return new Response('Webhook processing error (logged)', { status: 200 });
+      // Return 500 so Stripe retries. Safe because the idempotency guard above
+      // prevents a retry from creating a duplicate order or re-sending emails.
+      return new Response('Webhook processing error — will retry', { status: 500 });
     }
   }
 
