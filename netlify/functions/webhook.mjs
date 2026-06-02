@@ -76,27 +76,12 @@ async function getNextOrderNumber() {
   throw new Error('Could not allocate order number after 5 attempts');
 }
 
-export default async (req, context) => {
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
-  }
-
-  const body = await req.text();
-  const sig = req.headers.get('stripe-signature');
-
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return new Response(`Webhook Error: ${err.message}`, { status: 400 });
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-
-    try {
+// ── Shared fulfilment ──────────────────────────────────
+// Runs for a PAID session. Invoked by checkout.session.completed (when the
+// session is already paid) and by checkout.session.async_payment_succeeded
+// (delayed methods like Klarna, once the payment clears). Idempotent via the
+// deterministic order _id, so it is safe from either path or on a retry.
+async function fulfilOrder(session) {
       // ── Idempotency guard (C3) ───────────────────────────────
       // Stripe may deliver the same event more than once. Use a deterministic
       // order _id derived from the session id, and bail out before ANY side
@@ -490,12 +475,54 @@ export default async (req, context) => {
       } catch (emailErr) {
         console.error('Failed to send team notification:', emailErr);
       }
-    } catch (err) {
-      console.error('Error processing checkout.session.completed:', err);
-      // Return 500 so Stripe retries. Safe because the idempotency guard above
-      // prevents a retry from creating a duplicate order or re-sending emails.
-      return new Response('Webhook processing error — will retry', { status: 500 });
+
+  return new Response('OK', { status: 200 });
+}
+
+export default async (req, context) => {
+  if (req.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+
+  const body = await req.text();
+  const sig = req.headers.get('stripe-signature');
+
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return new Response(`Webhook Error: ${err.message}`, { status: 400 });
+  }
+
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      // H3: only fulfil PAID sessions. Delayed methods (Klarna, bank debits)
+      // fire 'completed' while still unpaid, then 'async_payment_succeeded'
+      // once the payment clears — so we must not fulfil an unpaid one here.
+      if (session.payment_status !== 'paid') {
+        console.log(`Session ${session.id} completed but unpaid (payment_status: ${session.payment_status}). Awaiting async_payment_succeeded.`);
+        return new Response('Awaiting payment', { status: 200 });
+      }
+      return await fulfilOrder(session);
     }
+
+    if (event.type === 'checkout.session.async_payment_succeeded') {
+      // Delayed payment has cleared — fulfil now (idempotent with 'completed').
+      return await fulfilOrder(event.data.object);
+    }
+
+    if (event.type === 'checkout.session.async_payment_failed') {
+      const session = event.data.object;
+      console.error(`Async payment failed for session ${session.id} (${session.customer_details?.email || 'no email'}). No order created.`);
+      return new Response('Payment failed — no fulfilment', { status: 200 });
+    }
+  } catch (err) {
+    console.error(`Error processing ${event?.type}:`, err);
+    // 500 → Stripe retries; the idempotency guard inside fulfilOrder keeps retries safe.
+    return new Response('Webhook processing error — will retry', { status: 500 });
   }
 
   return new Response('OK', { status: 200 });
