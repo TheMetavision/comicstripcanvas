@@ -163,6 +163,7 @@ export default async (req, context) => {
   }
 };
 
-export const config = {
-  path: '/api/personalise',
-};
+// NOTE: deliberately NO `export const config = { path }` here.
+// /api/personalise is routed by the forced /api/* redirect in netlify.toml
+// (/api/* -> /.netlify/functions/:splat). An inline config.path collides with
+// that forced rewrite and 404s, so we rely on the redirect like contact does.

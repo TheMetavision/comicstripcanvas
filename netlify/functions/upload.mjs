@@ -53,6 +53,8 @@ export default async (req, context) => {
   }
 };
 
-export const config = {
-  path: '/api/upload',
-};
+// NOTE: deliberately NO `export const config = { path }` here.
+// This site routes /api/* via the forced redirect in netlify.toml
+// (/api/* -> /.netlify/functions/:splat). An inline config.path collides
+// with that forced rewrite and causes a 404, so we rely on the redirect,
+// exactly like the working contact function does.
