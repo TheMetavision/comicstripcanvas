@@ -201,6 +201,27 @@ export default defineType({
       description: 'Timestamp of when the shipping notification was sent.',
     }),
     defineField({
+      name: 'notifyError',
+      title: 'Notification Error',
+      type: 'string',
+      readOnly: true,
+      description: 'Set automatically if the order could not be emailed (e.g. missing/invalid customer email). Blank = no problem.',
+    }),
+    defineField({
+      name: 'customerEmailError',
+      title: 'Customer Email Error',
+      type: 'string',
+      readOnly: true,
+      description: 'Set automatically if the customer confirmation email failed to send. Blank = sent OK.',
+    }),
+    defineField({
+      name: 'teamEmailError',
+      title: 'Team Email Error',
+      type: 'string',
+      readOnly: true,
+      description: 'Set automatically if the team notification email failed to send. Blank = sent OK.',
+    }),
+    defineField({
       name: 'createdAt',
       title: 'Order Date',
       type: 'datetime',

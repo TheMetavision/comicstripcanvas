@@ -107,7 +107,8 @@ async function fulfilOrder(session) {
         session.shipping_details?.name ||
         session.customer_details?.name ||
         'Customer';
-      const customerEmail = session.customer_details?.email || '';
+      const customerEmail = (session.customer_details?.email || '').trim();
+      const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail);
       const totalAmount = (session.amount_total || 0) / 100;
 
       // Real shipping cost from the Stripe session (pence -> pounds).
@@ -258,6 +259,10 @@ async function fulfilOrder(session) {
         orderDoc.personalisationDetails = personalisationDetails;
       }
 
+      if (!emailLooksValid) {
+        orderDoc.notifyError = 'No valid customer email on the Stripe session — confirmation not sent.';
+      }
+
       try {
         await sanity.create(orderDoc);
       } catch (err) {
@@ -360,6 +365,16 @@ async function fulfilOrder(session) {
           </div>`
         : '';
 
+      // Record an email-delivery failure on the order so it's visible in Studio.
+      // Never throws — a failed patch is logged, not propagated.
+      const flagOrderError = async (field, message) => {
+        try {
+          await sanity.patch(orderId).set({ [field]: message }).commit();
+        } catch (patchErr) {
+          console.error(`Could not record ${field} on order ${orderId}:`, patchErr.message);
+        }
+      };
+
       // ── Send customer confirmation email ──────────────────────
       // Personalised orders get a Strip-aware intro line — strips don't mention
       // Name/Title or Caption because those fields aren't collected for strips.
@@ -369,8 +384,9 @@ async function fulfilOrder(session) {
         ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.'
         : 'Your personalised order has been received! Our artists will create your custom artwork, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.';
 
+      if (emailLooksValid) {
       try {
-        await resend.emails.send({
+        const { error } = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [customerEmail],
           subject: isPersonalised
@@ -405,15 +421,24 @@ async function fulfilOrder(session) {
             </div>
           `,
         });
-        console.log(`Customer confirmation email sent to ${customerEmail}`);
+        if (error) {
+          console.error('Resend returned an error for customer email:', error);
+          await flagOrderError('customerEmailError', `${error.name || 'Error'}: ${error.message || 'unknown'}`);
+        } else {
+          console.log(`Customer confirmation email sent to ${customerEmail}`);
+        }
       } catch (emailErr) {
         console.error('Failed to send customer email:', emailErr);
+        await flagOrderError('customerEmailError', emailErr?.message || String(emailErr));
+      }
+      } else {
+        console.error(`Skipping customer email for order ${orderNumber} — missing/invalid address.`);
       }
 
       // ── Send production team notification email ───────────────
       const teamEmail = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
       try {
-        await resend.emails.send({
+        const { error } = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [teamEmail],
           subject: `${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
@@ -471,9 +496,15 @@ async function fulfilOrder(session) {
             </div>
           `,
         });
-        console.log(`Team notification sent to ${teamEmail}`);
+        if (error) {
+          console.error('Resend returned an error for team email:', error);
+          await flagOrderError('teamEmailError', `${error.name || 'Error'}: ${error.message || 'unknown'}`);
+        } else {
+          console.log(`Team notification sent to ${teamEmail}`);
+        }
       } catch (emailErr) {
         console.error('Failed to send team notification:', emailErr);
+        await flagOrderError('teamEmailError', emailErr?.message || String(emailErr));
       }
 
   return new Response('OK', { status: 200 });
