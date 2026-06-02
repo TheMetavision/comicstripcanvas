@@ -179,7 +179,6 @@ export default async (req, context) => {
           captionText,
           instructions,
           uploadedImages: photoUrls,
-          proofStatus: 'awaiting-proof',
         };
 
         itemRows = `
@@ -355,8 +354,8 @@ export default async (req, context) => {
       const customerIntroText = !isPersonalised
         ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch.'
         : isStrip
-        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels and create a digital proof within <strong style="color: ' + BRAND.cyan + ';">2-3 working days</strong>. We won\'t print until you\'ve approved it — so keep an eye on your inbox.'
-        : 'Your personalised order has been received! Our artists will create a digital proof within <strong style="color: ' + BRAND.cyan + ';">2-3 working days</strong>. We won\'t print until you\'ve approved it — so keep an eye on your inbox.';
+        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.'
+        : 'Your personalised order has been received! Our artists will create your custom artwork, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.';
 
       try {
         await resend.emails.send({
@@ -380,18 +379,6 @@ export default async (req, context) => {
                 ${orderTable}
                 ${shippingBlock}
 
-                ${isPersonalised ? `
-                <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${BRAND.cyan};">
-                  <strong style="color: ${BRAND.cyan}; font-size: 14px;">What happens next?</strong>
-                  <ol style="color: #555; line-height: 2; margin: 12px 0 0; padding-left: 20px;">
-                    <li>Our artists review your ${isStrip ? 'photos and arrange them across the panels' : 'photos and brief'}</li>
-                    <li>We create a digital proof (2-3 working days)</li>
-                    <li>You review and approve (up to 2 revisions included)</li>
-                    <li>We print and dispatch (3-6 working days after approval)</li>
-                  </ol>
-                </div>
-                ` : ''}
-                
                 <p style="color: #888; line-height: 1.6; margin: 24px 0 0; font-size: 13px;">
                   We'll send you another email when your order has been dispatched. If you have any questions, just reply to this email.
                 </p>
@@ -460,7 +447,7 @@ export default async (req, context) => {
                   <ol style="color: #444; line-height: 2; margin: 0; padding-left: 20px; font-size: 14px;">
                     <li>Open <a href="https://comicstripcanvas.sanity.studio" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
                     ${isPersonalised
-                      ? '<li>Download customer photos from links above</li><li>Create artwork proof and email to customer (target: 2-3 working days)</li><li>Once approved → print and dispatch</li>'
+                      ? '<li>Download customer photos from links above</li><li>Create the custom artwork from the brief</li><li>Print and dispatch, then add tracking and update status to "Dispatched"</li>'
                       : '<li>Prepare artwork for printing</li><li>Update status to "In Production"</li><li>Add tracking and update to "Dispatched"</li>'}
                   </ol>
                 </div>

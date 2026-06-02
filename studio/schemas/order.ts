@@ -182,20 +182,6 @@ export default defineType({
           of: [{ type: 'url' }],
           description: 'URLs to customer-uploaded images',
         },
-        {
-          name: 'proofStatus',
-          title: 'Proof Status',
-          type: 'string',
-          options: {
-            list: [
-              { title: 'Awaiting Proof', value: 'awaiting-proof' },
-              { title: 'Proof Sent', value: 'proof-sent' },
-              { title: 'Approved', value: 'approved' },
-              { title: 'Revisions Requested', value: 'revisions' },
-            ],
-          },
-          initialValue: 'awaiting-proof',
-        },
       ],
       options: { collapsible: true, collapsed: false },
     }),
