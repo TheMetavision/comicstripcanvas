@@ -338,6 +338,7 @@ export default async (req, context) => {
   return new Response('OK', { status: 200 });
 };
 
-export const config = {
-  path: '/api/order-shipped',
-};
+// NOTE: no `export const config = { path }`. Routed by the forced /api/* redirect
+// in netlify.toml (/api/* -> /.netlify/functions/:splat). This is the SANITY order webhook;
+// Sanity must POST to https://comicstripcanvas.co.uk/api/order-shipped (the redirect sends
+// it to /.netlify/functions/order-shipped). An inline config.path collides and 404s.

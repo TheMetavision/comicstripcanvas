@@ -485,6 +485,7 @@ export default async (req, context) => {
   return new Response('OK', { status: 200 });
 };
 
-export const config = {
-  path: '/api/webhook',
-};
+// NOTE: no `export const config = { path }`. Routed by the forced /api/* redirect
+// in netlify.toml (/api/* -> /.netlify/functions/:splat). This is the STRIPE webhook;
+// Stripe must POST to https://comicstripcanvas.co.uk/api/webhook (the redirect sends it
+// to /.netlify/functions/webhook). An inline config.path collides and 404s.

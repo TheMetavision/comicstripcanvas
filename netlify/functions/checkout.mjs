@@ -137,6 +137,6 @@ export default async (req, context) => {
   }
 };
 
-export const config = {
-  path: '/api/checkout',
-};
+// NOTE: no `export const config = { path }`. Routed by the forced /api/* redirect
+// in netlify.toml (/api/* -> /.netlify/functions/:splat). An inline config.path
+// collides with that forced rewrite and 404s. Front end calls /api/checkout.
