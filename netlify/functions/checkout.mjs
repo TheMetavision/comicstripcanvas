@@ -16,6 +16,18 @@ const SIZE_LABELS = {
   large: 'Large (24×16")',
 };
 
+// Authoritative price table (pounds), keyed by format → size.
+// SERVER-SIDE source of truth — never trust a client-supplied price.
+// KEEP IN SYNC with PRICES in src/data/products.ts.
+const PRICES = {
+  poster: { small: 9.99, medium: 12.99, large: 16.99 },
+  'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
+  'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
+};
+
+// Stripe's minimum chargeable amount for GBP.
+const STRIPE_MIN_PENCE = 30; // £0.30
+
 // Free postage threshold and standard rate — keep in sync with src/stores/cart.ts and /api/personalise
 const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
 const STANDARD_SHIPPING_PENCE = 495;        // £4.95
@@ -39,26 +51,42 @@ export default async (req, context) => {
       });
     }
 
-    // Validate items + compute subtotal server-side. Never trust client prices
-    // for the shipping decision.
+    // Server-authoritative pricing (H1): never trust the client's unitPrice.
+    // Each line's price comes from the PRICES table, looked up by format+size.
     let subtotalPence = 0;
     for (const item of items) {
-      if (
-        typeof item.unitPrice !== 'number' ||
-        typeof item.quantity !== 'number' ||
-        item.unitPrice <= 0 ||
-        item.quantity <= 0 ||
-        item.quantity > 99
-      ) {
-        return new Response(JSON.stringify({ error: 'Invalid item in cart' }), {
+      const canonical = PRICES[item.format]?.[item.size];
+      if (canonical === undefined) {
+        return new Response(JSON.stringify({ error: 'Invalid product format or size' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      subtotalPence += Math.round(item.unitPrice * 100) * item.quantity;
+      if (
+        typeof item.quantity !== 'number' ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity <= 0 ||
+        item.quantity > 99
+      ) {
+        return new Response(JSON.stringify({ error: 'Invalid quantity' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      item.unitPrice = canonical; // override anything the client sent
+      subtotalPence += Math.round(canonical * 100) * item.quantity;
     }
 
     const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
+
+    // M5: never hand Stripe a total below its minimum (would 500 at session create).
+    const totalPence = subtotalPence + (qualifiesForFreeShipping ? 0 : STANDARD_SHIPPING_PENCE);
+    if (totalPence < STRIPE_MIN_PENCE) {
+      return new Response(JSON.stringify({ error: 'Order total is below the minimum we can process' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     // Build Stripe line items
     const lineItems = items.map((item) => ({
@@ -77,17 +105,6 @@ export default async (req, context) => {
         unit_amount: Math.round(item.unitPrice * 100),
       },
       quantity: item.quantity,
-    }));
-
-    // Store cart data in metadata for the webhook
-    const cartMeta = items.map((item) => ({
-      productId: item.productId,
-      slug: item.slug,
-      title: item.title,
-      format: item.format,
-      size: item.size,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
     }));
 
     const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
@@ -117,9 +134,6 @@ export default async (req, context) => {
           },
         },
       ],
-      metadata: {
-        cartItems: JSON.stringify(cartMeta),
-      },
       success_url: `${siteUrl}/order-confirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/store`,
     });

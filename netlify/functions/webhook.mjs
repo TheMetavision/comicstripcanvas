@@ -194,11 +194,31 @@ async function fulfilOrder(session) {
             <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: right;">£${artFee.toFixed(2)}</td>
           </tr>`;
       } else {
-        const cartItems = JSON.parse(session.metadata?.cartItems || '[]');
+        // H5: rebuild line items from the Stripe session itself rather than from
+        // session metadata (capped at 500 chars/key, which breaks on large carts).
+        // checkout.mjs stamps productId/slug/format/size onto each line item's
+        // product metadata and the title onto its name, so everything is
+        // recoverable here with no size limit. limit:100 (Stripe defaults to 10).
+        const stripeItems = await stripe.checkout.sessions.listLineItems(session.id, {
+          expand: ['data.price.product'],
+          limit: 100,
+        });
 
-        lineItems = cartItems.map((item) => ({
+        const stdItems = stripeItems.data.map((li) => {
+          const meta = li.price?.product?.metadata || {};
+          return {
+            slug: meta.slug || '',
+            title: li.price?.product?.name || li.description || 'Item',
+            format: meta.format || '',
+            size: meta.size || '',
+            quantity: li.quantity || 1,
+            unitPrice: (li.price?.unit_amount || 0) / 100,
+          };
+        });
+
+        lineItems = stdItems.map((item, idx) => ({
           _type: 'object',
-          _key: `${item.slug}-${item.format}-${item.size}-${Date.now()}`,
+          _key: `${item.slug || 'item'}-${item.format}-${item.size}-${idx}`,
           productTitle: item.title,
           format: FORMAT_LABELS[item.format] || item.format,
           size: SIZE_LABELS[item.size] || item.size,
@@ -206,7 +226,7 @@ async function fulfilOrder(session) {
           unitPrice: item.unitPrice,
         }));
 
-        itemRows = cartItems
+        itemRows = stdItems
           .map(
             (item) =>
               `<tr>
