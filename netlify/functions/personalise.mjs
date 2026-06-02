@@ -31,14 +31,17 @@ const PRICES = {
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
-const STYLE_CONFIG = {
-  cover: { label: 'Comic Book Cover', fee: 10 },
-  icon: { label: 'Comic Book Icon', fee: 10 },
-  strip: { label: 'Comic Book Strip', fee: 25 },
-  'comic-book-cover': { label: 'Comic Book Cover', fee: 10 },
-  'comic-book-icon': { label: 'Comic Book Icon', fee: 10 },
-  'comic-book-strip': { label: 'Comic Book Strip', fee: 25 },
-};
+// Resolve the chosen style to its label + artwork fee. Uses the same
+// `includes()` convention as the webhook, so singular/plural/prefixed variants
+// ('strip', 'comic-book-strip', 'comic-book-strips') all resolve correctly and
+// can't drift. Returns null for an unrecognised style (→ rejected below).
+function resolveStyle(style) {
+  const s = String(style).toLowerCase();
+  if (s.includes('strip')) return { label: 'Comic Book Strip', fee: 25 };
+  if (s.includes('icon')) return { label: 'Comic Book Icon', fee: 10 };
+  if (s.includes('cover')) return { label: 'Comic Book Cover', fee: 10 };
+  return null;
+}
 
 // Keep in sync with checkout.mjs
 const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
@@ -69,8 +72,20 @@ export default async (req, context) => {
       );
     }
 
-    const styleConfig = STYLE_CONFIG[style] || { label: style, fee: 10 };
-    const basePrice = PRICES[format]?.[size] || 9.99;
+    const styleConfig = resolveStyle(style);
+    if (!styleConfig) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid style' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const basePrice = PRICES[format]?.[size];
+    if (basePrice === undefined) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid product format or size' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     const subtotalPence = Math.round(basePrice * 100) + Math.round(styleConfig.fee * 100);
     const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
 
@@ -90,7 +105,7 @@ export default async (req, context) => {
     });
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ['card', 'klarna'],
       mode: 'payment',
       line_items: [
         {
@@ -109,7 +124,7 @@ export default async (req, context) => {
             currency: 'gbp',
             product_data: {
               name: `Artwork Fee — ${styleConfig.label}`,
-              description: 'Custom artwork creation and proofing',
+              description: 'Custom artwork creation',
             },
             unit_amount: Math.round(styleConfig.fee * 100),
           },
