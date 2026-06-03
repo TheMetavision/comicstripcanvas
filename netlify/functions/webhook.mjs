@@ -570,6 +570,21 @@ export default async (req, context) => {
       console.error(`Async payment failed for session ${session.id} (${session.customer_details?.email || 'no email'}). No order created.`);
       return new Response('Payment failed — no fulfilment', { status: 200 });
     }
+
+    if (event.type === 'checkout.session.expired') {
+      // M2: abandoned checkout — promptly bin the pending personalisation doc
+      // (it holds customer photos) instead of waiting for the periodic sweep.
+      const ref = event.data.object?.metadata?.personalisationRef;
+      if (ref) {
+        try {
+          await sanity.delete(ref);
+          console.log(`Expired session — deleted pending personalisation ${ref}`);
+        } catch (err) {
+          console.error(`Could not delete pending personalisation ${ref} on expiry:`, err.message);
+        }
+      }
+      return new Response('Expired session handled', { status: 200 });
+    }
   } catch (err) {
     console.error(`Error processing ${event?.type}:`, err);
     // 500 → Stripe retries; the idempotency guard inside fulfilOrder keeps retries safe.
