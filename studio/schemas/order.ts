@@ -112,11 +112,21 @@ export default defineType({
           { title: 'In Production', value: 'in-production' },
           { title: 'Dispatched', value: 'dispatched' },
           { title: 'Delivered', value: 'delivered' },
+          { title: 'Cancelled', value: 'cancelled' },
+          { title: 'Refunded', value: 'refunded' },
         ],
         layout: 'radio',
       },
       initialValue: 'received',
       description: 'Setting this to Dispatched (with a Tracking Number filled in) will automatically send a shipping notification email to the customer.',
+      validation: (Rule) =>
+        Rule.custom((status, context) => {
+          const tracking = context.document?.trackingNumber;
+          if ((status === 'dispatched' || status === 'delivered') && !tracking) {
+            return 'Add a Tracking Number before marking the order Dispatched or Delivered.';
+          }
+          return true;
+        }),
     }),
     defineField({
       name: 'trackingNumber',
@@ -227,6 +237,13 @@ export default defineType({
       type: 'datetime',
       readOnly: true,
     }),
+    defineField({
+      name: 'paidAt',
+      title: 'Paid At',
+      type: 'datetime',
+      readOnly: true,
+      description: 'When payment was confirmed and the order was created. Set automatically.',
+    }),
   ],
   preview: {
     select: {
@@ -242,6 +259,8 @@ export default defineType({
         'in-production': '🎨 In Production',
         dispatched: '📦 Dispatched',
         delivered: '✅ Delivered',
+        cancelled: '🚫 Cancelled',
+        refunded: '💸 Refunded',
       };
       return {
         title: `${orderNumber ? orderNumber + ' — ' : ''}${customer || 'Unknown Customer'}`,

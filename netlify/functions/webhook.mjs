@@ -240,14 +240,10 @@ async function fulfilOrder(session) {
           .join('');
       }
 
-      // Allocate the human-readable order number.
-      let orderNumber;
-      try {
-        orderNumber = await getNextOrderNumber();
-      } catch (err) {
-        console.error('Order number allocation failed, falling back to payment intent:', err.message);
-        orderNumber = `CSC-${session.payment_intent}`;
-      }
+      // Allocate the human-readable order number. If allocation fails, throw so
+      // the outer handler returns 500 and Stripe retries — the idempotency guard
+      // makes the retry safe, and we never issue a non-sequential number.
+      const orderNumber = await getNextOrderNumber();
 
       // Create order in Sanity (deterministic _id = idempotency key)
       const orderDoc = {
@@ -273,6 +269,7 @@ async function fulfilOrder(session) {
         isPersonalised,
         shippingEmailSent: false,
         createdAt: new Date().toISOString(),
+        paidAt: new Date().toISOString(),
       };
 
       if (personalisationDetails) {
