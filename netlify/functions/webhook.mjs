@@ -396,10 +396,10 @@ async function fulfilOrder(session) {
       // Personalised orders get a Strip-aware intro line — strips don't mention
       // Name/Title or Caption because those fields aren't collected for strips.
       const customerIntroText = !isPersonalised
-        ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch.'
+        ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch, plus 1-2 working days for delivery.'
         : isStrip
-        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.'
-        : 'Your personalised order has been received! Our artists will create your custom artwork, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>.';
+        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>, plus 1-2 working days for delivery.'
+        : 'Your personalised order has been received! Our artists will create your custom artwork, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>, plus 1-2 working days for delivery.';
 
       if (emailLooksValid) {
       try {

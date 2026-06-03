@@ -141,8 +141,8 @@ export default async (req, context) => {
               ? 'FREE UK delivery (orders over £50)'
               : 'Standard UK delivery',
             delivery_estimate: {
-              minimum: { unit: 'business_day', value: 3 },
-              maximum: { unit: 'business_day', value: 6 },
+              minimum: { unit: 'business_day', value: 8 },
+              maximum: { unit: 'business_day', value: 12 },
             },
           },
         },
