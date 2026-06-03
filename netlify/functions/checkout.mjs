@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { PRICES } from './_shared/catalog.mjs';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2024-12-18.acacia',
@@ -14,15 +15,6 @@ const SIZE_LABELS = {
   small: 'Small (12×8")',
   medium: 'Medium (16×12")',
   large: 'Large (24×16")',
-};
-
-// Authoritative price table (pounds), keyed by format → size.
-// SERVER-SIDE source of truth — never trust a client-supplied price.
-// KEEP IN SYNC with PRICES in src/data/products.ts.
-const PRICES = {
-  poster: { small: 9.99, medium: 12.99, large: 16.99 },
-  'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
-  'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
 // Stripe's minimum chargeable amount for GBP.
