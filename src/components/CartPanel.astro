@@ -332,10 +332,16 @@
   const checkoutBtn = document.getElementById('checkout-btn');
   const checkoutError = document.getElementById('checkout-error');
 
+  // L3: explicit in-flight guard so a fast double-tap (or any programmatic
+  // re-trigger) can't fire two checkout sessions, on top of disabling the button.
+  let submitting = false;
+
   checkoutBtn?.addEventListener('click', async () => {
+    if (submitting) return;
     const items = cartItems.get();
     if (items.length === 0) return;
 
+    submitting = true;
     checkoutBtn.textContent = 'PROCESSING...';
     checkoutBtn.setAttribute('disabled', 'true');
     checkoutBtn.classList.add('opacity-60', 'cursor-not-allowed');
@@ -375,6 +381,7 @@
       checkoutBtn.textContent = 'CHECKOUT';
       checkoutBtn.removeAttribute('disabled');
       checkoutBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+      submitting = false;
     }
   });
 </script>
