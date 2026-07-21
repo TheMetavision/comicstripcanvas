@@ -123,6 +123,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
           <div id="current-price" class="price-tag text-3xl mb-4">
             From £{basePrice.toFixed(2)}
           </div>
+          <p class="font-source text-gray-400 text-sm mb-4">Posters from £9.99 &middot; Canvas from £26.99 &mdash; choose your format below</p>
 
           <p class="font-source text-gray-300 leading-relaxed text-base mb-8">{product.description}</p>
 
@@ -171,9 +172,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
             ADD TO CART
           </button>
 
-          {product.isPersonalised && (
-            <a href="/personalised" class="btn-secondary w-full text-xl text-center block mb-4">
-              PERSONALISE THIS
+          {!product.isPersonalised && (
+            <a href="/personalise" class="btn-secondary w-full text-xl text-center block mb-4">
+              ✏️ MAKE IT PERSONAL — PUT YOURSELF IN THE FRAME
             </a>
           )}
 
