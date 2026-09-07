@@ -150,7 +150,11 @@ async function fulfilOrder(session) {
         return new Response('Already processed', { status: 200 });
       }
 
-      const isPersonalised = session.metadata?.isPersonalised === 'true';
+      // The old /personalise flow announces itself in session metadata. Builder
+      // lines do not -- each carries personalisationId on its own line item -- so
+      // this flag selects the old code path and nothing else.
+      const legacyPersonalised = session.metadata?.isPersonalised === 'true';
+      let builderPersonalised = false;
 
       // Stripe API 2025+ moved shipping details under collected_information
       const shipping =
@@ -182,7 +186,7 @@ async function fulfilOrder(session) {
       // email copy can be tailored (no Name/Title or Caption references).
       let isStrip = false;
 
-      if (isPersonalised) {
+      if (legacyPersonalised) {
         const style = session.metadata?.style || '';
         const format = session.metadata?.format || '';
         const size = session.metadata?.size || '';
@@ -260,6 +264,12 @@ async function fulfilOrder(session) {
           limit: 100,
         });
 
+        // An order is personalised if anything in it was built in the builder,
+        // whatever the session metadata does or does not say.
+        builderPersonalised = stripeItems.data.some(
+          (li) => li.price?.product?.metadata?.personalisationId
+        );
+
         const stdItems = stripeItems.data.map((li) => {
           const meta = li.price?.product?.metadata || {};
           return {
@@ -295,6 +305,8 @@ async function fulfilOrder(session) {
           )
           .join('');
       }
+
+      const isPersonalised = legacyPersonalised || builderPersonalised;
 
       // Allocate the human-readable order number. If allocation fails, throw so
       // the outer handler returns 500 and Stripe retries — the idempotency guard
