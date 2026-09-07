@@ -1,4 +1,5 @@
 import { defineType, defineField } from 'sanity';
+import ProofPanel from '../components/ProofPanel';
 
 /**
  * pendingPersonalisation
@@ -47,6 +48,15 @@ export default defineType({
   title: 'Pending Personalisation',
   type: 'document',
   fields: [
+    // Read-only: the proof, then the state it is in. First in the list so a
+    // reviewer sees the artwork and whether it is approvable without scrolling.
+    defineField({
+      name: 'proofPanel',
+      title: 'Proof',
+      type: 'string',
+      readOnly: true,
+      components: { field: ProofPanel },
+    }),
     defineField({
       name: 'style',
       title: 'Style',
@@ -175,6 +185,39 @@ export default defineType({
       type: 'string',
       readOnly: true,
       description: 'The order document this build was paid for on.',
+    }),
+
+    // ── set by the Studio document actions ────────────────────────────────
+    defineField({
+      name: 'approvedAt',
+      title: 'Approved At',
+      type: 'datetime',
+      readOnly: true,
+      description: 'When a reviewer approved the proof and it went to the customer.',
+    }),
+    defineField({
+      name: 'customerApprovedAt',
+      title: 'Customer Approved At',
+      type: 'datetime',
+      readOnly: true,
+      description: 'When the customer clicked Approve in their proof email.',
+    }),
+    defineField({
+      name: 'holdNote',
+      title: 'Hold Note',
+      type: 'text',
+      rows: 3,
+      readOnly: true,
+      description: 'Why this was put on hold.',
+    }),
+    defineField({
+      name: 'approveToken',
+      title: 'Approve Token',
+      type: 'string',
+      readOnly: true,
+      hidden: true,
+      description:
+        'One-shot capability for the customer\'s Approve link. Cleared when used, so the link cannot be replayed.',
     }),
 
     defineField({

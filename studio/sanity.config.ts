@@ -1,6 +1,7 @@
 import { defineConfig } from 'sanity';
 import { structureTool } from 'sanity/structure';
 import { schemaTypes } from './schemas';
+import { personalisationActions } from './actions/personalisationActions';
 
 // A personalisation group: one workflow stage, newest first.
 const personalisations = (S: any, title: string, filter: string, params?: any) => {
@@ -158,5 +159,10 @@ export default defineConfig({
   plugins: [structureTool({ structure })],
   schema: {
     types: schemaTypes,
+  },
+  document: {
+    // Approve / Hold / Re-render are appended to the standard actions for
+    // pendingPersonalisation; nothing standard is removed.
+    actions: personalisationActions,
   },
 });

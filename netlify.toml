@@ -5,6 +5,27 @@
 [build.environment]
   NODE_VERSION = "20"
 
+# ── Environment variables ───────────────────────────────────────────────────
+# Set in the Netlify UI (Site configuration -> Environment variables), and in a
+# local .env for `netlify dev`. Listed here as documentation only -- secrets
+# must never be written into this file, which is in the repository.
+#
+#   SANITY_WRITE_TOKEN               writes orders and personalisations
+#   STRIPE_SECRET_KEY                creates and reads Checkout sessions
+#   STRIPE_WEBHOOK_SECRET            verifies Stripe webhook signatures
+#   SANITY_WEBHOOK_SECRET            verifies the Sanity order-shipped webhook
+#   RESEND_API_KEY                   transactional email -- the Comic Strip Canvas
+#                                    key, NOT another project's
+#   EMAIL_FROM                       e.g. "Comic Strip Canvas <orders@comicstripcanvas.co.uk>"
+#   TEAM_EMAIL                       where new-order notifications go
+#   PERSONALISATION_ACTION_SECRET    shared secret the Studio sends as
+#                                    X-CSC-Action-Secret on Approve / Hold /
+#                                    Re-render. The Studio side of the same value
+#                                    is SANITY_STUDIO_PERSONALISATION_ACTION_SECRET,
+#                                    set where the Studio is built. That bundle is
+#                                    public, so treat this as a speed bump against
+#                                    drive-by traffic, not as real authentication.
+
 [functions]
   directory = "netlify/functions"
 
