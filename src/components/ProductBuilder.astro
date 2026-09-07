@@ -284,12 +284,17 @@ const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
   }
   .csc-builder svg { display: block; width: 100%; height: 100%; touch-action: none; }
 
-  /* The overlay is display:flex, and Tailwind's preflight reset for [hidden]
-     wraps its selector in :where(), which contributes no specificity -- so it
-     ties with .flex at (0,1,0) and loses on source order. Without this rule the
-     hidden attribute has no effect and the guide cannot be dismissed. The
-     prototype carried the same rule as #guide[hidden]{display:none}. */
-  .csc-builder #guide[hidden] { display: none; }
+  /* Tailwind's preflight reset for [hidden] wraps its selector in :where(), which
+     contributes no specificity, so it scores (0,1,0) and loses to ANY single-class
+     display utility. Two elements here set display through a class and also rely on
+     the hidden attribute -- the guide overlay (.flex) and the Copy recipe button
+     (.b-btn is inline-block) -- and both stayed on screen because of it. One rule
+     for the whole island rather than a special case per element: hidden means
+     hidden, whatever a utility class says.
+
+     This is load-bearing, not cosmetic: the Copy recipe button is meant to be
+     dev-only, and without this it is visible to customers regardless of ?dev. */
+  .csc-builder [hidden] { display: none !important; }
 
   /* toggled by the builder script on SVG nodes */
   .csc-builder .hit { cursor: pointer; }
