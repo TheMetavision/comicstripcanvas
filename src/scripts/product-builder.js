@@ -837,8 +837,14 @@ export function initProductBuilder() {
      its own and is re-encoded first. 5000px on the longest side is deliberate:
      it still carries a 16 x 24 in print at 300dpi, so this is a transport
      re-encode, not a downscale of the artwork. */
-  const UPLOAD_MAX_SIDE = 5000;
-  const UPLOAD_MAX_BYTES = 5.5 * 1024 * 1024;
+  /* Pixels are cheaper to lose than quality: below about 0.75 JPEG artefacts
+     start to show, and the comic styling applied later amplifies them. So give
+     up resolution first and only trade quality once the pixel steps run out. */
+  const ENCODE_LADDER = [[5000, 0.9], [4000, 0.9], [4000, 0.82]];
+  // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
+  // still misses that after the ladder surfaces as a per-panel upload error.
+  const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
+  const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
   let saveId = null;                 // pendingPersonalisation._id, set by the first upload
   let uploading = 0;
 
@@ -857,16 +863,28 @@ export function initProductBuilder() {
     const { im, url } = await loadImage(file);
     try {
       const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height;
-      const k = Math.min(1, UPLOAD_MAX_SIDE / Math.max(w0, h0));   // never upscale
-      cv.width = Math.max(1, Math.round(w0 * k));
-      cv.height = Math.max(1, Math.round(h0 * k));
-      g.drawImage(im, 0, 0, cv.width, cv.height);
-      let q = 0.92, blob = await toBlob(cv, q);
-      while (blob && blob.size > UPLOAD_MAX_BYTES && q > 0.4) {
-        q = Math.round((q - 0.06) * 100) / 100;
+      const drawAt = (maxSide) => {
+        const k = Math.min(1, maxSide / Math.max(w0, h0));   // never upscale
+        cv.width = Math.max(1, Math.round(w0 * k));
+        cv.height = Math.max(1, Math.round(h0 * k));
+        g.drawImage(im, 0, 0, cv.width, cv.height);
+      };
+
+      let blob = null, q = 0;
+      for (const [side, quality] of ENCODE_LADDER) {
+        drawAt(side); q = quality;
         blob = await toBlob(cv, q);
+        if (!blob) return file;
+        if (blob.size <= UPLOAD_TARGET_BYTES) break;
       }
-      if (!blob) return file;
+      // Pixel steps exhausted; the canvas is at the last rung, so only quality
+      // is left to give. Stop at the floor rather than send mush.
+      while (blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
+        q = Math.round((q - 0.06) * 100) / 100;
+        const next = await toBlob(cv, q);
+        if (!next) break;
+        blob = next;
+      }
       const base = (file.name || "photo").replace(/\.[^.]+$/, "");
       return new File([blob], base + ".jpg", { type: "image/jpeg" });
     } finally {
