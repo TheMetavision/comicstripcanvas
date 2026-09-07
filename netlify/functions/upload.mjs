@@ -16,9 +16,37 @@ export default async (req, context) => {
     });
   }
 
+  // A wrong or missing Content-Type makes req.formData() throw, which the
+  // catch below would report as a 500 — but that's a malformed request, not a
+  // server fault. Check up front and reject with 400. The two types accepted
+  // here are the ones req.formData() itself supports.
+  const contentType = req.headers.get('content-type') || '';
+  const isFormEncoded =
+    contentType.includes('multipart/form-data') ||
+    contentType.includes('application/x-www-form-urlencoded');
+
+  if (!isFormEncoded) {
+    return new Response(
+      JSON.stringify({
+        error: 'Content-Type must be multipart/form-data or application/x-www-form-urlencoded',
+      }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   try {
     // The wizard posts multipart/form-data with a single field named "file".
-    const formData = await req.formData();
+    // A declared-but-malformed body still throws, so that's a 400 too.
+    let formData;
+    try {
+      formData = await req.formData();
+    } catch {
+      return new Response(JSON.stringify({ error: 'Malformed form data' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const file = formData.get('file');
 
     if (!file || typeof file === 'string') {

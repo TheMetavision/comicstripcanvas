@@ -22,5 +22,11 @@ Any older agent instructions, scripts, or notes that reference the old path shou
 
 ### Notes
 
-Pending: personalise function 500 error, Resend DNS verify, domain DNS to Netlify, Sanity build hook, live Stripe keys.
+Pending: Resend DNS verify, domain DNS to Netlify, Sanity build hook, live Stripe keys.
+
+Resolved 2026-09-07: the "personalise function 500 error" was verified fixed and
+removed from the list above. `/api/personalise` returns 200 in production and for
+all 27 valid style x format x size inputs locally. The inline `config.path` that
+caused the original routing failure was removed in commit f1ada47; no function
+under `netlify/functions/` sets it, and that fault mode produced a 404, not a 500.
 

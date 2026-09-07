@@ -2,9 +2,21 @@ import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2024-12-18.acacia',
-});
+// Stripe is initialised lazily rather than at module scope. `new Stripe()`
+// throws when STRIPE_SECRET_KEY is missing, and at module scope that throw
+// happens at IMPORT time — before the handler exists — so Netlify surfaces an
+// opaque 500 with no JSON body and no log line from this function. Building it
+// inside the handler turns the same condition into a readable error. The
+// instance is memoised so warm containers still reuse one client.
+let stripeClient;
+function getStripe() {
+  if (stripeClient) return stripeClient;
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: '2024-12-18.acacia',
+  });
+  return stripeClient;
+}
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -48,6 +60,15 @@ export default async (req, context) => {
       status: 405,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  const stripe = getStripe();
+  if (!stripe) {
+    console.error('Personalisation error: STRIPE_SECRET_KEY is not set');
+    return new Response(
+      JSON.stringify({ error: 'Payment processing is not configured' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
