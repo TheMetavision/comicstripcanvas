@@ -27,7 +27,14 @@
 
 import { PRICES, PERSONALISATION_FEE } from '../data/products';
 
-const SVGNS = 'http://www.w3.org/2000/svg', MIN_DPI = 150, SR = 0.065;
+const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
+
+/* What counts as soft depends on what it is printed on. Canvas has texture and
+   is viewed from further away, so it carries a lower resolution than a poster
+   held at arm's length. This only changes the threshold we warn at -- the dpi
+   figure itself is calculated exactly as before. */
+const MIN_DPI_BY_FORMAT = { poster: 150, standard: 100, gallery: 100 };
+const DPI_SURFACE = { poster: 'as a poster', standard: 'on canvas', gallery: 'on canvas' };
 
 /** Builder format/size vocabulary -> the basket's. */
 const CART_FORMAT = { poster: 'poster', standard: 'canvas-standard', gallery: 'canvas-gallery' };
@@ -387,7 +394,12 @@ export function initProductBuilder() {
     });
     sel.disabled = !T.sizes;
   }
-  $('fmtSel').addEventListener('change', (e) => { fmt = e.target.value; rebuildKeepingImages(); });
+  $('fmtSel').addEventListener('change', (e) => {
+    fmt = e.target.value; rebuildKeepingImages();
+    // multi-panel templates keep their selection through a rebuild but are not
+    // re-synced by it, so the panel readout would otherwise show the old output
+    if (selected && nodes[selected]) syncPanel();
+  });
   $('sizeSel').addEventListener('change', (e) => {
     const s = T.sizes[+e.target.value]; T.size = s;
     if (T.resize) T.resize(s);              // icons rebuild their vector geometry
@@ -1089,8 +1101,11 @@ export function initProductBuilder() {
     $('zoom').value = s.zoom;
     $('cutBox').hidden = !(T.bg && T.bg.type === 'image');
     $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
-    flag.hidden = s.demo || s.dpi >= MIN_DPI;   // the example is not the customer's file
-    flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${MIN_DPI} it will look soft — try a larger file or zoom out.`;
+    const minDpi = MIN_DPI_BY_FORMAT[fmt] || 150;
+    const surface = DPI_SURFACE[fmt] || 'as a poster';
+    flag.hidden = s.demo || s.dpi >= minDpi;   // the example is not the customer's file
+    flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
+      + `${surface} — try a larger file or zoom out.`;
     const up = $('uploadHint');
     up.hidden = !(s.uploading || s.uploadError);
     up.textContent = s.uploading ? 'Uploading this photo…' : (s.uploadError || '');
