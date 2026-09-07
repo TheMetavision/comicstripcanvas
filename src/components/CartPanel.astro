@@ -250,8 +250,10 @@
             </div>
             <div class="flex-1 min-w-0">
               <p class="font-russo text-off-white text-sm leading-tight truncate">${item.title}</p>
-              <p class="font-source text-gray-400 text-xs mt-1">${FORMAT_LABELS[item.format] || item.format}</p>
-              <p class="font-source text-gray-400 text-xs">${SIZE_LABELS[item.size] || item.size}</p>
+              ${item.description
+                ? `<p class="font-source text-gray-400 text-xs mt-1">${item.description}</p>`
+                : `<p class="font-source text-gray-400 text-xs mt-1">${FORMAT_LABELS[item.format] || item.format}</p>
+                   <p class="font-source text-gray-400 text-xs">${SIZE_LABELS[item.size] || item.size}</p>`}
               <div class="flex items-center justify-between mt-2">
                 <div class="flex items-center gap-2">
                   <button class="qty-btn w-6 h-6 bg-mid-grey text-off-white hover:bg-comic-red transition-colors text-sm font-bold flex items-center justify-center" data-action="dec" data-id="${item.id}">-</button>

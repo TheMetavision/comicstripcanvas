@@ -2,7 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
-import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
+import { PRICES, FORMAT_LABELS, SIZES, PERSONALISATION_FEE } from '../../data/products';
 import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
@@ -49,14 +49,6 @@ const BUILDER_TEMPLATE: Record<string, 'strip' | 'cover' | 'icon-portrait'> = {
 };
 const builderTemplate = BUILDER_TEMPLATE[product.slug];
 
-// Artwork fee per personalised style. Mirrors resolveStyle() in
-// netlify/functions/personalise.mjs, which is what actually charges the
-// customer (strip £25, cover £10, icon £10) -- keep these in sync.
-const PERSONALISATION_FEE: Record<string, number> = {
-  strip: 25,
-  cover: 10,
-  'icon-portrait': 10,
-};
 const personalisationFee = builderTemplate ? PERSONALISATION_FEE[builderTemplate] : undefined;
 const personalisedFrom =
   personalisationFee !== undefined ? PRICES.poster.small + personalisationFee : undefined;

@@ -25,7 +25,18 @@
  *      downloaded draft. Inlining restores the prototype's draft exactly.
  */
 
+import { PRICES, PERSONALISATION_FEE } from '../data/products';
+
 const SVGNS = 'http://www.w3.org/2000/svg', MIN_DPI = 150, SR = 0.065;
+
+/** Builder format/size vocabulary -> the basket's. */
+const CART_FORMAT = { poster: 'poster', standard: 'canvas-standard', gallery: 'canvas-gallery' };
+const CART_SIZE = ['small', 'medium', 'large'];
+const FORMAT_WORD = { poster: 'poster print', standard: 'standard wrap', gallery: 'gallery wrap' };
+const TEMPLATE_WORD = {
+  strip: 'Comic strip', cover: 'Comic cover', 'cover-fullbleed': 'Comic cover (full bleed)',
+  'icon-portrait': 'Comic icon', 'icon-landscape': 'Comic icon',
+};
 
 /** Assets, previously base64 blobs in the prototype's `A` object. */
 const ASSET = {
@@ -822,10 +833,11 @@ export function initProductBuilder() {
     s.dpi = Math.round(T.canvas.dpi * s.natW / dw);
   }
   function place(id, file) {
+    if (!hasConsent()) return;          // belt and braces: picker, panel drop, board drop
     const url = URL.createObjectURL(file), probe = new Image();
     probe.onload = () => {
       state.set(id, {
-        url, el: probe, name: file.name, natW: probe.naturalWidth, natH: probe.naturalHeight,
+        url, el: probe, name: file.name, file, natW: probe.naturalWidth, natH: probe.naturalHeight,
         zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
       });
       const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
@@ -874,7 +886,27 @@ export function initProductBuilder() {
       const f = [...e.dataTransfer.files].find((ff) => ff.type.startsWith('image/')); if (f) place(id, f);
     });
   }
-  function ask(id) { pickTarget = id; picker.click(); }
+  /* ---------- consent ---------- */
+  /* Must be given before the first photo goes in. The timestamp is what ends up
+     on the pendingPersonalisation document as consentAt. */
+  let consentAt = null;
+  const consentBox = $('consent');
+  consentBox.addEventListener('change', () => {
+    if (consentBox.checked) consentAt = consentAt || new Date().toISOString();
+    else consentAt = null;
+    $('consentHint').textContent = consentBox.checked
+      ? 'Thanks — you can add your photos now.'
+      : 'Tick this before adding your first photo.';
+    refresh();
+  });
+  function hasConsent() {
+    if (consentBox.checked) return true;
+    $('consentHint').textContent = 'Please tick this before adding photos.';
+    try { consentBox.focus(); } catch (e) { /* not focusable yet */ }
+    return false;
+  }
+
+  function ask(id) { if (!hasConsent()) return; pickTarget = id; picker.click(); }
   picker.addEventListener('change', () => {
     const files = [...picker.files].filter((f) => f.type.startsWith('image/'));
     if (pickTarget === '__logo__') {
@@ -1113,6 +1145,18 @@ export function initProductBuilder() {
     const real = [...state.values()].filter((s) => !s.demo).length;
     $('filled').textContent = `${real} of ${T.panels.length}`;
     $('download').disabled = real === 0;
+
+    // Every panel must hold a photo the customer actually chose. The example
+    // graphic is seeded into empty panels and does not count.
+    const total = T.panels.length;
+    const btn = $('addBasket');
+    if (btn) {
+      btn.disabled = basketBusy || !consentBox.checked || real !== total;
+      $('basketHint').textContent = basketBusy ? ''
+        : !consentBox.checked ? 'Tick the consent box to get started.'
+          : real === total ? ''
+            : `Add your own photo to every panel — ${total - real} to go.`;
+    }
   }
   /* The preview and the print file are the same document. Rather than rebuilding
      the scene server-side from numbers -- where any drift means the customer gets
@@ -1271,6 +1315,72 @@ export function initProductBuilder() {
     };
     img.src = url;
   });
+  /* ---------- add to basket ---------- */
+  /* Saves the build first -- recipe, scene and the photos themselves -- then puts a
+     line in the basket carrying the returned pendingPersonalisation id. The photos
+     go to Netlify Blobs via the function; they never touch Sanity. */
+  let basketBusy = false;
+  $('addBasket').addEventListener('click', async () => {
+    if (basketBusy) return;
+    const filled = T.panels
+      .map((p) => [p.id, state.get(p.id)])
+      .filter(([, s]) => s && !s.demo && s.file);
+    if (filled.length !== T.panels.length || !consentBox.checked) return;
+
+    const btn = $('addBasket'), hint = $('basketHint');
+    basketBusy = true; btn.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Saving…';
+    hint.textContent = 'Uploading your photos…';
+    try {
+      const fd = new FormData();
+      fd.append('recipe', JSON.stringify(recipe()));
+      fd.append('notes', $('notes').value || '');
+      if (consentAt) fd.append('consentAt', consentAt);
+      for (const [pid, s] of filled) fd.append('photo:' + pid, s.file, s.name || pid);
+
+      const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.id) throw new Error(data.error || 'Could not save your artwork');
+
+      const sizeIdx = Math.max(0, (T.sizes || []).indexOf(T.size));
+      const cartFormat = CART_FORMAT[fmt] || 'poster';
+      const cartSize = CART_SIZE[sizeIdx] || 'large';
+      // the same photo may fill several panels, so count the distinct files
+      const photos = new Set(filled.map(([, s]) =>
+        `${s.file.name}|${s.file.size}|${s.file.lastModified}`)).size;
+      const description = [TEMPLATE_WORD[TK] || T.name, T.size ? T.size.label : '',
+        FORMAT_WORD[fmt] || fmt, `${photos} photo${photos === 1 ? '' : 's'}`]
+        .filter(Boolean).join(' · ');
+
+      // the host page already publishes the product identity for its own cart button
+      const pd = document.getElementById('product-data');
+      const ds = (pd && pd.dataset) || {};
+      const { addToCart } = await import('../stores/cart');
+      addToCart({
+        productId: ds.productId || TK,
+        slug: ds.productSlug || TK,
+        title: ds.productTitle || TEMPLATE_WORD[TK] || T.name,
+        format: cartFormat,
+        size: cartSize,
+        quantity: 1,
+        unitPrice: (PRICES[cartFormat] || {})[cartSize] + (PERSONALISATION_FEE[TK] || 0),
+        accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
+        imageUrl: ds.productImage || '',
+        personalisationId: data.id,
+        description,
+      });
+      btn.textContent = 'Added to basket';
+      hint.textContent = 'Saved. You can keep building and add another.';
+      setTimeout(() => { btn.textContent = label; }, 2000);
+    } catch (e) {
+      btn.textContent = label;
+      hint.textContent = e.message || 'Something went wrong saving your artwork.';
+    } finally {
+      basketBusy = false;
+      refresh();
+    }
+  });
+
   if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
   load(INITIAL);
   try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }

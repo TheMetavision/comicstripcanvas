@@ -78,6 +78,17 @@ const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
     <aside
       class="flex w-full flex-none flex-col gap-5 overflow-y-auto border-t-4 border-black bg-panel-dark p-4 lg:w-[352px] lg:border-l-4 lg:border-t-0"
     >
+      <section id="consentBox" class="border-4 border-comic-yellow bg-dark-grey p-3">
+        <div class="flex items-start gap-2.5">
+          <input type="checkbox" id="consent" class="mt-0.5 h-5 w-5 flex-none accent-comic-red" />
+          <label for="consent" class="font-source text-[13px] leading-snug text-off-white">
+            I own the rights to these photos or have permission to use them, and I&rsquo;m happy
+            for Comic Strip Canvas to use them to make my artwork.
+          </label>
+        </div>
+        <p class="b-hint" id="consentHint">Tick this before adding your first photo.</p>
+      </section>
+
       <section id="colourBox">
         <h3 id="colourTitle" class="b-h">Border colour</h3>
         <div id="colourSolid">
@@ -176,6 +187,16 @@ const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
           On canvas the dashed line is the front face &mdash; anything outside it wraps around the
           frame edge and won&rsquo;t be seen head-on.
         </p>
+      </section>
+
+      <section id="basketBox">
+        <h3 class="b-h">Add to basket</h3>
+        <label for="notes" class="b-lab">Anything we should know?</label>
+        <textarea id="notes" rows="3" maxlength="4000"
+          class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"
+          placeholder="Optional &mdash; anything that would help us get it right."></textarea>
+        <button id="addBasket" class="b-btn b-btn-primary mt-3 w-full" disabled>Add to basket</button>
+        <p class="b-hint" id="basketHint"></p>
       </section>
     </aside>
   </div>

@@ -14,6 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 const DIST = path.resolve('../../../dist');
@@ -24,6 +25,7 @@ if (!fs.existsSync(path.join(DIST, 'store', PAGES[0], 'index.html')))
   throw new Error(`no build at ${DIST} — run "npm run build" at the repo root first`);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const OUT = s => process.stdout.write(s + String.fromCharCode(10));   // console is borrowed below
 
 /* The island loads its assets over HTTP, so the serialised scene graph carries
    /builder/... URLs. resvg cannot fetch those, and the prototype embedded the
@@ -48,7 +50,7 @@ for (const slug of PAGES) {
   // the bundle name carries a content hash, so read it off the page
   const m = html.match(/src="\/(_astro\/ProductBuilder\.astro[^"]+\.js)"/);
   if (!m) throw new Error(`no ProductBuilder bundle referenced by ${slug}`);
-  const bundle = fs.readFileSync(path.join(DIST, m[1]), 'utf8');
+  if (!fs.existsSync(path.join(DIST, m[1]))) throw new Error(`missing bundle ${m[1]}`);
 
   let logged = null;
   const dom = new JSDOM(html, {
@@ -77,7 +79,28 @@ for (const slug of PAGES) {
   });
 
   const { window } = dom, doc = window.document;
-  window.eval(bundle);                            // the shipped island, verbatim
+
+  /* The island is an ES module graph (it imports the shared price table and
+     lazily imports the cart store), so it has to be imported rather than
+     eval'd. Point the browser globals at this page first: the bundle reads
+     `document`, `location` and friends off the global scope, and calls
+     initProductBuilder() as soon as it loads. The ?page query gives each page
+     its own module instance instead of reusing the first one from cache. */
+  for (const k of ['window', 'document', 'Image', 'FileReader', 'XMLSerializer',
+    'Event', 'MouseEvent', 'CustomEvent', 'localStorage', 'getComputedStyle',
+    'URLSearchParams', 'Blob', 'File', 'FormData', 'location', 'navigator', 'URL',
+    'HTMLElement', 'SVGElement', 'Element', 'Node'])
+    Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
+
+  /* Imported as a module, the bundle's bare `console` resolves to Node's, not
+     the window one set in beforeParse -- so borrow the global to catch the
+     recipe the Copy handler logs when the clipboard rejects. */
+  Object.defineProperty(globalThis, 'console', {
+    value: { log: (...a) => { logged = a.join(' '); }, error() {}, warn() {}, info() {} },
+    configurable: true, writable: true,
+  });
+
+  await import(pathToFileURL(path.join(DIST, m[1])).href + `?page=${slug}`);
   await sleep(140);
 
   const root = doc.getElementById('csc-builder-root');
@@ -118,4 +141,4 @@ for (const slug of PAGES) {
 }
 
 fs.writeFileSync('run/cases.json', JSON.stringify(cases, null, 1));
-console.log('captured', cases.length, 'cases from dist/ (' + PAGES.join(', ') + ')');
+OUT(`captured ${cases.length} cases from dist/ (${PAGES.join(', ')})`);
