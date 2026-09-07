@@ -125,7 +125,13 @@ export default async (req, context) => {
     // Park it for a human rather than leaving it looking paid-and-forgotten.
     if (isId(id)) {
       try {
-        await sanity.patch(id).set({ status: 'on_hold', renderError: String(err.message).slice(0, 2000) }).commit();
+        // Clear the proof too: an earlier render may have left one, and showing a
+        // superseded proof as current is worse than showing none.
+        await sanity
+          .patch(id)
+          .set({ status: 'on_hold', renderError: String(err.message).slice(0, 2000) })
+          .unset(['proofUrl'])
+          .commit();
       } catch (patchErr) {
         console.error(`render-personalisation: could not mark ${id} on hold:`, patchErr.message);
       }
