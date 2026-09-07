@@ -24,6 +24,16 @@ export const allProductsQuery = `
   }
 `;
 
+// Every product slug, personalised included. Used ONLY to generate the product
+// detail routes. allProductsQuery above deliberately excludes personalised
+// products from listings, but those products still need their own pages --
+// /store/personalised already links to all three.
+export const allProductSlugsQuery = `
+  *[_type == "product" && defined(slug.current)] {
+    "slug": slug.current
+  }
+`;
+
 export const productsByCategoryQuery = `
   *[_type == "product" && category == $category] | order(sortOrder asc) {
     _id,

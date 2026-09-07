@@ -1,12 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
-import { allProductsQuery, productBySlugQuery } from '../../lib/queries';
+import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
 import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
+import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
 export async function getStaticPaths() {
-  const products = await sanityClient.fetch(allProductsQuery);
+  const products = await sanityClient.fetch(allProductSlugsQuery);
   return products.map((product: any) => ({
     params: { slug: product.slug },
   }));
@@ -38,6 +39,15 @@ const hasImages = product.images && product.images.length > 0;
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
+
+// The three personalised products each open the builder on their own template.
+// Orientation and full-bleed variants are switches inside the builder itself.
+const BUILDER_TEMPLATE: Record<string, 'strip' | 'cover' | 'icon-portrait'> = {
+  'personalised-strips': 'strip',
+  'personalised-book-covers': 'cover',
+  'personalised-icons': 'icon-portrait',
+};
+const builderTemplate = BUILDER_TEMPLATE[product.slug];
 
 const relatedProducts = product.relatedProducts || [];
 const seoTitle = product.seo?.metaTitle || product.title;
@@ -195,6 +205,19 @@ const seoDesc = product.seo?.metaDescription || product.description;
       </div>
     </div>
   </section>
+
+  {builderTemplate && (
+    <section class="bg-charcoal py-10" id="builder">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h2 class="section-heading mb-3">BUILD YOUR ARTWORK</h2>
+        <p class="font-source text-gray-400 text-sm mb-6 max-w-2xl">
+          Drop your photos in, set your wording and choose your size. Download a draft to check it
+          over before you order.
+        </p>
+        <ProductBuilder template={builderTemplate} mode="customer" />
+      </div>
+    </section>
+  )}
 
   <!-- Related Products -->
   {relatedProducts.length > 0 && (

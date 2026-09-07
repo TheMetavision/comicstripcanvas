@@ -1,0 +1,163 @@
+[
+ {
+  "id": "masthead",
+  "label": "masthead",
+  "value": "EXCLUSIVE COLLECTORS EDITION",
+  "cx": 2214,
+  "cy": 627,
+  "boxW": 2317,
+  "boxH": 264,
+  "fontSize": 159.1,
+  "rot": 3.05,
+  "colours": [
+   "#FF0000",
+   "#000000"
+  ],
+  "wrap": false,
+  "twoTone": true
+ },
+ {
+  "id": "page-count",
+  "label": "page count",
+  "value": "PAGE SPECIAL",
+  "cx": 816,
+  "cy": 986,
+  "boxW": 299,
+  "boxH": 198,
+  "fontSize": 83.3,
+  "rot": 0.0,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": true,
+  "twoTone": false
+ },
+ {
+  "id": "issue-number",
+  "label": "issue number",
+  "value": "31",
+  "cx": 676,
+  "cy": 1427,
+  "boxW": 91,
+  "boxH": 282,
+  "fontSize": 106.1,
+  "rot": 0.0,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": false,
+  "twoTone": false
+ },
+ {
+  "id": "issue-date",
+  "label": "issue date",
+  "value": "OCT 2019",
+  "cx": 910,
+  "cy": 1424,
+  "boxW": 169,
+  "boxH": 178,
+  "fontSize": 79.5,
+  "rot": 0.0,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": true,
+  "twoTone": false
+ },
+ {
+  "id": "launch",
+  "label": "launch",
+  "value": "LAUNCH",
+  "cx": 978,
+  "cy": 2746,
+  "boxW": 410,
+  "boxH": 141,
+  "fontSize": 122.2,
+  "rot": 2.86,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": false,
+  "twoTone": false
+ },
+ {
+  "id": "price",
+  "label": "price",
+  "value": "4.99",
+  "cx": 980,
+  "cy": 2886,
+  "boxW": 213,
+  "boxH": 102,
+  "fontSize": 106.1,
+  "rot": 0.0,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": false,
+  "twoTone": false
+ },
+ {
+  "id": "publisher",
+  "label": "publisher",
+  "value": "PUBLISHING  COMPANY",
+  "cx": 3475,
+  "cy": 920,
+  "boxW": 271,
+  "boxH": 127,
+  "fontSize": 53.0,
+  "rot": 0.0,
+  "colours": [
+   "#000000"
+  ],
+  "wrap": true,
+  "twoTone": false
+ },
+ {
+  "id": "title",
+  "label": "title",
+  "value": "KA-POW!",
+  "cx": 2136,
+  "cy": 3712,
+  "boxW": 3164,
+  "boxH": 1472,
+  "fontSize": 791.7,
+  "rot": 15.67,
+  "colours": [
+   "#368975"
+  ],
+  "wrap": false,
+  "twoTone": false
+ },
+ {
+  "rot": 0,
+  "colours": [
+   "#FFFFFF"
+  ],
+  "wrap": true,
+  "twoTone": false,
+  "boxW": 1500,
+  "boxH": 200,
+  "cx": 2100,
+  "cy": 5000,
+  "id": "caption-1",
+  "label": "caption line 1",
+  "value": "Dummy wording \u2014 please replace",
+  "fontSize": 150
+ },
+ {
+  "rot": 0,
+  "colours": [
+   "#FFFFFF"
+  ],
+  "wrap": true,
+  "twoTone": false,
+  "boxW": 1500,
+  "boxH": 200,
+  "cx": 2100,
+  "cy": 5000,
+  "id": "caption-2",
+  "label": "caption line 2",
+  "value": "a second line here",
+  "fontSize": 120
+ }
+]
