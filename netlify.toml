@@ -8,6 +8,23 @@
 [functions]
   directory = "netlify/functions"
 
+# A 24 x 16 in file at 300dpi is a 7200 x 4800 raster. Give the render job the
+# most memory Netlify allows, and keep resvg out of the bundle -- it ships a
+# native .node binary that esbuild cannot inline.
+[functions."render-personalisation-background"]
+  memory = 3008
+  external_node_modules = ["@resvg/resvg-js"]
+
+# The webhook posts to /api/render-personalisation. The function is a background
+# function, so its real name carries the -background suffix; this rewrite keeps
+# the caller unaware of that. It must come BEFORE the /api/* rule below, which
+# would otherwise send it to a function of the wrong name.
+[[redirects]]
+  from = "/api/render-personalisation"
+  to = "/.netlify/functions/render-personalisation-background"
+  status = 200
+  force = true
+
 # Route /api/* requests to Netlify Functions.
 # Required for the contact form (src/pages/contact.astro POSTs to /api/contact
 # which gets rewritten to /.netlify/functions/contact).
