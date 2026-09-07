@@ -49,6 +49,18 @@ const BUILDER_TEMPLATE: Record<string, 'strip' | 'cover' | 'icon-portrait'> = {
 };
 const builderTemplate = BUILDER_TEMPLATE[product.slug];
 
+// Artwork fee per personalised style. Mirrors resolveStyle() in
+// netlify/functions/personalise.mjs, which is what actually charges the
+// customer (strip £25, cover £10, icon £10) -- keep these in sync.
+const PERSONALISATION_FEE: Record<string, number> = {
+  strip: 25,
+  cover: 10,
+  'icon-portrait': 10,
+};
+const personalisationFee = builderTemplate ? PERSONALISATION_FEE[builderTemplate] : undefined;
+const personalisedFrom =
+  personalisationFee !== undefined ? PRICES.poster.small + personalisationFee : undefined;
+
 const relatedProducts = product.relatedProducts || [];
 const seoTitle = product.seo?.metaTitle || product.title;
 const seoDesc = product.seo?.metaDescription || product.description;
@@ -130,10 +142,25 @@ const seoDesc = product.seo?.metaDescription || product.description;
             {product.title}
           </h1>
 
-          <div id="current-price" class="price-tag text-3xl mb-4">
-            From £{basePrice.toFixed(2)}
-          </div>
-          <p class="font-source text-gray-400 text-sm mb-4">Posters from £9.99 &middot; Canvas from £26.99 &mdash; choose your format below</p>
+          {product.isPersonalised && personalisedFrom !== undefined ? (
+            <Fragment>
+              {/* The builder owns format, size and the artwork fee here, so this is a
+                  static "from" price. Deliberately no id="current-price": that is the
+                  hook updatePrice() writes to, and it must not flatten this copy. */}
+              <div class="price-tag text-3xl mb-1">From £{personalisedFrom.toFixed(2)}</div>
+              <p class="font-source text-gray-400 text-sm mb-4">
+                Posters from £{PRICES.poster.small.toFixed(2)}, canvas from £{PRICES['canvas-standard'].small.toFixed(2)},
+                plus £{personalisationFee} personalisation. Choose your size and format in the builder.
+              </p>
+            </Fragment>
+          ) : (
+            <Fragment>
+              <div id="current-price" class="price-tag text-3xl mb-4">
+                From £{basePrice.toFixed(2)}
+              </div>
+              <p class="font-source text-gray-400 text-sm mb-4">Posters from £9.99 &middot; Canvas from £26.99 &mdash; choose your format below</p>
+            </Fragment>
+          )}
 
           <p class="font-source text-gray-300 leading-relaxed text-base mb-8">{product.description}</p>
 
@@ -348,7 +375,10 @@ const seoDesc = product.seo?.metaDescription || product.description;
 
     if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');
     if (sizeBtns[0]) activateBtn(sizeBtns, sizeBtns[0], 'border-comic-yellow');
-    updatePrice();
+    // updatePrice() exists to reflect the selected format and size. Personalised
+    // products have neither -- the builder owns pricing -- so it must not run and
+    // overwrite the rendered "from" copy with a flat figure.
+    if (formatBtns.length && sizeBtns.length) updatePrice();
 
     document.getElementById('add-to-cart')?.addEventListener('click', async () => {
       const { addToCart } = await import('../../stores/cart');
