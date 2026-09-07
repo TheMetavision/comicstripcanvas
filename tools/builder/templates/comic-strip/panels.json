@@ -1,0 +1,134 @@
+{
+  "canvas": {
+    "width": 7350,
+    "height": 4950,
+    "dpi": 300,
+    "bleed_in": 0.25,
+    "trim_in": [
+      24.0,
+      16.0
+    ]
+  },
+  "panels": [
+    {
+      "id": "panel-01",
+      "x": 299,
+      "y": 280,
+      "width": 2822,
+      "height": 1432,
+      "aspect": 1.971,
+      "coverage": 0.804,
+      "mask": "masks/panel-01.png"
+    },
+    {
+      "id": "panel-02",
+      "x": 2646,
+      "y": 280,
+      "width": 2730,
+      "height": 1239,
+      "aspect": 2.203,
+      "coverage": 0.832,
+      "mask": "masks/panel-02.png"
+    },
+    {
+      "id": "panel-03",
+      "x": 5111,
+      "y": 280,
+      "width": 1917,
+      "height": 1154,
+      "aspect": 1.661,
+      "coverage": 0.846,
+      "mask": "masks/panel-03.png"
+    },
+    {
+      "id": "panel-04",
+      "x": 299,
+      "y": 1725,
+      "width": 1814,
+      "height": 858,
+      "aspect": 2.114,
+      "coverage": 0.844,
+      "mask": "masks/panel-04.png"
+    },
+    {
+      "id": "panel-05",
+      "x": 1897,
+      "y": 1576,
+      "width": 3143,
+      "height": 962,
+      "aspect": 3.267,
+      "coverage": 0.823,
+      "mask": "masks/panel-05.png"
+    },
+    {
+      "id": "panel-06",
+      "x": 4766,
+      "y": 1420,
+      "width": 2262,
+      "height": 1058,
+      "aspect": 2.138,
+      "coverage": 0.802,
+      "mask": "masks/panel-06.png"
+    },
+    {
+      "id": "panel-07",
+      "x": 299,
+      "y": 2644,
+      "width": 1528,
+      "height": 982,
+      "aspect": 1.556,
+      "coverage": 0.789,
+      "mask": "masks/panel-07.png"
+    },
+    {
+      "id": "panel-08",
+      "x": 1589,
+      "y": 2568,
+      "width": 3545,
+      "height": 1139,
+      "aspect": 3.112,
+      "coverage": 0.799,
+      "mask": "masks/panel-08.png"
+    },
+    {
+      "id": "panel-09",
+      "x": 4589,
+      "y": 2524,
+      "width": 2439,
+      "height": 1263,
+      "aspect": 1.931,
+      "coverage": 0.821,
+      "mask": "masks/panel-09.png"
+    },
+    {
+      "id": "panel-10",
+      "x": 299,
+      "y": 3674,
+      "width": 2529,
+      "height": 993,
+      "aspect": 2.547,
+      "coverage": 0.876,
+      "mask": "masks/panel-10.png"
+    },
+    {
+      "id": "panel-11",
+      "x": 2514,
+      "y": 3744,
+      "width": 3169,
+      "height": 923,
+      "aspect": 3.433,
+      "coverage": 0.838,
+      "mask": "masks/panel-11.png"
+    },
+    {
+      "id": "panel-12",
+      "x": 5503,
+      "y": 3837,
+      "width": 1525,
+      "height": 830,
+      "aspect": 1.837,
+      "coverage": 0.828,
+      "mask": "masks/panel-12.png"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "canvas": {
+    "width": 4200,
+    "height": 5800,
+    "dpi": 200,
+    "inches": [
+      21.0,
+      29.0
+    ]
+  },
+  "layerOrder": [
+    "background.png",
+    "art",
+    "overlay.png",
+    "text"
+  ],
+  "art": {
+    "id": "art",
+    "x": 397,
+    "y": 378,
+    "width": 3411,
+    "height": 5000,
+    "fullBleed": false
+  },
+  "fonts": {
+    "caption": "Chewy (Apache 2.0)",
+    "display": "Luckiest Guy (Apache 2.0)"
+  },
+  "text": [
+    {
+      "id": "Being second is to be the first",
+      "placeholder": "Being second is to be the first",
+      "bbox": [
+        839,
+        4762,
+        2303,
+        4920
+      ],
+      "fitBox": [
+        627,
+        4686,
+        2470,
+        5150
+      ],
+      "font": "Chewy-Regular.ttf",
+      "replaces": "Grinched",
+      "fontSize": 144.4,
+      "rotationDeg": 0.0,
+      "fill": "#FFFFFF",
+      "strokeColour": "#000000",
+      "strokeRatio": 0.065
+    },
+    {
+      "id": "of the ones who lose.",
+      "placeholder": "of the ones who lose.",
+      "bbox": [
+        1009,
+        4963,
+        1945,
+        5085
+      ],
+      "fitBox": [
+        627,
+        4686,
+        2470,
+        5150
+      ],
+      "font": "Chewy-Regular.ttf",
+      "replaces": "Grinched",
+      "fontSize": 133.3,
+      "rotationDeg": 0.0,
+      "fill": "#FFFFFF",
+      "strokeColour": "#000000",
+      "strokeRatio": 0.065
+    }
+  ],
+  "rebakedText": [
+    {
+      "name": "4.99 ",
+      "replaces": "Grinched",
+      "rotationDeg": 0.0
+    },
+    {
+      "name": "LAUNCH  ",
+      "replaces": "Grinched",
+      "rotationDeg": 2.86
+    },
+    {
+      "name": "KA-POW!",
+      "replaces": "DamnNoisyKids",
+      "rotationDeg": 15.67
+    },
+    {
+      "name": "PAGE SPECIAL",
+      "replaces": "Grinched",
+      "rotationDeg": 0.0
+    },
+    {
+      "name": "PUBLISHING  COMPANY",
+      "replaces": "Grinched",
+      "rotationDeg": 0.0
+    },
+    {
+      "name": "EXCLUSIVE COLLECTORS EDITION",
+      "replaces": "Grinched",
+      "rotationDeg": 3.05
+    },
+    {
+      "name": "OCT 2019",
+      "replaces": "Grinched",
+      "rotationDeg": 0.0
+    },
+    {
+      "name": "31",
+      "replaces": "Grinched",
+      "rotationDeg": 0.0
+    }
+  ]
+}

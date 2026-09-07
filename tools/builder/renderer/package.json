@@ -1,0 +1,8 @@
+{
+  "name": "csc-print-renderer",
+  "private": true,
+  "type": "module",
+  "scripts": { "capture": "node extract-all.mjs", "prove": "node prove.mjs", "render": "node render.mjs" },
+  "dependencies": { "@resvg/resvg-js": "^2.6.2", "pngjs": "^7.0.0" },
+  "devDependencies": { "jsdom": "^24.0.0" }
+}

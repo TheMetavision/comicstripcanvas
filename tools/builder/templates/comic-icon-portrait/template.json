@@ -1,0 +1,77 @@
+{
+  "canvas": {
+    "width": 3600,
+    "height": 5400,
+    "dpi": 150,
+    "inches": [
+      24.0,
+      36.0
+    ]
+  },
+  "layerOrder": [
+    "art",
+    "overlay.png",
+    "text"
+  ],
+  "art": {
+    "id": "art",
+    "x": 0,
+    "y": 0,
+    "width": 3600,
+    "height": 5400,
+    "fullBleed": true
+  },
+  "fonts": {
+    "caption": "Chewy (Apache 2.0)",
+    "display": "Luckiest Guy (Apache 2.0)"
+  },
+  "text": [
+    {
+      "id": "Love lift us up where we belong",
+      "placeholder": "Love lift us up where we belong",
+      "bbox": [
+        1619,
+        395,
+        3256,
+        569
+      ],
+      "fitBox": [
+        1429,
+        344,
+        3416,
+        741
+      ],
+      "font": "Chewy-Regular.ttf",
+      "replaces": "Grinched",
+      "fontSize": 156.2,
+      "rotationDeg": 0.0,
+      "fill": "#FFFFFF",
+      "strokeColour": "#000000",
+      "strokeRatio": 0.065
+    },
+    {
+      "id": "- An Officer And A Gentleman -",
+      "placeholder": "- An Officer And A Gentleman -",
+      "bbox": [
+        1802,
+        718,
+        2871,
+        822
+      ],
+      "fitBox": [
+        1743,
+        636,
+        2929,
+        860
+      ],
+      "font": "Chewy-Regular.ttf",
+      "replaces": "Grinched",
+      "fontSize": 104.2,
+      "rotationDeg": 0.0,
+      "fill": "#FFFFFF",
+      "strokeColour": "#000000",
+      "strokeRatio": 0.065
+    }
+  ],
+  "rebakedText": []
+}
