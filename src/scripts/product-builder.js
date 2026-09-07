@@ -832,6 +832,90 @@ export function initProductBuilder() {
     img.setAttribute('width', dw); img.setAttribute('height', dh);
     s.dpi = Math.round(T.canvas.dpi * s.natW / dw);
   }
+  /* ---------- upload ---------- */
+  /* Functions run on Lambda with a ~6 MB request cap, so each photo goes up on
+     its own and is re-encoded first. 5000px on the longest side is deliberate:
+     it still carries a 16 x 24 in print at 300dpi, so this is a transport
+     re-encode, not a downscale of the artwork. */
+  const UPLOAD_MAX_SIDE = 5000;
+  const UPLOAD_MAX_BYTES = 5.5 * 1024 * 1024;
+  let saveId = null;                 // pendingPersonalisation._id, set by the first upload
+  let uploading = 0;
+
+  const loadImage = (file) => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => res({ im, url });
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file is not an image we can read")); };
+    im.src = url;
+  });
+  const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+
+  async function encodeForUpload(file) {
+    const cv = document.createElement("canvas");
+    const g = cv.getContext ? cv.getContext("2d") : null;
+    if (!g) return file;                        // no canvas: send the original
+    const { im, url } = await loadImage(file);
+    try {
+      const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height;
+      const k = Math.min(1, UPLOAD_MAX_SIDE / Math.max(w0, h0));   // never upscale
+      cv.width = Math.max(1, Math.round(w0 * k));
+      cv.height = Math.max(1, Math.round(h0 * k));
+      g.drawImage(im, 0, 0, cv.width, cv.height);
+      let q = 0.92, blob = await toBlob(cv, q);
+      while (blob && blob.size > UPLOAD_MAX_BYTES && q > 0.4) {
+        q = Math.round((q - 0.06) * 100) / 100;
+        blob = await toBlob(cv, q);
+      }
+      if (!blob) return file;
+      const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+      return new File([blob], base + ".jpg", { type: "image/jpeg" });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function setUploading(id, on) {
+    const s = state.get(id), n = nodes[id];
+    if (s) s.uploading = on;
+    if (n && n.img) n.img.setAttribute("opacity", on ? 0.45 : 1);
+    uploading += on ? 1 : -1;
+    if (uploading < 0) uploading = 0;
+    if (selected === id) syncPanel();
+    refresh();
+  }
+
+  /* One photo, one request -- and one at a time. The first upload creates the
+     document and hands back the id every later one has to carry, so they must
+     not be in flight together: a board drop of twelve would otherwise race and
+     create twelve documents. Queueing also keeps the "N to go" count honest. */
+  let uploadChain = Promise.resolve();
+  function upload(id, file) {
+    setUploading(id, true);        // counted as soon as it is queued
+    const run = async () => {
+      try {
+        const sending = await encodeForUpload(file);
+        const fd = new FormData();
+        fd.append("panelId", id);
+        fd.append("photo", sending, sending.name || (id + ".jpg"));
+        if (saveId) fd.append("id", saveId);
+        if (consentAt) fd.append("consentAt", consentAt);
+        const res = await fetch("/api/personalise-save", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.id) throw new Error(data.error || "Upload failed");
+        saveId = data.id;
+        const s = state.get(id);
+        if (s) { s.key = data.key; s.uploadError = null; }
+      } catch (e) {
+        const s = state.get(id);
+        if (s) s.uploadError = e.message || "Upload failed";
+      } finally {
+        setUploading(id, false);
+      }
+    };
+    uploadChain = uploadChain.then(run);   // run never rejects
+    return uploadChain;
+  }
+
   function place(id, file) {
     if (!hasConsent()) return;          // belt and braces: picker, panel drop, board drop
     const url = URL.createObjectURL(file), probe = new Image();
@@ -844,6 +928,7 @@ export function initProductBuilder() {
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
       layout(id); select(id); refresh(); palette(probe);
+      upload(id, file);            // goes up now, not at Add to basket
     };
     probe.src = url;
   }
@@ -921,7 +1006,11 @@ export function initProductBuilder() {
   function fill(files, startId) {
     if (!files.length) return;
     const order = T.panels.map((p) => p.id);
-    const q = startId ? [startId, ...order.filter((i) => i !== startId && !state.get(i))] : order.filter((i) => !state.get(i));
+    // A panel showing the seeded example is still empty as far as the customer
+    // is concerned, so dropping several photos onto the board fills those in
+    // order rather than finding nothing to do.
+    const free = (i) => { const s = state.get(i); return !s || s.demo; };
+    const q = startId ? [startId, ...order.filter((i) => i !== startId && free(i))] : order.filter(free);
     files.forEach((f, i) => { if (q[i]) place(q[i], f); });
   }
   board.addEventListener('dragover', (e) => { e.preventDefault(); board.classList.add('dragover'); });
@@ -952,6 +1041,9 @@ export function initProductBuilder() {
     $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
     flag.hidden = s.demo || s.dpi >= MIN_DPI;   // the example is not the customer's file
     flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${MIN_DPI} it will look soft — try a larger file or zoom out.`;
+    const up = $('uploadHint');
+    up.hidden = !(s.uploading || s.uploadError);
+    up.textContent = s.uploading ? 'Uploading this photo…' : (s.uploadError || '');
   }
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
@@ -1151,11 +1243,15 @@ export function initProductBuilder() {
     const total = T.panels.length;
     const btn = $('addBasket');
     if (btn) {
-      btn.disabled = basketBusy || !consentBox.checked || real !== total;
+      const failed = [...state.values()].filter((s) => !s.demo && s.uploadError).length;
+      btn.disabled = basketBusy || uploading > 0 || failed > 0
+        || !consentBox.checked || real !== total;
       $('basketHint').textContent = basketBusy ? ''
         : !consentBox.checked ? 'Tick the consent box to get started.'
-          : real === total ? ''
-            : `Add your own photo to every panel — ${total - real} to go.`;
+          : uploading > 0 ? `Uploading — ${uploading} photo${uploading === 1 ? '' : 's'} to go…`
+            : failed > 0 ? 'A photo did not upload. Drop it in again to retry.'
+              : real === total ? ''
+                : `Add your own photo to every panel — ${total - real} to go.`;
     }
   }
   /* The preview and the print file are the same document. Rather than rebuilding
@@ -1326,17 +1422,18 @@ export function initProductBuilder() {
       .map((p) => [p.id, state.get(p.id)])
       .filter(([, s]) => s && !s.demo && s.file);
     if (filled.length !== T.panels.length || !consentBox.checked) return;
+    if (uploading > 0 || !saveId) return;      // nothing to attach the brief to yet
 
     const btn = $('addBasket'), hint = $('basketHint');
     basketBusy = true; btn.disabled = true;
     const label = btn.textContent; btn.textContent = 'Saving…';
-    hint.textContent = 'Uploading your photos…';
+    hint.textContent = 'Saving your artwork…';
     try {
+      // the photos went up as they were dropped; this posts only the brief
       const fd = new FormData();
+      fd.append('id', saveId);
       fd.append('recipe', JSON.stringify(recipe()));
       fd.append('notes', $('notes').value || '');
-      if (consentAt) fd.append('consentAt', consentAt);
-      for (const [pid, s] of filled) fd.append('photo:' + pid, s.file, s.name || pid);
 
       const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
       const data = await res.json().catch(() => ({}));
@@ -1366,7 +1463,7 @@ export function initProductBuilder() {
         unitPrice: (PRICES[cartFormat] || {})[cartSize] + (PERSONALISATION_FEE[TK] || 0),
         accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
         imageUrl: ds.productImage || '',
-        personalisationId: data.id,
+        personalisationId: saveId,
         description,
       });
       btn.textContent = 'Added to basket';
