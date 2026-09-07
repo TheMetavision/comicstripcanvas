@@ -262,6 +262,13 @@ const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
   }
   .csc-builder svg { display: block; width: 100%; height: 100%; touch-action: none; }
 
+  /* The overlay is display:flex, and Tailwind's preflight reset for [hidden]
+     wraps its selector in :where(), which contributes no specificity -- so it
+     ties with .flex at (0,1,0) and loses on source order. Without this rule the
+     hidden attribute has no effect and the guide cannot be dismissed. The
+     prototype carried the same rule as #guide[hidden]{display:none}. */
+  .csc-builder #guide[hidden] { display: none; }
+
   /* toggled by the builder script on SVG nodes */
   .csc-builder .hit { cursor: pointer; }
   .csc-builder .hit.filled { cursor: grab; }
