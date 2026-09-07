@@ -126,6 +126,15 @@ export default defineType({
         'The worst effective DPI across all panels. Below 150 the print will look soft.',
     }),
     defineField({
+      name: 'renderError',
+      title: 'Render Error',
+      type: 'text',
+      rows: 3,
+      readOnly: true,
+      description:
+        'Why the last render failed. Set alongside status "on hold"; cleared on a successful render.',
+    }),
+    defineField({
       name: 'status',
       title: 'Status',
       type: 'string',
