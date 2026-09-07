@@ -1,0 +1,380 @@
+---
+/**
+ * ProductBuilder
+ * ---------------------------------------------------------------------------
+ * Astro client island port of tools/builder/product-builder.html.
+ *
+ * The prototype remains the source of truth for behaviour: every control, the
+ * geometry rules, the recipe export and exportSVG() are carried over unchanged.
+ * What changed is only how the file is assembled --
+ *   - base64 assets now load from /builder/ (see public/builder/)
+ *   - the embedded JSON blobs are imported from src/data/builder/ at build time
+ *   - the prototype's inline CSS is expressed with the site's Tailwind tokens
+ *
+ * The template geometry maths below is deliberately untouched. If a number
+ * looks wrong it is wrong in the prototype too -- report it, do not "fix" it.
+ */
+import PATHS from '../data/builder/paths.json';
+import COVER from '../data/builder/cover_fields.json';
+import CAPBOX from '../data/builder/cover_boxes.json';
+import BOXES from '../data/builder/icon_boxes.json';
+import METRICS from '../data/builder/metrics.json';
+
+export type BuilderTemplate = 'strip' | 'cover' | 'icon-portrait';
+export type BuilderMode = 'customer' | 'studio';
+
+interface Props {
+  /** Which template the builder opens on. Variants are switchable inside. */
+  template: BuilderTemplate;
+  /** "customer" (default) or "studio". Both behave identically for now. */
+  mode?: BuilderMode;
+}
+
+const { template, mode = 'customer' } = Astro.props;
+
+const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
+---
+
+<div
+  id="csc-builder-root"
+  class="csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]"
+  data-mode={mode}
+  data-template={template}
+>
+  <!-- toolbar -->
+  <header
+    class="flex flex-wrap items-center gap-3 border-b-4 border-black bg-panel-dark px-4 py-3"
+    style="border-top:7px solid var(--b-accent,#EC008C)"
+  >
+    <h2 class="m-0 font-bangers text-2xl uppercase tracking-wider text-off-white">Product builder</h2>
+    <div class="flex flex-wrap gap-2" id="switch"></div>
+    <span class="flex-1"></span>
+
+    <label for="fmtSel" class="b-lab">Output</label>
+    <select id="fmtSel" class="b-select">
+      <option value="poster">Poster print</option>
+      <option value="standard">Canvas &mdash; standard wrap</option>
+      <option value="gallery">Canvas &mdash; gallery wrap</option>
+    </select>
+
+    <label for="sizeSel" class="b-lab">Print size</label>
+    <select id="sizeSel" class="b-select"></select>
+
+    <button id="reposition" class="b-btn" aria-pressed="false">Move text</button>
+    <button id="download" class="b-btn">Download draft</button>
+    <button id="copy" class="b-btn b-btn-primary" hidden>Copy recipe</button>
+    <button id="help" class="b-btn">How it works</button>
+  </header>
+
+  <div class="flex min-h-0 flex-1 flex-col lg:flex-row">
+    <!-- stage -->
+    <div class="b-stage halftone-bg flex min-h-[420px] min-w-0 flex-1 items-center justify-center p-[30px]">
+      <div class="b-board relative max-h-full max-w-full border-4 border-off-white bg-[#0B0B0B]" id="board">
+        <svg id="svg"></svg>
+      </div>
+    </div>
+
+    <!-- rail -->
+    <aside
+      class="flex w-full flex-none flex-col gap-5 overflow-y-auto border-t-4 border-black bg-panel-dark p-4 lg:w-[352px] lg:border-l-4 lg:border-t-0"
+    >
+      <section id="consentBox" class="border-4 border-comic-yellow bg-dark-grey p-3">
+        <div class="flex items-start gap-2.5">
+          <input type="checkbox" id="consent" class="mt-0.5 h-5 w-5 flex-none accent-comic-red" />
+          <label for="consent" class="font-source text-[13px] leading-snug text-off-white">
+            I own the rights to these photos or have permission to use them, and I&rsquo;m happy
+            for Comic Strip Canvas to use them to make my artwork.
+          </label>
+        </div>
+        <p class="b-hint" id="consentHint">Tick this before adding your first photo.</p>
+      </section>
+
+      <section id="colourBox">
+        <h3 id="colourTitle" class="b-h">Border colour</h3>
+        <div id="colourSolid">
+          <div class="flex flex-wrap gap-[7px]" id="swatches"></div>
+          <div class="b-row">
+            <label for="custom" class="b-lab">Custom</label>
+            <input type="color" id="custom" class="b-colour" value="#E2A7D6" />
+          </div>
+          <p class="b-hint" id="paletteHint">Drop a photo in and its colours appear here.</p>
+        </div>
+        <div id="colourTint" hidden>
+          <div class="b-row" id="artColours"></div>
+          <div class="b-row">
+            <button id="sampleArt" class="b-btn">Take colours from photo</button>
+            <button id="resetTint" class="b-btn">Reset</button>
+          </div>
+          <p class="b-hint">
+            The border artwork is flat colour plus line work, so each area recolours exactly.
+          </p>
+        </div>
+      </section>
+
+      <section id="boxBox" hidden>
+        <h3 class="b-h">Speech boxes</h3>
+        <div id="boxFields"></div>
+      </section>
+
+      <section id="logoBox" hidden>
+        <h3 class="b-h">Publisher logo</h3>
+        <div class="b-row">
+          <button id="logoPick" class="b-btn">Replace logo</button>
+          <button id="logoReset" class="b-btn">Use default</button>
+        </div>
+        <div class="b-row">
+          <input type="checkbox" id="logoFill" class="h-[18px] w-[18px] flex-none accent-comic-red" />
+          <label for="logoFill" class="b-lab">Fill the stamp with the logo&rsquo;s own background</label>
+        </div>
+        <p class="b-hint">
+          The slot is sized to the logo exactly, so there is no white letterboxing. Tick the box to
+          flood the rest of the stamp too.
+        </p>
+      </section>
+
+      <section id="textBox">
+        <h3 class="b-h">Text</h3>
+        <div id="textFields"></div>
+        <p class="b-hint">Turn on &ldquo;Move text&rdquo; to drag anything into a new position.</p>
+      </section>
+
+      <section>
+        <h3 id="panelTitle" class="b-h">Image</h3>
+        <p class="b-hint" id="panelEmpty">
+          Click any panel to choose a photo, or drop one straight on. Drag inside a photo to move it.
+        </p>
+        <div id="panelControls" hidden>
+          <div class="b-stat"><span>Window</span><span id="pSize"></span></div>
+          <div class="b-stat"><span>Your photo</span><span id="pImg"></span></div>
+          <div class="b-stat"><span>Print quality</span><span id="pDpi"></span></div>
+          <div class="b-row">
+            <label for="zoom" class="b-lab">Zoom</label>
+            <input type="range" id="zoom" class="b-range" min="1" max="3" step="0.01" value="1" />
+          </div>
+          <div class="b-row">
+            <button id="reset" class="b-btn">Recentre</button>
+            <button id="replace" class="b-btn">Replace</button>
+            <button id="clear" class="b-btn">Remove</button>
+          </div>
+          <div id="cutBox" hidden>
+            <div class="b-row">
+              <label for="cutOn" class="b-lab">Cut out subject</label>
+              <input type="checkbox" id="cutOn" class="h-5 w-5 flex-none accent-comic-red" />
+            </div>
+            <div class="b-row">
+              <label for="tol" class="b-lab">Spread</label>
+              <input type="range" id="tol" class="b-range" min="8" max="90" value="34" />
+            </div>
+            <div class="b-row">
+              <label for="feather" class="b-lab">Soften</label>
+              <input type="range" id="feather" class="b-range" min="0" max="6" value="2" />
+            </div>
+            <p class="b-hint">
+              Lifts a plain background so the subject sits on the comic artwork. Final prints are cut
+              with a proper matting pass.
+            </p>
+          </div>
+        </div>
+        <p class="b-hint" id="uploadHint" hidden></p>
+        <div class="b-flag" id="dpiFlag" hidden></div>
+      </section>
+
+      <section>
+        <h3 class="b-h">Output</h3>
+        <div class="b-stat"><span>Spec</span><span id="outSpec"></span></div>
+        <div class="b-stat"><span>Images placed</span><span id="filled"></span></div>
+        <div class="b-flag" id="outWarn" hidden></div>
+        <p class="b-hint">
+          On canvas the dashed line is the front face &mdash; anything outside it wraps around the
+          frame edge and won&rsquo;t be seen head-on.
+        </p>
+      </section>
+
+      <section id="basketBox">
+        <h3 class="b-h">Add to basket</h3>
+        <label for="notes" class="b-lab">Anything we should know?</label>
+        <textarea id="notes" rows="3" maxlength="4000"
+          class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"
+          placeholder="Optional &mdash; anything that would help us get it right."></textarea>
+        <button id="addBasket" class="b-btn b-btn-primary mt-3 w-full" disabled>Add to basket</button>
+        <p class="b-hint" id="basketHint"></p>
+      </section>
+    </aside>
+  </div>
+
+  <!-- first-run guide -->
+  <div id="guide" class="fixed inset-0 z-[9998] flex items-center justify-center p-5" hidden>
+    <div class="absolute inset-0 bg-black/80"></div>
+    <div
+      class="relative max-h-[88vh] max-w-[600px] overflow-auto border-4 border-black bg-panel-dark p-6"
+      style="box-shadow:8px 8px 0 #000"
+    >
+      <h3 class="mb-3.5 mt-0 font-bangers text-3xl uppercase tracking-wide text-comic-yellow">
+        How to build your artwork
+      </h3>
+      <ol class="mb-4 list-decimal pl-6 font-source text-gray-300">
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Add your photos.</b> Click any panel to choose a picture, or
+          drag one straight onto it. On the strip you can drop all twelve at once.
+        </li>
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Position it.</b> Drag inside a photo to move it, scroll to
+          zoom. A short click swaps the photo; a drag moves it. Watch the print quality reading
+          &mdash; we&rsquo;ll warn you before anything would print soft.
+        </li>
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Write your text.</b> Type in the boxes on the right. Each one
+          has its own colour, size and outline controls.
+        </li>
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Move things about.</b> Turn on
+          <b class="text-comic-yellow">Move text</b>, then drag the wording or the speech boxes
+          wherever you want them.
+        </li>
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Choose your size and output.</b> Poster, or canvas with a
+          standard or gallery wrap. On canvas the dashed line shows the front face &mdash; keep faces
+          inside it.
+        </li>
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Download a draft</b> to check it over, then add it to your
+          basket.
+        </li>
+      </ol>
+      <button id="guideClose" class="btn-primary">Got it &mdash; let&rsquo;s build</button>
+    </div>
+  </div>
+
+  <input type="file" id="picker" accept="image/*" hidden multiple />
+</div>
+
+<script type="application/json" id="csc-builder-data" is:inline set:html={builderData}></script>
+
+<style is:global>
+  /* The renderer matches on the family name inside the font file, so these must
+     stay exactly "Chewy" and "Luckiest Guy". */
+  @font-face {
+    font-family: 'Chewy';
+    src: url('/builder/fonts/Chewy-Regular.ttf') format('truetype');
+    font-display: block;
+  }
+  @font-face {
+    font-family: 'Luckiest Guy';
+    src: url('/builder/fonts/LuckiestGuy-Regular.ttf') format('truetype');
+    font-display: block;
+  }
+
+  /* These rules are global on purpose, and every selector is prefixed with
+     .csc-builder so nothing leaks into the rest of the site.
+     rail() builds the text fields, swatches, sliders and colour pickers from
+     JavaScript, so those elements never carry Astro's scoped-style attribute --
+     under a scoped <style> they would render completely unstyled. */
+  .csc-builder {
+    --b-accent: #ec008c;
+    --b-on-accent: #fff;
+  }
+
+  .csc-builder .b-stage { background-color: #2a2c31; }
+  .csc-builder .b-board {
+    box-shadow: 0 0 0 3px #000, 10px 12px 0 rgba(0, 0, 0, 0.75), 0 0 44px rgba(0, 0, 0, 0.9);
+  }
+  .csc-builder .b-board.dragover {
+    outline: 6px solid var(--b-accent);
+    outline-offset: 5px;
+  }
+  .csc-builder svg { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* The overlay is display:flex, and Tailwind's preflight reset for [hidden]
+     wraps its selector in :where(), which contributes no specificity -- so it
+     ties with .flex at (0,1,0) and loses on source order. Without this rule the
+     hidden attribute has no effect and the guide cannot be dismissed. The
+     prototype carried the same rule as #guide[hidden]{display:none}. */
+  .csc-builder #guide[hidden] { display: none; }
+
+  /* toggled by the builder script on SVG nodes */
+  .csc-builder .hit { cursor: pointer; }
+  .csc-builder .hit.filled { cursor: grab; }
+  .csc-builder .hit.dragging { cursor: grabbing; }
+  .csc-builder .movable { cursor: move; }
+
+  .csc-builder .b-btn {
+    @apply inline-block border-4 border-black bg-off-white px-3.5 py-2.5 font-bangers text-base
+           uppercase tracking-wider text-black transition-all duration-200;
+    box-shadow: 4px 4px 0 #000;
+    cursor: pointer;
+  }
+  .csc-builder .b-btn:hover {
+    @apply -translate-y-0.5 bg-comic-yellow;
+    box-shadow: 6px 6px 0 #000;
+  }
+  .csc-builder .b-btn:disabled {
+    @apply translate-y-0 cursor-default bg-mid-grey text-gray-500 opacity-40;
+    box-shadow: 4px 4px 0 #000;
+  }
+  .csc-builder .b-btn-primary { @apply bg-comic-yellow; }
+  .csc-builder .b-btn-primary:hover { @apply bg-comic-red text-white; }
+  .csc-builder .b-btn[aria-pressed='true'] {
+    background: var(--b-accent);
+    color: var(--b-on-accent);
+  }
+
+  .csc-builder button:focus-visible,
+  .csc-builder input:focus-visible,
+  .csc-builder select:focus-visible {
+    outline: 3px solid theme('colors.comic-cyan');
+    outline-offset: 3px;
+  }
+
+  .csc-builder .b-select {
+    @apply border-4 border-black bg-off-white p-2 font-russo text-sm text-black;
+    box-shadow: 4px 4px 0 #000;
+  }
+
+  .csc-builder .b-h {
+    @apply mb-2.5 mt-0 font-bangers text-xl uppercase tracking-wide text-comic-yellow;
+  }
+  .csc-builder .b-hint { @apply mb-0 mt-2 font-source text-[13px] text-gray-400; }
+  .csc-builder .b-row { @apply my-2 flex items-center gap-2.5; }
+  .csc-builder .b-lab {
+    @apply flex-none font-russo text-[11px] uppercase leading-tight tracking-wider text-off-white;
+  }
+  .csc-builder .b-range { @apply min-w-0 flex-1 accent-comic-red; }
+  .csc-builder .b-colour {
+    @apply h-[30px] w-[38px] flex-none cursor-pointer border-[3px] border-black bg-none p-0;
+  }
+  .csc-builder .b-text {
+    @apply min-w-0 flex-1 border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black;
+  }
+  .csc-builder .b-fld {
+    @apply mb-2.5 border-[3px] border-black bg-dark-grey p-2.5;
+    box-shadow: 3px 3px 0 #000;
+  }
+  .csc-builder .b-fld-top { @apply flex items-center gap-[7px]; }
+  .csc-builder .b-fld-lab {
+    @apply flex-1 font-russo text-[11px] uppercase tracking-wider text-comic-yellow;
+  }
+  .csc-builder .b-sw {
+    @apply h-8 w-8 cursor-pointer border-[3px] border-black p-0;
+    box-shadow: 2px 2px 0 #000;
+  }
+  .csc-builder .b-sw[aria-pressed='true'] {
+    outline: 3px solid var(--b-accent);
+    outline-offset: 2px;
+  }
+  .csc-builder .b-stat {
+    @apply flex justify-between border-b border-mid-grey py-[5px] font-source text-[13px] text-off-white;
+  }
+  .csc-builder .b-stat:last-child { @apply border-b-0; }
+  .csc-builder .b-stat span:last-child { @apply font-russo text-xs; }
+  .csc-builder .b-flag {
+    @apply mt-2.5 border-[3px] border-black bg-comic-yellow px-[11px] py-2.5 font-source text-[13px]
+           font-semibold text-black;
+    box-shadow: 3px 3px 0 #000;
+  }
+  .csc-builder .b-cap { @apply mr-1 font-source text-[11px] font-bold; }
+</style>
+
+<script>
+  import { initProductBuilder } from '../scripts/product-builder.js';
+  initProductBuilder();
+</script>

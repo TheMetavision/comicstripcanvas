@@ -1,0 +1,1551 @@
+/**
+ * product-builder.js
+ * ---------------------------------------------------------------------------
+ * Behaviour for src/components/ProductBuilder.astro, ported from
+ * tools/builder/product-builder.html. The prototype is the source of truth:
+ * every control, every geometry rule, the recipe export and exportSVG() behave
+ * identically. The layout maths is copied verbatim and must not be "improved".
+ *
+ * Deliberate differences, all forced by moving out of a single self-contained
+ * file -- nothing else changed:
+ *
+ *   1. Assets load from /builder/ instead of inline base64 data: URIs.
+ *   2. PATHS / COVER / CAPBOX / BOXES / METRICS are read from a
+ *      <script type="application/json"> block the component renders at build
+ *      time, instead of being inlined as literals.
+ *   3. $() resolves inside the component root rather than the whole document,
+ *      so the builder's generic ids cannot collide with the host page.
+ *   4. --accent is set on the component root rather than <html>, so the
+ *      per-product accent cannot leak into the surrounding page.
+ *   5. The template switch offers only the current product's variants
+ *      (orientation / full bleed) rather than all five templates.
+ *   6. draftSVG() is async and inlines asset URLs. An SVG loaded as an <img>
+ *      is sandboxed and cannot fetch external files, so with (1) in place the
+ *      background, overlay, logo and placeholders would have dropped out of the
+ *      downloaded draft. Inlining restores the prototype's draft exactly.
+ */
+
+import { PRICES, PERSONALISATION_FEE } from '../data/products';
+
+const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
+
+/* What counts as soft depends on what it is printed on. Canvas has texture and
+   is viewed from further away, so it carries a lower resolution than a poster
+   held at arm's length. This only changes the threshold we warn at -- the dpi
+   figure itself is calculated exactly as before. */
+const MIN_DPI_BY_FORMAT = { poster: 150, standard: 100, gallery: 100 };
+const DPI_SURFACE = { poster: 'as a poster', standard: 'on canvas', gallery: 'on canvas' };
+
+/** Builder format/size vocabulary -> the basket's. */
+const CART_FORMAT = { poster: 'poster', standard: 'canvas-standard', gallery: 'canvas-gallery' };
+const CART_SIZE = ['small', 'medium', 'large'];
+const FORMAT_WORD = { poster: 'poster print', standard: 'standard wrap', gallery: 'gallery wrap' };
+const TEMPLATE_WORD = {
+  strip: 'Comic strip', cover: 'Comic cover', 'cover-fullbleed': 'Comic cover (full bleed)',
+  'icon-portrait': 'Comic icon', 'icon-landscape': 'Comic icon',
+};
+
+/** Assets, previously base64 blobs in the prototype's `A` object. */
+const ASSET = {
+  cover_bg: '/builder/templates/comic-cover/background.png',
+  cover_ov: '/builder/templates/comic-cover/overlay.png',
+  logo: '/builder/csc-logo.png',
+  placeholder: '/builder/placeholder.png',
+  placeholder_cover: '/builder/placeholder-cover.png',
+  placeholder_coverfb: '/builder/placeholder-coverfb.png',
+};
+
+/** Which templates each mounted product may switch between. */
+const VARIANTS = {
+  strip: ['strip'],
+  cover: ['cover', 'cover-fullbleed'],
+  'icon-portrait': ['icon-portrait', 'icon-landscape'],
+};
+
+export function initProductBuilder() {
+  const root = document.getElementById('csc-builder-root');
+  const dataEl = document.getElementById('csc-builder-data');
+  if (!root || !dataEl) return;
+
+  const { PATHS, COVER, CAPBOX, BOXES, METRICS } = JSON.parse(dataEl.textContent);
+
+  /** "customer" | "studio" -- plumbed through; both behave identically today. */
+  const MODE = root.dataset.mode === 'studio' ? 'studio' : 'customer';
+  const INITIAL = VARIANTS[root.dataset.template] ? root.dataset.template : 'cover';
+
+  const $ = (id) => root.querySelector('#' + id);
+  const svg = $('svg'), board = $('board'), picker = $('picker');
+  const mk = (t, a) => { const e = document.createElementNS(SVGNS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+
+  /* Measure from the font's own advance widths rather than asking the browser.
+     getComputedTextLength answers with whatever face is currently rendering, so
+     before the webfont arrives it reports fallback metrics and the fit concludes
+     text fits when it doesn't. This is deterministic and race-free. */
+  function textWidth(str, size, family) {
+    const m = METRICS[family] || METRICS.Chewy;
+    let w = 0;
+    for (const ch of String(str)) w += (m.adv[ch.codePointAt(0)] !== undefined ? m.adv[ch.codePointAt(0)] : m.default);
+    return w * size;
+  }
+  const STROKE = {
+    masthead: '#FFFFFF', title: '#000000', quote: '#000000', attribution: '#000000',
+    'caption-1': '#000000', 'caption-2': '#000000',
+  };
+  // The family name must match the one inside the font file. Asking for
+  // "LuckiestGuy" works in a browser via @font-face but silently falls back
+  // in any renderer that matches on the font's own name.
+  const FONTOF = (id) => (id === 'title' ? 'Luckiest Guy' : 'Chewy');
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  // the cover caption has two colour tiers, each its own editable line
+  const capSlot = (f) => (f.id === 'caption-1' || f.id === 'caption-2'
+    ? { ...f, boxRef: 'caption', slot: f.id } : f);
+  const DEFAULT_LOGO = ASSET.logo;
+  const PLACEHOLDER = ASSET.placeholder;
+  const PLACEHOLDER_COVER = ASSET.placeholder_cover;
+  const demoImg = new Image(); demoImg.src = PLACEHOLDER;
+  const demoCover = new Image(); demoCover.src = PLACEHOLDER_COVER;
+  // the standard cover already has its own colour burst, so the example there is
+  // just the bubble on transparency and lets the artwork show through
+  const PLACEHOLDER_COVERFB = ASSET.placeholder_coverfb;
+  const demoCoverFB = new Image(); demoCoverFB.src = PLACEHOLDER_COVERFB;
+  const demoFor = () => {
+    if (TK === 'cover') return { img: demoCover, href: PLACEHOLDER_COVER };
+    if (TK === 'cover-fullbleed') return { img: demoCoverFB, href: PLACEHOLDER_COVERFB };
+    return { img: demoImg, href: PLACEHOLDER };
+  };
+  // The cover PSD positions its furniture right up to the artwork edge, which is
+  // 2.5" outside the trim. Scaling it toward the centre restores a margin.
+  /* The cover furniture occupies only the middle of its artwork, so at print size
+     it reads small. Scale it about its own centre until it reaches the face. */
+  // cx/cy is where the furniture currently centres; to is where it should end up
+  const FURNITURE_FIT = {
+    cover: { cx: 2118, cy: 2714, tx: 2100, ty: 2900, scale: 1.20 },
+    'cover-fullbleed': { cx: 2118, cy: 2714, tx: 2100, ty: 2900, scale: 1.20 },
+  };
+  function applyFurnitureInset(t, key) {
+    const F = FURNITURE_FIT[key]; if (!F || t._inset) return;
+    const k = F.scale, cx = F.cx, cy = F.cy, tx = F.tx, ty = F.ty;
+    const map = (x, y) => [tx + (x - cx) * k, ty + (y - cy) * k];
+    t.furniture = { cx, cy, tx, ty, scale: k };
+    t.text.forEach((f) => {
+      f.fontSize *= k; f.pos = null;
+      if (f.boxRef) return;               // its position comes from the box
+      const [x, y] = map(f.cx, f.cy); f.cx = x; f.cy = y;
+      f.boxW *= k; f.boxH *= k;
+    });
+    if (t.logo) {
+      const [x, y] = map(t.logo.x, t.logo.y);
+      t.logo.x = x; t.logo.y = y; t.logo.width *= k; t.logo.height *= k;
+    }
+    (t.boxes || []).forEach((b) => {
+      const [x, y] = map(b.x, b.y);
+      b.x = x; b.y = y - (b.lift || 0) * k;      // nudge the caption up off the page edge
+      b.scale = (b.scale || 1) * k;
+      b.width *= k; b.height *= k;
+      b.inner = { x: b.inner.x * k, y: b.inner.y * k, w: b.inner.w * k, h: b.inner.h * k };
+      (b.slots || []).forEach((s) => { s.x *= k; s.y *= k; s.w *= k; s.h *= k; });
+    });
+    t._inset = true;
+  }
+  const ACCENT = {
+    strip: '#00AEEF', cover: '#EC008C', 'cover-fullbleed': '#EC008C',
+    'icon-portrait': '#FFF200', 'icon-landscape': '#FFF200',
+  };
+  const onDark = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#000' : '#fff';
+  };
+
+  /* Icon geometry is vector, so it is stored as fractions of a reference canvas
+     and rebuilt at whatever print size the customer picks. */
+  const ICON_REF = { portrait: [3600, 5400], landscape: [5400, 3600] };
+  const ICON_POS = {
+    portrait: [[1408 / 3600, 294 / 5400], [1727 / 3600, 612 / 5400]],
+    landscape: [[300 / 5400, 250 / 3600], [620 / 5400, 612 / 3600]],
+  };
+  function iconTemplate(name, orient, sizes) {
+    const [rw, rh] = ICON_REF[orient], size = sizes[sizes.length - 1];
+    const t = {
+      name, orient, sizes, size, bg: null, boxes: [],
+      text: [{
+        id: 'quote', label: 'quote', value: 'Dummy wording — please replace', boxRef: 'quote',
+        baseSize: 156.2, rot: 0, colours: ['#FFFFFF'], wrap: true,
+      }, {
+        id: 'attribution', label: 'attribution', value: '— your name here —', boxRef: 'attribution',
+        baseSize: 104.2, rot: 0, colours: ['#FFFFFF'], wrap: true,
+      }],
+    };
+    t.resize = (sz) => {
+      const W = Math.round(sz.w * 300), H = Math.round(sz.h * 300), k = W / rw;
+      t.canvas = { width: W, height: H, dpi: 300 };
+      t.art = { id: 'art', x: 0, y: 0, width: W, height: H };
+      t.panels = [t.art];
+      t.boxes = clone(BOXES).map((b, i) => ({
+        ...b,
+        x: Math.round(ICON_POS[orient][i][0] * W), y: Math.round(ICON_POS[orient][i][1] * H),
+        width: Math.round(b.width * k), height: Math.round(b.height * k),
+        inner: { x: b.inner.x * k, y: b.inner.y * k, w: b.inner.w * k, h: b.inner.h * k },
+        scale: k, dx: 0, dy: 0, lineColour: '#000000',
+      }));
+      t.text.forEach((f) => {
+        f.fontSize = f.baseSize * k; f.dx = 0; f.dy = 0;
+        const b = t.boxes.find((x) => x.id === f.boxRef);
+        if (b) {
+          const s = f.slot && (b.slots || []).find((o) => o.id === f.slot);
+          f.pos = s ? { x: b.x + b.dx + s.x + s.w / 2, y: b.y + b.dy + s.y + s.h / 2 }
+            : ((a) => ({ x: a.cx, y: a.cy }))(boxArea(b, t.boxes));
+        }
+      });
+    };
+    t.resize(size); return t;
+  }
+  const WRAP = { poster: 0, standard: 1.5, gallery: 2.5 };
+  // wrap already built into each template's artwork, in inches per edge
+  // wrap already drawn into each template's artwork, in inches per edge.
+  // The strip and icon artwork IS the advertised face -- nothing extra drawn in.
+  const ART_WRAP = {
+    strip: 0, cover: 0, 'cover-fullbleed': 0,
+    'icon-portrait': 0, 'icon-landscape': 0,
+  };
+  const FORMAT_LABEL = {
+    poster: 'Poster print', standard: 'Canvas — standard wrap',
+    gallery: 'Canvas — gallery wrap',
+  };
+  const SIZES = {
+    strip: [{ label: '12 × 8 in', w: 12, h: 8 }, { label: '16 × 12 in', w: 16, h: 12 },
+      { label: '24 × 16 in', w: 24, h: 16 }],
+    cover: [{ label: '8 × 12 in', w: 8, h: 12 }, { label: '12 × 16 in', w: 12, h: 16 },
+      { label: '16 × 24 in', w: 16, h: 24 }],
+    portrait: [{ label: '8 × 12 in', w: 8, h: 12 }, { label: '12 × 16 in', w: 12, h: 16 }, { label: '16 × 24 in', w: 16, h: 24 }],
+    landscape: [{ label: '12 × 8 in', w: 12, h: 8 }, { label: '16 × 12 in', w: 16, h: 12 }, { label: '24 × 16 in', w: 24, h: 16 }],
+  };
+  const TEMPLATES = {
+    strip: {
+      name: 'Strip', canvas: { width: 7350, height: 4950, dpi: 300 },
+      bg: { type: 'colour', value: '#EC008C' }, page: { x: 156, y: 176, w: 7014, h: 4586 },
+      panels: PATHS.panels.map((p) => ({ id: p.id, x: p.x, y: p.y, width: p.width, height: p.height, d: p.d })),
+      vectorOutlines: true, overlay: null, boxes: [], text: [],
+    },
+    cover: {
+      name: 'Cover', logo: { x: 3354, y: 640, width: 237, height: 183, fillPlate: true },
+      canvas: { width: 4200, height: 5800, dpi: 200 },
+      bg: { type: 'image', href: ASSET.cover_bg, tintable: true },
+      art: { id: 'art', x: 397, y: 378, width: 3411, height: 5000 },
+      overlay: ASSET.cover_ov,
+      boxes: clone(CAPBOX), text: clone(COVER).map(capSlot),
+    },
+    'cover-fullbleed': {
+      name: 'Cover (full bleed)', logo: { x: 3354, y: 640, width: 237, height: 183, fillPlate: true },
+      canvas: { width: 4200, height: 5800, dpi: 200 },
+      bg: null,
+      art: { id: 'art', x: 0, y: 0, width: 4200, height: 5800 },
+      overlay: ASSET.cover_ov,
+      boxes: clone(CAPBOX), text: clone(COVER).map(capSlot),
+    },
+    'icon-portrait': iconTemplate('Icon portrait', 'portrait', SIZES.portrait),
+    'icon-landscape': iconTemplate('Icon landscape', 'landscape', SIZES.landscape),
+  };
+  TEMPLATES.strip.sizes = SIZES.strip; TEMPLATES.strip.size = SIZES.strip[2];
+  TEMPLATES.cover.sizes = SIZES.cover; TEMPLATES.cover.size = SIZES.cover[2];
+  TEMPLATES['cover-fullbleed'].sizes = SIZES.cover;
+  TEMPLATES['cover-fullbleed'].size = SIZES.cover[2];
+  for (const k of ['cover', 'cover-fullbleed']) TEMPLATES[k].panels = [TEMPLATES[k].art];
+
+  let T, TK, state, selected, pickTarget = null, bg, tint = { h: 0, s: 100 }, nodes = {}, moveMode = false;
+  let fmt = 'poster';
+
+  const sw = $('switch');
+  VARIANTS[INITIAL].forEach((k) => {
+    const b = document.createElement('button');
+    b.textContent = TEMPLATES[k].name; b.dataset.k = k; b.className = 'b-btn';
+    b.addEventListener('click', () => load(k)); sw.appendChild(b);
+  });
+
+  function load(key) {
+    TK = key; T = TEMPLATES[key]; state = new Map(); selected = null; tint = { h: 0, s: 100 };
+    applyFurnitureInset(T, key);
+    T.boxes.forEach((b) => { b.dx = b.dx || 0; b.dy = b.dy || 0; });
+    T.text.forEach((f) => {
+      if (f.stroke === undefined) f.stroke = STROKE[f.id] || null;
+      f.strokeScale = f.strokeScale || 1; f.sizeScale = f.sizeScale || 1;
+      if (f.linked === undefined) f.linked = true;
+      if (!f.pos) {
+        if (f.boxRef) {
+          const b = T.boxes.find((x) => x.id === f.boxRef);
+          const s = f.slot && (b.slots || []).find((o) => o.id === f.slot);
+          f.pos = s ? { x: b.x + b.dx + s.x + s.w / 2, y: b.y + b.dy + s.y + s.h / 2 }
+            : ((a) => ({ x: a.cx, y: a.cy }))(boxArea(b));
+        } else f.pos = { x: f.cx, y: f.cy };
+      }
+    });
+    bg = T.bg && T.bg.type === 'colour' ? T.bg.value : null;
+    [...sw.children].forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === key));
+    const ac = ACCENT[key] || '#EC008C';
+    root.style.setProperty('--b-accent', ac);
+    root.style.setProperty('--b-on-accent', onDark(ac));
+    sizeBoard();                    // one place decides the board's shape
+    svg.setAttribute('viewBox', viewBoxNow());
+    buildSizes(); build(); rail(); seedDemo(); refresh();
+    if (T.panels.length === 1) select(T.panels[0].id);
+  }
+
+  function wrapIn() { return WRAP[fmt] || 0; }
+  /* Artwork is drawn to face + 2*artWrap; the printed file is face + 2*wrap.
+     delta > 0 grows the canvas beyond the artwork (a thicker border, or more photo);
+     delta < 0 cuts in to artwork that already contains its wrap. */
+  /* The artwork has one fixed shape; the chosen face may not share it. Scale so
+     the whole design fits the face, pad the short axis with border, then add the
+     wrap outside that. Each axis is worked out separately. */
+  // 'fill' crops a little of a decorative edge so the design fills the face;
+  // 'pad' keeps the whole layout visible and grows the border instead.
+  const FIT = {
+    strip: 'pad', 'icon-portrait': 'fill', 'icon-landscape': 'fill',
+    cover: 'fill', 'cover-fullbleed': 'fill',
+  };
+  function geom() {
+    const c = T.canvas, sz = T.size || { w: 1, h: 1 }, w = wrapIn();
+    const ppi = (FIT[TK] === 'pad') ? Math.max(c.width / sz.w, c.height / sz.h)
+      : Math.min(c.width / sz.w, c.height / sz.h);
+    const padX = (sz.w * ppi - c.width) / 2, padY = (sz.h * ppi - c.height) / 2;
+    const wrapPx = w * ppi;
+    return { c, sz, w, ppi, padX, padY, dx: padX + wrapPx, dy: padY + wrapPx };
+  }
+  function viewBoxNow() {
+    const { c, dx, dy } = geom();
+    return `${-dx} ${-dy} ${c.width + 2 * dx} ${c.height + 2 * dy}`;
+  }
+  function drawGuides() {
+    ['trimGuide', 'trimUnder'].forEach((k) => { if (nodes[k]) { nodes[k].remove(); nodes[k] = null; } });
+    if (!T.size || !wrapIn()) return;
+    // the face is the artwork plus its padding; everything beyond that wraps
+    const { c, padX, padY } = geom();
+    const wdt = Math.max(6, c.width / 230);
+    const box = { x: -padX, y: -padY, width: c.width + 2 * padX, height: c.height + 2 * padY };
+    // a dark under-stroke so the white line reads on pale artwork too
+    const under = mk('rect', {
+      ...box, 'data-role': 'guide', fill: 'none', stroke: 'rgba(0,0,0,.55)',
+      'stroke-width': wdt * 1.8, 'pointer-events': 'none',
+    });
+    const r = mk('rect', {
+      ...box, 'data-role': 'guide', fill: 'none', stroke: '#FFFFFF', 'stroke-width': wdt,
+      'stroke-dasharray': `${c.width / 34} ${c.width / 48}`, 'stroke-linecap': 'butt',
+      'pointer-events': 'none',
+    });
+    svg.append(under, r); nodes.trimGuide = r; nodes.trimUnder = under;
+  }
+  function showGuide() { $('guide').hidden = false; }
+  $('help').addEventListener('click', showGuide);
+  $('guideClose').addEventListener('click', () => {
+    $('guide').hidden = true;
+    try { localStorage.setItem('csc-guide-seen', '1'); } catch (e) { /* private mode */ }
+  });
+  /* Every template opens with an example so customers see a finished layout
+     rather than empty frames. Anything they drop replaces it. */
+  function seedDemo() {
+    const put = () => {
+      if (!T) return;
+      const { img: dImg, href: dHref } = demoFor();
+      T.panels.forEach((p) => {
+        if (state.get(p.id) || !nodes[p.id]) return;
+        state.set(p.id, {
+          url: dHref, el: dImg, name: null, demo: true,
+          natW: dImg.naturalWidth || 1600, natH: dImg.naturalHeight || 1600,
+          zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
+        });
+        const n = nodes[p.id];
+        n.img.setAttribute('href', dHref); n.img.setAttribute('opacity', 1);
+        if (n.num) n.num.setAttribute('opacity', 0);
+        if (n.plate) n.plate.setAttribute('opacity', 0);
+        layout(p.id);
+      });
+      refresh();
+    };
+    const d = demoFor().img;
+    if (d.complete && d.naturalWidth) put();
+    else { d.addEventListener('load', put, { once: true }); setTimeout(put, 600); }
+  }
+  function sizeBoard() {
+    const c = T.canvas;
+    // scale the preview against the largest size on offer, so choosing a smaller
+    // print actually looks smaller instead of always filling the stage
+    let rel = 1;
+    if (T.sizes && T.size) {
+      const big = T.sizes.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a), T.sizes[0]);
+      rel = Math.sqrt((T.size.w * T.size.h) / (big.w * big.h));
+    }
+    const { dx, dy } = geom();
+    const extW = c.width + 2 * dx, extH = c.height + 2 * dy;
+    // Size the board explicitly. Setting a width and a max-height together let the
+    // browser clamp one without the other, which left the svg letterboxed inside.
+    const stage = board.parentNode;
+    const sw2 = (stage.clientWidth || 1000) - 52, sh = (stage.clientHeight || 700) - 52;
+    const k = Math.min(sw2 / extW, sh / extH) * rel;
+    board.style.aspectRatio = 'auto';
+    board.style.maxWidth = 'none'; board.style.maxHeight = 'none';
+    board.style.width = Math.max(40, Math.round(extW * k)) + 'px';
+    board.style.height = Math.max(40, Math.round(extH * k)) + 'px';
+  }
+  window.addEventListener('resize', () => { if (T) sizeBoard(); });
+  function buildSizes() {
+    const sel = $('sizeSel'); sel.innerHTML = '';
+    (T.sizes || []).forEach((s, i) => {
+      const o = document.createElement('option'); o.value = i; o.textContent = s.label;
+      if (s === T.size) o.selected = true; sel.appendChild(o);
+    });
+    sel.disabled = !T.sizes;
+  }
+  $('fmtSel').addEventListener('change', (e) => {
+    fmt = e.target.value; rebuildKeepingImages();
+    // multi-panel templates keep their selection through a rebuild but are not
+    // re-synced by it, so the panel readout would otherwise show the old output
+    if (selected && nodes[selected]) syncPanel();
+  });
+  $('sizeSel').addEventListener('change', (e) => {
+    const s = T.sizes[+e.target.value]; T.size = s;
+    if (T.resize) T.resize(s);              // icons rebuild their vector geometry
+    rebuildKeepingImages();                 // every template re-fits to the new face
+  });
+  /* Rebuild the scene at the current size/format, putting the customer's images
+     back where they were. */
+  function rebuildKeepingImages() {
+    sizeBoard();
+    svg.setAttribute('viewBox', viewBoxNow());
+    const keep = new Map(state); state = new Map();
+    build(); rail();
+    keep.forEach((v, k) => {
+      if (nodes[k]) {
+        state.set(k, v);
+        const n = nodes[k];
+        n.img.setAttribute('href', v.url); n.img.setAttribute('opacity', 1);
+        if (n.num) n.num.setAttribute('opacity', 0);
+        if (n.plate) n.plate.setAttribute('opacity', 0);
+        n.hit.classList.add('filled'); layout(k);
+      }
+    });
+    seedDemo(); refresh();
+    if (T.panels.length === 1) select(T.panels[0].id);
+  }
+  function build() {
+    svg.textContent = ''; nodes = {};
+    const c = T.canvas, defs = document.createElementNS(SVGNS, 'defs'); svg.appendChild(defs);
+    const G = geom(), ex = Math.max(0, G.dx), ey = Math.max(0, G.dy);
+    if (T.bg && T.bg.type === 'colour') {
+      nodes.bgRect = mk('rect', { x: -ex, y: -ey, width: c.width + 2 * ex, height: c.height + 2 * ey, fill: bg, 'data-role': 'bg-colour' });
+      svg.appendChild(nodes.bgRect);
+    } else if (T.bg && T.bg.type === 'image') {
+      // stretch the burst over whatever padding and wrap the chosen face needs
+      nodes.bgImg = mk('image', {
+        href: T.bg.href, x: -ex, y: -ey,
+        width: c.width + 2 * ex, height: c.height + 2 * ey, 'data-role': 'background',
+      });
+      nodes.bgImg.setAttribute('preserveAspectRatio', 'none');
+      svg.appendChild(nodes.bgImg);
+    }
+    if (T.page) svg.appendChild(mk('rect', { x: T.page.x, y: T.page.y, width: T.page.w, height: T.page.h, fill: '#fff', stroke: '#000', 'stroke-width': 13 }));
+
+    const EP = T.panels.map((p) => {
+      const covers = p.x <= 0 && p.y <= 0 && p.width >= c.width && p.height >= c.height;
+      return (covers && (ex > 0 || ey > 0))
+        ? { ...p, x: -ex, y: -ey, width: c.width + 2 * ex, height: c.height + 2 * ey } : p;
+    });
+    EP.forEach((p, i) => {
+      const cl = document.createElementNS(SVGNS, 'clipPath'); cl.id = 'clip-' + p.id;
+      cl.appendChild(p.d ? mk('path', { d: p.d }) : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height }));
+      defs.appendChild(cl);
+      const g = mk('g', { 'clip-path': `url(#clip-${p.id})` });
+      const plate = p.d ? mk('path', { d: p.d, fill: '#fff' }) : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height, fill: T.bg ? 'none' : '#1A1A1A' });
+      g.appendChild(plate);
+      const img = mk('image', { opacity: 0, 'data-role': 'panel', 'data-panel': p.id });
+      img.setAttribute('preserveAspectRatio', 'none');
+      g.appendChild(img); svg.appendChild(g);
+      let num = null;
+      if (T.panels.length > 1) {
+        num = mk('text', { x: p.x + p.width / 2, y: p.y + p.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 190, 'font-weight': 800, fill: '#B9BCC2' });
+        num.textContent = String(i + 1).padStart(2, '0'); svg.appendChild(num);
+      }
+      nodes[p.id] = { panel: p, img, num, index: i, plate };
+    });
+    if (T.vectorOutlines) EP.forEach((p) => {
+      nodes[p.id].outline = mk('path', { d: p.d, fill: 'none', stroke: '#000', 'stroke-width': 9, 'stroke-linejoin': 'round' });
+      svg.appendChild(nodes[p.id].outline);
+    });
+    if (T.overlay) {
+      const F = T.furniture, k = F ? F.scale : 1;
+      const fx = F ? F.cx : c.width / 2, fy = F ? F.cy : c.height / 2;
+      const tx = F ? F.tx : c.width / 2, ty = F ? F.ty : c.height / 2;
+      nodes.overlay = mk('image', {
+        href: T.overlay, 'data-role': 'overlay',
+        x: tx + (0 - fx) * k, y: ty + (0 - fy) * k, width: c.width * k, height: c.height * k,
+      });
+      svg.appendChild(nodes.overlay);
+    }
+    if (T.logo) {
+      const L = T.logo;
+      if (!L.href) L.href = DEFAULT_LOGO;
+      nodes.logoPlate = mk('rect', { x: L.x, y: L.y, width: L.width, height: L.height, rx: 14, ry: 14, fill: 'none' });
+      nodes.logo = mk('image', { href: L.href, x: L.x, y: L.y, width: L.width, height: L.height, 'data-role': 'logo' });
+      nodes.logo.setAttribute('preserveAspectRatio', 'none');
+      const lc = document.createElementNS(SVGNS, 'clipPath'); lc.id = 'logoClip';
+      lc.appendChild(mk('rect', { x: L.x, y: L.y, width: L.width, height: L.height, rx: 14, ry: 14 }));
+      defs.appendChild(lc);
+      svg.append(nodes.logoPlate, nodes.logo);
+      placeLogo();
+    }
+
+    T.boxes.forEach((b) => {
+      // the path data is in reference units, so it must be scaled as well as placed
+      const g = mk('g', { transform: `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})` });
+      const sh = mk('path', { d: b.shadow, fill: b.shadowColour });
+      g.appendChild(sh);
+      const fills = (b.fills || [{ d: b.fill, colour: b.fillColour }]).map((f) => {
+        const el = mk('path', { d: f.d, fill: f.colour }); g.appendChild(el); return el;
+      });
+      svg.appendChild(g);
+      nodes['b-' + b.id] = { g, sh, fl: fills[0], fills, box: b };
+      let bd = null;
+      g.addEventListener('pointerdown', (e) => {
+        if (!moveMode) return; e.stopPropagation();
+        g.setPointerCapture(e.pointerId);
+        bd = {
+          px: e.clientX, py: e.clientY, dx: b.dx, dy: b.dy,
+          k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+        };
+      });
+      g.addEventListener('pointermove', (e) => {
+        if (!bd) return;
+        const nx = bd.dx + (e.clientX - bd.px) * bd.k, ny = bd.dy + (e.clientY - bd.py) * bd.k;
+        const sx = nx - b.dx, sy = ny - b.dy;
+        b.dx = nx; b.dy = ny;
+        g.setAttribute('transform', `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})`);
+        T.text.forEach((f) => { if (f.boxRef === b.id && f.linked) { f.pos.x += sx; f.pos.y += sy; } });
+        layoutAllText();
+      });
+      const bend = () => { bd = null; };
+      g.addEventListener('pointerup', bend); g.addEventListener('pointercancel', bend);
+    });
+
+    T.text.forEach((f) => {
+      const t = mk('text', {
+        'text-anchor': 'middle', 'font-family': FONTOF(f.id),
+        fill: f.colours[0], 'paint-order': 'stroke', 'stroke-linejoin': 'round', 'font-size': f.fontSize,
+      });
+      if (f.stroke) t.setAttribute('stroke', f.stroke);
+      svg.appendChild(t); nodes['t-' + f.id] = t;
+      wireMove(f);
+    });
+
+    EP.forEach((p) => {
+      const hit = p.d ? mk('path', { d: p.d, fill: 'transparent' }) : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height, fill: 'transparent' });
+      hit.classList.add('hit'); hit.tabIndex = 0; hit.setAttribute('role', 'button');
+      const firstAbove = T.boxes.length ? nodes['b-' + T.boxes[0].id].g
+        : (T.text.length ? nodes['t-' + T.text[0].id] : null);
+      svg.insertBefore(hit, firstAbove);
+      nodes[p.id].hit = hit; wire(p.id);
+    });
+    applyTint(); layoutAllText(); drawGuides();
+  }
+  /* The burst is flat colour + black line work, so each region can be remapped
+     exactly rather than hue-shifted. Classify once, then repaint cheaply. */
+  let artMap = null;   // {w,h,idx:Uint8Array,base:[[r,g,b],...],src}
+  function classifyArt(img) {
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) return;                       // no canvas: leave the artwork as drawn
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height), px = d.data, n = c.width * c.height;
+    const bins = {};
+    for (let i = 0; i < n; i += 7) {
+      const j = i * 4, k = ((px[j] >> 5) << 10) | ((px[j + 1] >> 5) << 5) | (px[j + 2] >> 5);
+      bins[k] = (bins[k] || 0) + 1;
+    }
+    const base = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => {
+      k = +k; return [((k >> 10) & 7) * 32 + 16, ((k >> 5) & 7) * 32 + 16, (k & 7) * 32 + 16];
+    });
+    base.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));   // darkest first = line work
+    const idx = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const j = i * 4; let best = 0, bd = 1e9;
+      for (let b = 0; b < base.length; b++) {
+        const dr = px[j] - base[b][0], dg = px[j + 1] - base[b][1], db = px[j + 2] - base[b][2];
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bd) { bd = dist; best = b; }
+      }
+      idx[i] = best;
+    }
+    // mean x of each region, so the pickers can be labelled by position
+    const sx = new Float64Array(base.length), sn = new Float64Array(base.length);
+    for (let i = 0; i < n; i++) { sx[idx[i]] += i % c.width; sn[idx[i]]++; }
+    const meanX = base.map((_, b) => (sn[b] ? sx[b] / sn[b] / c.width : 0.5));
+    const order = base.map((_, b) => b).filter((b) => sn[b] / n > 0.15).sort((a, b) => meanX[a] - meanX[b]);
+    const labels = base.map(() => 'Line work');
+    if (order.length === 2) { labels[order[0]] = 'Left'; labels[order[1]] = 'Right'; }
+    else order.forEach((b, i) => { labels[b] = 'Area ' + (i + 1); });
+    artMap = { w: c.width, h: c.height, idx, base, data: d, labels };
+    artColours = base.map((cc) => '#' + cc.map((v) => v.toString(16).padStart(2, '0')).join(''));
+  }
+  let artColours = [];
+  function repaintArt() {
+    if (!artMap || !nodes.bgImg) return;
+    const { w, h, idx, data } = artMap, px = data.data;
+    const rgb = artColours.map((hx) => [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)]);
+    for (let i = 0; i < w * h; i++) {
+      const c = rgb[idx[i]], j = i * 4;
+      px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2];
+    }
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    cv.getContext('2d').putImageData(data, 0, 0);
+    nodes.bgImg.setAttribute('href', cv.toDataURL('image/png'));
+  }
+  function applyTint() {
+    if (!(T.bg && T.bg.type === 'image')) return;
+    if (artMap) { repaintArt(); buildArtPickers(); return; }
+    const img = new Image();
+    img.onload = () => { classifyArt(img); buildArtPickers(); };
+    img.src = T.bg.href;
+  }
+  function buildArtPickers() {
+    const box = $('artColours'); if (!box) return;
+    box.innerHTML = '';
+    artColours.forEach((c, i) => {
+      const ci = document.createElement('input'); ci.type = 'color'; ci.value = c;
+      ci.className = 'b-colour';
+      ci.title = (artMap && artMap.labels ? artMap.labels[i] : 'Area ' + i);
+      const cap = document.createElement('span');
+      cap.className = 'b-cap';
+      cap.textContent = ci.title; box.appendChild(cap);
+      const apply = () => { artColours[i] = ci.value; repaintArt(); };
+      ci.addEventListener('input', apply); ci.addEventListener('change', apply);
+      box.appendChild(ci);
+    });
+  }
+
+  /* ---------- text: anchor, wrap, shrink ---------- */
+  /* The two speech boxes overlap by design, so a box's usable area stops where
+     the next one begins -- otherwise a wrapped second line lands underneath it. */
+  function boxArea(b, boxes) {
+    boxes = boxes || T.boxes;      // resize runs before T exists, so pass them in
+    const n = b.inner, top = b.y + (b.dy || 0) + n.y, left = b.x + (b.dx || 0) + n.x;
+    const below = boxes.filter((o) => o !== b && (o.y + (o.dy || 0)) > (b.y + (b.dy || 0))).map((o) => o.y + (o.dy || 0));
+    const limit = below.length ? Math.min(...below) - b.height * 0.06 : Infinity;
+    const h = Math.max(n.h * 0.35, Math.min(n.h, limit - top));
+    return { cx: left + n.w / 2, cy: top + h / 2, w: n.w, h };
+  }
+  function anchorOf(f) {
+    if (f.boxRef) {
+      const b = T.boxes.find((x) => x.id === f.boxRef);
+      // a slot is an independent area inside a box; otherwise use the whole box
+      const s = f.slot && (b.slots || []).find((o) => o.id === f.slot);
+      if (s) return { cx: f.pos.x, cy: f.pos.y, w: s.w * 0.94, h: s.h * 0.94 };
+      const a = boxArea(b);
+      return { cx: f.pos.x, cy: f.pos.y, w: a.w * 0.82, h: a.h * 0.86 };
+    }
+    return { cx: f.pos.x, cy: f.pos.y, w: f.boxW, h: f.boxH };
+  }
+  function layoutText(f) {
+    const el = nodes['t-' + f.id], a = anchorOf(f);
+    // Asking for bigger text means asking for a bigger element, so the allowance
+    // scales too -- otherwise auto-fit immediately claws back whatever you added.
+    const grow = f.sizeScale || 1;
+    a.w *= grow; a.h *= grow;
+    let size = f.fontSize * grow, lines = [f.value];
+    const fam = FONTOF(f.id);
+    const measure = (txt, s) => textWidth(txt, s, fam);
+    for (let pass = 0; pass < 40; pass++) {
+      lines = f.wrap ? wrap(f.value, size, a.w * 0.90, measure) : [f.value];
+      const tall = lines.length * size * 1.16 > a.h;
+      const wide = lines.some((l) => measure(l, size) > a.w * 0.92);
+      if (!tall && !wide) break;
+      size *= 0.94;
+    }
+    el.textContent = ''; el.setAttribute('font-size', size);
+    el.style.fill = f.colours[0];
+    el.style.stroke = f.stroke || 'none';
+    el.style.strokeWidth = (f.stroke ? size * SR * 2 * (f.strokeScale || 1) : 0) + 'px';
+    const lh = size * 1.16, top = a.cy - (lines.length - 1) * lh / 2;
+    lines.forEach((ln, i) => {
+      const ts = mk('tspan', { x: a.cx, y: top + i * lh, 'dominant-baseline': 'central' });
+      if (f.twoTone && lines.length === 1 && f.colours[1]) {
+        const sp = ln.indexOf(' ');
+        const a1 = mk('tspan', {}); a1.style.fill = f.colours[0]; a1.textContent = ln.slice(0, sp + 1);
+        const a2 = mk('tspan', {}); a2.style.fill = f.colours[1]; a2.textContent = ln.slice(sp + 1);
+        ts.append(a1, a2);
+      } else { ts.style.fill = f.colours[0]; ts.textContent = ln; }
+      el.appendChild(ts);
+    });
+    el.setAttribute('transform', `rotate(${-(f.rot || 0)} ${a.cx} ${a.cy})`);
+    f.resolved = Math.round(size * 10) / 10; f.lines = lines.length;
+  }
+  function wrap(text, size, maxw, measure) {
+    const words = text.split(/\s+/), lines = []; let cur = '';
+    for (const w of words) {
+      const t = cur ? cur + ' ' + w : w;
+      if (cur && measure(t, size) > maxw) { lines.push(cur); cur = w; } else cur = t;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+  function layoutAllText() { T.text.forEach(layoutText); }
+  function remeasure() { if (T) layoutAllText(); }
+  try {
+    if (document.fonts && typeof document.fonts.load === 'function') {
+      Promise.all([document.fonts.load('160px Chewy'),
+        document.fonts.load("160px 'Luckiest Guy'")])
+        .then(remeasure).catch(remeasure);
+    }
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(remeasure);
+  } catch (e) { /* no font loading API */ }
+  setTimeout(remeasure, 1200);            // last resort if the font events misfire
+
+  /* ---------- moving text and boxes ---------- */
+  function wireMove(f) {
+    const el = nodes['t-' + f.id]; let d = null;
+    el.addEventListener('pointerdown', (e) => {
+      if (!moveMode) return; e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      d = {
+        px: e.clientX, py: e.clientY, ox: f.pos.x, oy: f.pos.y,
+        k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+      };
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!d) return;
+      f.pos.x = d.ox + (e.clientX - d.px) * d.k; f.pos.y = d.oy + (e.clientY - d.py) * d.k;
+      layoutText(f);
+    });
+    const end = () => { d = null; };
+    el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  }
+  $('reposition').addEventListener('click', (e) => {
+    moveMode = !moveMode; e.target.setAttribute('aria-pressed', moveMode);
+    T.text.forEach((f) => nodes['t-' + f.id].classList.toggle('movable', moveMode));
+    T.boxes.forEach((b) => nodes['b-' + b.id].g.classList.toggle('movable', moveMode));
+    T.panels.forEach((p) => { if (nodes[p.id].hit) nodes[p.id].hit.style.pointerEvents = moveMode ? 'none' : ''; });
+  });
+
+  /* ---------- logo: exact fit, no letterboxing ---------- */
+  function placeLogo() {
+    const L = T.logo; if (!L || !nodes.logo) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      if (!g) { sizeLogo(img.naturalWidth, img.naturalHeight, L.href, null); return; }
+      g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+      let transparent = false;
+      for (let i = 3; i < px.length; i += 4) { if (px[i] < 250) { transparent = true; break; } }
+      const j0 = 0, corner = [px[j0], px[j0 + 1], px[j0 + 2]];
+
+      // A transparent logo is trimmed to its ink. An opaque one keeps its own
+      // background -- cropping that away would strand light artwork on white.
+      let x0 = 0, y0 = 0, x1 = c.width - 1, y1 = c.height - 1;
+      if (transparent) {
+        x0 = c.width; y0 = c.height; x1 = 0; y1 = 0;
+        for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+          if (px[(y * c.width + x) * 4 + 3] > 12) {
+            if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y;
+          }
+        }
+        if (x1 < x0 || y1 < y0) { x0 = 0; y0 = 0; x1 = c.width - 1; y1 = c.height - 1; }
+      }
+      const w = x1 - x0 + 1, h = y1 - y0 + 1;
+      let href = L.href;
+      if (transparent && (w !== c.width || h !== c.height)) {
+        const t = document.createElement('canvas'); t.width = w; t.height = h;
+        t.getContext('2d').drawImage(c, x0, y0, w, h, 0, 0, w, h);
+        href = t.toDataURL('image/png');
+      }
+      L.bgColour = transparent ? null
+        : '#' + corner.map((v) => v.toString(16).padStart(2, '0')).join('');
+      sizeLogo(w, h, href, L.bgColour);
+    };
+    img.onerror = () => {};
+    img.src = L.href;
+  }
+  function sizeLogo(w, h, href, bgColour) {
+    const L = T.logo;
+    const k = (L.fillPlate && L.bgColour) ? Math.max(L.width / w, L.height / h)
+      : Math.min(L.width / w, L.height / h);
+    const w2 = Math.round(w * k), h2 = Math.round(h * k);
+    const x = Math.round(L.x + (L.width - w2) / 2), y = Math.round(L.y + (L.height - h2) / 2);
+    nodes.logo.setAttribute('href', href);
+    nodes.logo.setAttribute('clip-path', L.fillPlate && L.bgColour ? 'url(#logoClip)' : 'none');
+    nodes.logo.setAttribute('x', x); nodes.logo.setAttribute('y', y);
+    nodes.logo.setAttribute('width', w2); nodes.logo.setAttribute('height', h2);
+    nodes.logoPlate.setAttribute('fill', L.fillPlate && bgColour ? bgColour : 'none');
+    L.fitted = [x, y, w2, h2];
+  }
+
+  /* ---------- background removal ---------- */
+  function cutout(el, tol, feather) {
+    if (!document.createElement('canvas').getContext('2d')) return el.src;
+    const long = Math.max(el.naturalWidth, el.naturalHeight), k = Math.min(1, 1400 / long);
+    const w = Math.round(el.naturalWidth * k), h = Math.round(el.naturalHeight * k);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(el, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h), px = d.data;
+    let r = 0, gr = 0, b = 0, n = 0;
+    const edge = [];
+    for (let x = 0; x < w; x++) { edge.push([x, 0], [x, h - 1]); }
+    for (let y = 0; y < h; y++) { edge.push([0, y], [w - 1, y]); }
+    edge.forEach(([x, y]) => { const i = (y * w + x) * 4; r += px[i]; gr += px[i + 1]; b += px[i + 2]; n++; });
+    r /= n; gr /= n; b /= n;
+    const lim = tol * tol * 3, seen = new Uint8Array(w * h), q = [];
+    edge.forEach(([x, y]) => { const p = y * w + x; if (!seen[p]) { seen[p] = 1; q.push(p); } });
+    const near = (p) => {
+      const i = p * 4, dr = px[i] - r, dg = px[i + 1] - gr, db = px[i + 2] - b;
+      return dr * dr + dg * dg + db * db <= lim;
+    };
+    const out = new Uint8Array(w * h);
+    while (q.length) {
+      const p = q.pop(); if (!near(p)) continue;
+      out[p] = 1;
+      const x = p % w, y = (p / w) | 0;
+      if (x > 0 && !seen[p - 1]) { seen[p - 1] = 1; q.push(p - 1); }
+      if (x < w - 1 && !seen[p + 1]) { seen[p + 1] = 1; q.push(p + 1); }
+      if (y > 0 && !seen[p - w]) { seen[p - w] = 1; q.push(p - w); }
+      if (y < h - 1 && !seen[p + w]) { seen[p + w] = 1; q.push(p + w); }
+    }
+    const alpha = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) alpha[i] = out[i] ? 0 : 255;
+    for (let pass = 0; pass < feather; pass++) {
+      const cp = Float32Array.from(alpha);
+      for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        alpha[i] = (cp[i] + cp[i - 1] + cp[i + 1] + cp[i - w] + cp[i + w]) / 5;
+      }
+    }
+    for (let i = 0; i < w * h; i++) px[i * 4 + 3] = alpha[i];
+    g.putImageData(d, 0, 0);
+    return cv.toDataURL('image/png');
+  }
+  function applyCut(id) {
+    const s = state.get(id); if (!s) return;
+    const n = nodes[id];
+    if (!s.cut) { n.img.setAttribute('href', s.url); return; }
+    const key = s.tol + '/' + s.feather;
+    if (s.cutKey !== key) { s.cutUrl = cutout(s.el, s.tol, s.feather); s.cutKey = key; }
+    n.img.setAttribute('href', s.cutUrl);
+  }
+
+  /* ---------- images ---------- */
+  function layout(id) {
+    const { panel: p, img } = nodes[id], s = state.get(id); if (!s) return;
+    // Everything fills its panel, examples included. The example graphic keeps its
+    // message small and central so even the widest panel cannot clip it.
+    const base = Math.max(p.width / s.natW, p.height / s.natH);
+    const dw = s.natW * base * s.zoom, dh = s.natH * base * s.zoom;
+    const mx = Math.max(0, (dw - p.width) / 2), my = Math.max(0, (dh - p.height) / 2);
+    if (s.demo) { s.ox = 0; s.oy = 0; }   // examples always sit centred
+    else { s.ox = Math.max(-mx, Math.min(mx, s.ox)); s.oy = Math.max(-my, Math.min(my, s.oy)); }
+    img.setAttribute('x', p.x + (p.width - dw) / 2 + s.ox); img.setAttribute('y', p.y + (p.height - dh) / 2 + s.oy);
+    img.setAttribute('width', dw); img.setAttribute('height', dh);
+    s.dpi = Math.round(T.canvas.dpi * s.natW / dw);
+  }
+  /* ---------- upload ---------- */
+  /* Functions run on Lambda with a ~6 MB request cap, so each photo goes up on
+     its own and is re-encoded first. 5000px on the longest side is deliberate:
+     it still carries a 16 x 24 in print at 300dpi, so this is a transport
+     re-encode, not a downscale of the artwork. */
+  /* Pixels are cheaper to lose than quality: below about 0.75 JPEG artefacts
+     start to show, and the comic styling applied later amplifies them. So give
+     up resolution first and only trade quality once the pixel steps run out. */
+  const ENCODE_LADDER = [[5000, 0.9], [4000, 0.9], [4000, 0.82], [3000, 0.82]];
+  // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
+  // still misses that after the ladder surfaces as a per-panel upload error.
+  const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
+  const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
+  let saveId = null;                 // pendingPersonalisation._id, set by the first upload
+  let uploading = 0;
+
+  const loadImage = (file) => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => res({ im, url });
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file is not an image we can read")); };
+    im.src = url;
+  });
+  const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+
+  async function encodeForUpload(file) {
+    const cv = document.createElement("canvas");
+    const g = cv.getContext ? cv.getContext("2d") : null;
+    if (!g) return file;                        // no canvas: send the original
+    const { im, url } = await loadImage(file);
+    try {
+      const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height;
+      const drawAt = (maxSide) => {
+        const k = Math.min(1, maxSide / Math.max(w0, h0));   // never upscale
+        cv.width = Math.max(1, Math.round(w0 * k));
+        cv.height = Math.max(1, Math.round(h0 * k));
+        g.drawImage(im, 0, 0, cv.width, cv.height);
+      };
+
+      let blob = null, q = 0;
+      for (const [side, quality] of ENCODE_LADDER) {
+        drawAt(side); q = quality;
+        blob = await toBlob(cv, q);
+        if (!blob) return file;
+        if (blob.size <= UPLOAD_TARGET_BYTES) break;
+      }
+      // Pixel steps exhausted; the canvas is at the last rung, so only quality
+      // is left to give. Stop at the floor rather than send mush.
+      while (blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
+        q = Math.round((q - 0.06) * 100) / 100;
+        const next = await toBlob(cv, q);
+        if (!next) break;
+        blob = next;
+      }
+      const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+      return new File([blob], base + ".jpg", { type: "image/jpeg" });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function setUploading(id, on) {
+    const s = state.get(id), n = nodes[id];
+    if (s) s.uploading = on;
+    if (n && n.img) n.img.setAttribute("opacity", on ? 0.45 : 1);
+    uploading += on ? 1 : -1;
+    if (uploading < 0) uploading = 0;
+    if (selected === id) syncPanel();
+    refresh();
+  }
+
+  /* The panel must show, and be measured from, the file that was actually
+     stored -- not the original the customer dropped. Otherwise they position
+     one image while another is kept, and the dpi reading (and the recipe's
+     sourcePx / effectiveDpi) describe a file nobody has. Zoom and offset are
+     in canvas units and the aspect ratio is unchanged, so the framing the
+     customer set is preserved across the swap. */
+  function adoptEncoded(id, encoded) {
+    return new Promise((resolve) => {
+      const s = state.get(id);
+      if (!s || s.demo) return resolve();
+      const url = URL.createObjectURL(encoded), probe = new Image();
+      probe.onload = () => {
+        const old = s.url;
+        s.url = url; s.el = probe; s.file = encoded;
+        s.natW = probe.naturalWidth || s.natW;
+        s.natH = probe.naturalHeight || s.natH;
+        const n = nodes[id];
+        if (n && n.img) n.img.setAttribute("href", url);
+        if (s.cut) { s.cutKey = null; applyCut(id); }   // recut from the stored file
+        if (old && old !== url) { try { URL.revokeObjectURL(old); } catch (e) { /* already gone */ } }
+        layout(id);                                     // recomputes s.dpi from natW
+        if (selected === id) syncPanel();
+        refresh();
+        resolve();
+      };
+      probe.onerror = () => resolve();                  // keep the original rather than blank the panel
+      probe.src = url;
+    });
+  }
+
+  /* One photo, one request -- and one at a time. The first upload creates the
+     document and hands back the id every later one has to carry, so they must
+     not be in flight together: a board drop of twelve would otherwise race and
+     create twelve documents. Queueing also keeps the "N to go" count honest. */
+  let uploadChain = Promise.resolve();
+  function upload(id, file) {
+    setUploading(id, true);        // counted as soon as it is queued
+    const run = async () => {
+      try {
+        const sending = await encodeForUpload(file);
+        const fd = new FormData();
+        fd.append("panelId", id);
+        fd.append("photo", sending, sending.name || (id + ".jpg"));
+        if (saveId) fd.append("id", saveId);
+        if (consentAt) fd.append("consentAt", consentAt);
+        const res = await fetch("/api/personalise-save", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.id) throw new Error(data.error || "Upload failed");
+        saveId = data.id;
+        const s = state.get(id);
+        if (s) { s.key = data.key; s.uploadError = null; }
+        // the stored file is the one the customer should be working with
+        if (sending !== file) await adoptEncoded(id, sending);
+      } catch (e) {
+        const s = state.get(id);
+        if (s) s.uploadError = e.message || "Upload failed";
+      } finally {
+        setUploading(id, false);
+      }
+    };
+    uploadChain = uploadChain.then(run);   // run never rejects
+    return uploadChain;
+  }
+
+  function place(id, file) {
+    if (!hasConsent()) return;          // belt and braces: picker, panel drop, board drop
+    const url = URL.createObjectURL(file), probe = new Image();
+    probe.onload = () => {
+      state.set(id, {
+        url, el: probe, name: file.name, file, natW: probe.naturalWidth, natH: probe.naturalHeight,
+        zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
+      });
+      const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
+      if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
+      if (n.plate) n.plate.setAttribute('opacity', 0);
+      layout(id); select(id); refresh(); palette(probe);
+      upload(id, file);            // goes up now, not at Add to basket
+    };
+    probe.src = url;
+  }
+  /* A panel does two things with the pointer: a press-and-move repositions the
+     photo; a press-and-release without moving opens the file chooser. The same
+     gesture split as a photo app -- tap to change, drag to move. */
+  const CLICK_SLOP = 6;   // px of movement before a press counts as a drag
+  function wire(id) {
+    const hit = nodes[id].hit; let drag = null, moved = false;
+    hit.addEventListener('pointerdown', (e) => {
+      if (moveMode) return;
+      select(id); moved = false;
+      const s = state.get(id); if (!s) return;
+      hit.setPointerCapture(e.pointerId); hit.classList.add('dragging');
+      drag = {
+        px: e.clientX, py: e.clientY, ox: s.ox, oy: s.oy,
+        k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+      };
+    });
+    hit.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      if (!moved && Math.hypot(e.clientX - drag.px, e.clientY - drag.py) < CLICK_SLOP) return;
+      moved = true;
+      const s = state.get(id);
+      s.ox = drag.ox + (e.clientX - drag.px) * drag.k; s.oy = drag.oy + (e.clientY - drag.py) * drag.k; layout(id);
+    });
+    const end = () => { drag = null; hit.classList.remove('dragging'); };
+    hit.addEventListener('pointerup', end); hit.addEventListener('pointercancel', end);
+    // click fires after pointerup; only treat it as "choose a photo" if the
+    // pointer didn't travel -- otherwise it was a reposition
+    hit.addEventListener('click', () => { if (!moveMode && !moved) ask(id); moved = false; });
+    hit.addEventListener('wheel', (e) => {
+      const s = state.get(id); if (!s) return; e.preventDefault();
+      s.zoom = Math.min(3, Math.max(1, s.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
+      layout(id); if (selected === id) syncPanel();
+    }, { passive: false });
+    hit.addEventListener('dragover', (e) => e.preventDefault());
+    hit.addEventListener('drop', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const f = [...e.dataTransfer.files].find((ff) => ff.type.startsWith('image/')); if (f) place(id, f);
+    });
+  }
+  /* ---------- consent ---------- */
+  /* Must be given before the first photo goes in. The timestamp is what ends up
+     on the pendingPersonalisation document as consentAt. */
+  let consentAt = null;
+  const consentBox = $('consent');
+  consentBox.addEventListener('change', () => {
+    if (consentBox.checked) consentAt = consentAt || new Date().toISOString();
+    else consentAt = null;
+    $('consentHint').textContent = consentBox.checked
+      ? 'Thanks — you can add your photos now.'
+      : 'Tick this before adding your first photo.';
+    refresh();
+  });
+  function hasConsent() {
+    if (consentBox.checked) return true;
+    $('consentHint').textContent = 'Please tick this before adding photos.';
+    try { consentBox.focus(); } catch (e) { /* not focusable yet */ }
+    return false;
+  }
+
+  function ask(id) { if (!hasConsent()) return; pickTarget = id; picker.click(); }
+  picker.addEventListener('change', () => {
+    const files = [...picker.files].filter((f) => f.type.startsWith('image/'));
+    if (pickTarget === '__logo__') {
+      if (files[0] && T.logo) {
+        T.logo.href = URL.createObjectURL(files[0]);
+        T.logo.custom = files[0].name;
+        placeLogo();
+      }
+    } else fill(files, pickTarget);
+    picker.value = ''; pickTarget = null;
+  });
+  function fill(files, startId) {
+    if (!files.length) return;
+    const order = T.panels.map((p) => p.id);
+    // A panel showing the seeded example is still empty as far as the customer
+    // is concerned, so dropping several photos onto the board fills those in
+    // order rather than finding nothing to do.
+    const free = (i) => { const s = state.get(i); return !s || s.demo; };
+    const q = startId ? [startId, ...order.filter((i) => i !== startId && free(i))] : order.filter(free);
+    files.forEach((f, i) => { if (q[i]) place(q[i], f); });
+  }
+  board.addEventListener('dragover', (e) => { e.preventDefault(); board.classList.add('dragover'); });
+  board.addEventListener('dragleave', () => board.classList.remove('dragover'));
+  board.addEventListener('drop', (e) => {
+    e.preventDefault(); board.classList.remove('dragover');
+    fill([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')), null);
+  });
+
+  /* ---------- rail ---------- */
+  function select(id) {
+    if (selected && nodes[selected] && nodes[selected].outline) nodes[selected].outline.setAttribute('stroke', '#000');
+    selected = id;
+    if (nodes[id].outline) nodes[id].outline.setAttribute('stroke',
+      getComputedStyle(root).getPropertyValue('--b-accent').trim() || '#EC008C');
+    syncPanel();
+  }
+  function syncPanel() {
+    const n = nodes[selected], s = state.get(selected), flag = $('dpiFlag');
+    $('panelTitle').textContent = T.panels.length > 1 ? `Panel ${String(n.index + 1).padStart(2, '0')}` : 'Image';
+    $('panelEmpty').hidden = !!s; $('panelControls').hidden = !s;
+    if (!s) { flag.hidden = true; return; }
+    $('pSize').textContent = `${n.panel.width} × ${n.panel.height}`;
+    $('pImg').textContent = s.demo ? 'example artwork' : `${s.natW} × ${s.natH}`;
+    $('pDpi').textContent = s.demo ? '—' : `${s.dpi} dpi`;
+    $('zoom').value = s.zoom;
+    $('cutBox').hidden = !(T.bg && T.bg.type === 'image');
+    $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
+    const minDpi = MIN_DPI_BY_FORMAT[fmt] || 150;
+    const surface = DPI_SURFACE[fmt] || 'as a poster';
+    flag.hidden = s.demo || s.dpi >= minDpi;   // the example is not the customer's file
+    flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
+      + `${surface} — try a larger file or zoom out.`;
+    const up = $('uploadHint');
+    up.hidden = !(s.uploading || s.uploadError);
+    up.textContent = s.uploading ? 'Uploading this photo…' : (s.uploadError || '');
+  }
+  function rail() {
+    const tb = $('textFields'); tb.innerHTML = '';
+    $('textBox').hidden = !T.text.length;
+    T.text.forEach((f) => {
+      const w = document.createElement('div'); w.className = 'b-fld';
+      const top = document.createElement('div'); top.className = 'b-fld-top';
+      const lab = document.createElement('span'); lab.className = 'b-fld-lab'; lab.textContent = f.label || f.id;
+      top.appendChild(lab);
+      f.colours.forEach((c, i) => {
+        const ci = document.createElement('input'); ci.type = 'color'; ci.value = c;
+        ci.className = 'b-colour';
+        ci.title = i ? 'Second colour' : 'Text colour';
+        const apply = () => { f.colours[i] = ci.value; layoutText(f); };
+        ci.addEventListener('input', apply); ci.addEventListener('change', apply);
+        top.appendChild(ci);
+      });
+      if (f.stroke !== null && f.stroke !== undefined) {
+        const ks = document.createElement('input'); ks.type = 'color'; ks.value = f.stroke;
+        ks.className = 'b-colour';
+        ks.title = 'Key line colour';
+        const kapply = () => { f.stroke = ks.value; layoutText(f); };
+        ks.addEventListener('input', kapply); ks.addEventListener('change', kapply);
+        top.appendChild(ks);
+      }
+      const row = document.createElement('div'); row.className = 'b-row';
+      const inp = document.createElement('input'); inp.type = 'text'; inp.value = f.value;
+      inp.className = 'b-text';
+      inp.addEventListener('input', () => { f.value = inp.value; layoutText(f); });
+      row.appendChild(inp);
+      if (f.boxRef) {
+        const lk = document.createElement('div'); lk.className = 'b-row';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = f.linked;
+        cb.id = 'lk-' + f.id; cb.className = 'h-[18px] w-[18px] flex-none accent-comic-red';
+        const ll = document.createElement('label'); ll.htmlFor = cb.id; ll.textContent = 'Move with box';
+        ll.className = 'b-lab';
+        cb.addEventListener('change', () => { f.linked = cb.checked; });
+        lk.append(cb, ll); w.appendChild(lk);
+      }
+      const an = document.createElement('div'); an.className = 'b-row';
+      const al = document.createElement('label'); al.textContent = 'Angle'; al.className = 'b-lab';
+      const ar = document.createElement('input'); ar.type = 'range'; ar.min = -30; ar.max = 30; ar.step = 0.5;
+      ar.className = 'b-range';
+      ar.value = f.rot || 0;
+      const av = document.createElement('span');
+      av.className = 'min-w-[34px] text-right font-source text-xs';
+      av.textContent = (f.rot || 0).toFixed(1) + '°';
+      const arApply = () => { f.rot = +ar.value; av.textContent = f.rot.toFixed(1) + '°'; layoutText(f); };
+      ar.addEventListener('input', arApply); ar.addEventListener('change', arApply);
+      an.append(al, ar, av); w.appendChild(an);
+      const sz = document.createElement('div'); sz.className = 'b-row';
+      const sl = document.createElement('label'); sl.textContent = 'Size'; sl.htmlFor = 'sz-' + f.id;
+      sl.className = 'b-lab';
+      const sr = document.createElement('input'); sr.type = 'range'; sr.id = 'sz-' + f.id;
+      sr.className = 'b-range';
+      sr.min = 0.4; sr.max = 2.5; sr.step = 0.01; sr.value = f.sizeScale;
+      const sv = document.createElement('span'); sv.className = 'min-w-[34px] text-right font-source text-xs';
+      sv.textContent = Math.round(f.sizeScale * 100) + '%';
+      sr.addEventListener('input', () => { f.sizeScale = +sr.value; sv.textContent = Math.round(f.sizeScale * 100) + '%'; layoutText(f); });
+      sz.append(sl, sr, sv);
+      w.append(top, row, sz);
+      if (f.stroke) {
+        const kw = document.createElement('div'); kw.className = 'b-row';
+        const kl = document.createElement('label'); kl.textContent = 'Key line'; kl.className = 'b-lab';
+        const kr = document.createElement('input'); kr.type = 'range'; kr.min = 0; kr.max = 2.5; kr.step = 0.05;
+        kr.className = 'b-range';
+        kr.value = f.strokeScale;
+        kr.addEventListener('input', () => { f.strokeScale = +kr.value; layoutText(f); });
+        kw.append(kl, kr); w.appendChild(kw);
+      }
+      tb.appendChild(w);
+    });
+    const bb = $('boxFields'); bb.innerHTML = '';
+    $('boxBox').hidden = !T.boxes.length;
+    T.boxes.forEach((b) => {
+      const w = document.createElement('div'); w.className = 'b-fld';
+      const top = document.createElement('div'); top.className = 'b-fld-top';
+      const lab = document.createElement('span'); lab.className = 'b-fld-lab'; lab.textContent = b.id + ' box';
+      top.appendChild(lab);
+      const regions = b.fills || [{ colour: b.fillColour }];
+      regions.forEach((r, i) => {
+        const ci = document.createElement('input'); ci.type = 'color'; ci.value = r.colour;
+        ci.className = 'b-colour';
+        ci.title = regions.length > 1 ? `Region ${i + 1}` : 'Box colour';
+        const go = () => {
+          r.colour = ci.value; if (!b.fills) b.fillColour = ci.value;
+          nodes['b-' + b.id].fills[i].setAttribute('fill', ci.value);
+        };
+        ci.addEventListener('input', go); ci.addEventListener('change', go);
+        top.appendChild(ci);
+      });
+      const f2 = document.createElement('input'); f2.type = 'color'; f2.value = b.shadowColour; f2.title = 'Box key line colour';
+      f2.className = 'b-colour';
+      const kgo = () => { b.shadowColour = f2.value; nodes['b-' + b.id].sh.setAttribute('fill', f2.value); };
+      f2.addEventListener('input', kgo); f2.addEventListener('change', kgo);
+      top.appendChild(f2); w.appendChild(top); bb.appendChild(w);
+    });
+    $('logoBox').hidden = !T.logo;
+    if (T.logo) $('logoFill').checked = !!T.logo.fillPlate;
+    const solid = T.bg && T.bg.type === 'colour', tintable = T.bg && T.bg.tintable;
+    $('colourBox').hidden = !(solid || tintable);
+    $('colourSolid').hidden = !solid; $('colourTint').hidden = !tintable;
+    $('colourTitle').textContent = solid ? 'Border colour' : 'Border artwork';
+    if (solid) drawSwatches();
+    if (!solid && tintable) applyTint();
+  }
+  $('zoom').addEventListener('input', (e) => { const s = state.get(selected); if (!s) return; s.zoom = +e.target.value; layout(selected); syncPanel(); });
+  $('reset').addEventListener('click', () => { const s = state.get(selected); s.ox = s.oy = 0; s.zoom = 1; layout(selected); syncPanel(); });
+  $('replace').addEventListener('click', () => ask(selected));
+  $('logoPick').addEventListener('click', () => { pickTarget = '__logo__'; picker.click(); });
+  $('logoReset').addEventListener('click', () => {
+    if (!T.logo) return; T.logo.href = DEFAULT_LOGO; T.logo.custom = null; placeLogo();
+  });
+  $('logoFill').addEventListener('change', (e) => {
+    if (!T.logo) return; T.logo.fillPlate = e.target.checked; placeLogo();
+  });
+  $('cutOn').addEventListener('change', (e) => {
+    const s = state.get(selected); if (!s) return;
+    s.cut = e.target.checked; applyCut(selected);
+  });
+  ['tol', 'feather'].forEach((id) => $(id).addEventListener('change', () => {
+    const s = state.get(selected); if (!s) return;
+    s.tol = +$('tol').value; s.feather = +$('feather').value; if (s.cut) applyCut(selected);
+  }));
+  $('clear').addEventListener('click', () => {
+    state.delete(selected); const n = nodes[selected];
+    n.img.setAttribute('opacity', 0); n.img.removeAttribute('href');
+    if (n.num) n.num.setAttribute('opacity', 1);
+    if (n.plate) n.plate.setAttribute('opacity', 1);
+    n.hit.classList.remove('filled'); syncPanel(); refresh();
+  });
+  $('resetTint').addEventListener('click', () => {
+    if (artMap) {
+      artColours = artMap.base.map((c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join(''));
+      repaintArt(); buildArtPickers();
+    }
+  });
+  $('sampleArt').addEventListener('click', () => {
+    const s = state.get(T.panels[0].id); if (!s || !artMap) return;
+    const c = document.createElement('canvas'); c.width = 32; c.height = 22;
+    const g = c.getContext('2d'); g.drawImage(s.el, 0, 0, 32, 22);
+    const px = g.getImageData(0, 0, 32, 22).data, bins = {};
+    for (let i = 0; i < px.length; i += 4) {
+      const k = [px[i], px[i + 1], px[i + 2]].map((v) => Math.round(v / 32) * 32).join(','); bins[k] = (bins[k] || 0) + 1;
+    }
+    const top = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, artColours.length - 1)
+      .map(([k]) => '#' + k.split(',').map((v) => (+v).toString(16).padStart(2, '0')).join(''));
+    top.forEach((hx, i) => { if (artColours[i + 1]) artColours[i + 1] = hx; });
+    repaintArt(); buildArtPickers();
+  });
+
+  const swatchBox = $('swatches');
+  let swatchList = ['#EC008C', '#FFF200', '#00AEEF', '#000000', '#E2A7D6', '#FFFFFF'];
+  function drawSwatches() {
+    swatchBox.innerHTML = '';
+    swatchList.slice(0, 12).forEach((hex) => {
+      const b = document.createElement('button'); b.className = 'b-sw'; b.style.background = hex; b.title = hex;
+      b.setAttribute('aria-pressed', hex.toLowerCase() === (bg || '').toLowerCase());
+      b.addEventListener('click', () => setBg(hex)); swatchBox.appendChild(b);
+    });
+  }
+  function setBg(hex) { bg = hex; if (nodes.bgRect) nodes.bgRect.setAttribute('fill', hex); $('custom').value = hex; drawSwatches(); }
+  $('custom').addEventListener('input', (e) => setBg(e.target.value));
+  function palette(imgEl) {
+    if (!(T.bg && T.bg.type === 'colour')) return;
+    const c = document.createElement('canvas'); c.width = 32; c.height = 22;
+    const g = c.getContext('2d'); if (!g) return;
+    g.drawImage(imgEl, 0, 0, 32, 22);
+    const px = g.getImageData(0, 0, 32, 22).data, bins = {};
+    for (let i = 0; i < px.length; i += 4) { const k = [px[i], px[i + 1], px[i + 2]].map((v) => Math.round(v / 32) * 32).join(','); bins[k] = (bins[k] || 0) + 1; }
+    const top = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([k]) => '#' + k.split(',').map((v) => (+v).toString(16).padStart(2, '0')).join(''));
+    swatchList = [...new Set([...top, ...swatchList])];
+    $('paletteHint').textContent = 'The first colours are pulled from your photo.';
+    drawSwatches();
+  }
+  function refresh() {
+    const w = wrapIn(), sz = T.size;
+    if (sz) {
+      const outW = (sz.w + 2 * w), outH = (sz.h + 2 * w);
+      const aw = ART_WRAP[TK] || 0;
+      $('outSpec').textContent = w
+        ? `${sz.label} face · file ${outW} × ${outH} in incl. ${w}" wrap`
+        : `${sz.label} · file ${sz.w} × ${sz.h} in`;
+      const short = w - aw;
+      $('outWarn').hidden = short <= 0.01;
+      $('outWarn').textContent = short > 0.01
+        ? `This template is drawn with ${aw}" of wrap. A ${w}" wrap needs ${short.toFixed(2)}" more on every edge — the artwork has to be extended before this can be printed.`
+        : '';
+    }
+    const real = [...state.values()].filter((s) => !s.demo).length;
+    $('filled').textContent = `${real} of ${T.panels.length}`;
+    $('download').disabled = real === 0;
+
+    // Every panel must hold a photo the customer actually chose. The example
+    // graphic is seeded into empty panels and does not count.
+    const total = T.panels.length;
+    const btn = $('addBasket');
+    if (btn) {
+      const failed = [...state.values()].filter((s) => !s.demo && s.uploadError).length;
+      btn.disabled = basketBusy || uploading > 0 || failed > 0
+        || !consentBox.checked || real !== total;
+      $('basketHint').textContent = basketBusy ? ''
+        : !consentBox.checked ? 'Tick the consent box to get started.'
+          : uploading > 0 ? `Uploading — ${uploading} photo${uploading === 1 ? '' : 's'} to go…`
+            : failed > 0 ? 'A photo did not upload. Drop it in again to retry.'
+              : real === total ? ''
+                : `Add your own photo to every panel — ${total - real} to go.`;
+    }
+  }
+  /* The preview and the print file are the same document. Rather than rebuilding
+     the scene server-side from numbers -- where any drift means the customer gets
+     something they didn't approve -- the builder exports its own SVG with every
+     asset replaced by a token. The renderer swaps the tokens for full-resolution
+     files and rasterises the identical document. */
+  function exportSVG() {
+    const c = svg.cloneNode(true);
+    c.setAttribute('xmlns', SVGNS);
+    c.removeAttribute('style');
+    // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
+    // artifact, so it must not travel into the exported print document.
+    [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
+    c.querySelectorAll('.hit,[data-role="guide"]').forEach((el) => el.remove());
+    c.querySelectorAll('image').forEach((im) => {
+      const role = im.getAttribute('data-role');
+      const token = role === 'panel' ? `{{IMAGE:${im.getAttribute('data-panel')}}}`
+        : role === 'overlay' ? '{{OVERLAY}}'
+          : role === 'background' ? '{{BACKGROUND}}'
+            : role === 'logo' ? '{{LOGO}}' : null;
+      if (token) im.setAttribute('href', token);
+    });
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    c.setAttribute('width', Math.round(vb[2]));
+    c.setAttribute('height', Math.round(vb[3]));
+    return new XMLSerializer().serializeToString(c);
+  }
+  function recipe() {
+    return {
+      template: TK,
+      canvas: T.canvas,
+      svg: exportSVG(),
+      output: T.size ? {
+        format: fmt, formatLabel: FORMAT_LABEL[fmt],
+        faceInches: [T.size.w, T.size.h], wrapInches: wrapIn(),
+        fileInches: [T.size.w + 2 * wrapIn(), T.size.h + 2 * wrapIn()],
+      } : null,
+      background: T.bg && T.bg.type === 'colour' ? { colour: bg } : T.bg ? { artColours } : null,
+      panels: T.panels.map((p) => {
+        const s = state.get(p.id);
+        return {
+          id: p.id,
+          image: s ? s.name : null,
+          placeholder: !!(s && s.demo),
+          placeholder: !!(s && s.demo),
+          transform: s ? { zoom: +s.zoom.toFixed(4), offsetX: Math.round(s.ox), offsetY: Math.round(s.oy) } : null,
+          sourcePx: s && !s.demo ? [s.natW, s.natH] : null,
+          effectiveDpi: s && !s.demo ? s.dpi : null,
+          removeBackground: s ? { on: s.cut, spread: s.tol, soften: s.feather } : null,
+        };
+      }),
+      boxes: T.boxes.map((b) => ({
+        id: b.id, offset: { x: Math.round(b.dx), y: Math.round(b.dy) },
+        fillColour: b.fillColour, keyLineColour: b.shadowColour,
+      })),
+      logo: T.logo ? {
+        custom: T.logo.custom || null, slot: [T.logo.x, T.logo.y, T.logo.width, T.logo.height],
+        fitted: T.logo.fitted || null, fillPlate: !!T.logo.fillPlate, plateColour: T.logo.bgColour || null,
+      } : null,
+      text: T.text.map((f) => ({
+        id: f.id, value: f.value, colours: f.colours,
+        keyLine: f.stroke || null, keyLineScale: f.strokeScale, sizeScale: f.sizeScale,
+        offset: { x: Math.round(f.dx), y: Math.round(f.dy) },
+        resolvedFontSize: f.resolved, lines: f.lines, font: FONTOF(f.id), rotationDeg: f.rot || 0,
+      })),
+    };
+  }
+  $('copy').addEventListener('click', async (e) => {
+    const t = JSON.stringify(recipe(), null, 2);
+    try { await navigator.clipboard.writeText(t); e.target.textContent = 'Recipe copied'; }
+    catch { e.target.textContent = 'Copy blocked — see console'; console.log(t); }
+    setTimeout(() => { e.target.textContent = 'Copy recipe'; }, 1600);
+  });
+  /* An SVG loaded as an image is sandboxed: it can carry data: URIs but cannot
+     reach the page's blob: URLs. Dropped photos live as blobs, so they came out
+     blank in the draft while the embedded placeholders survived. Convert each one
+     to embedded data (downscaled -- this is a draft) before serialising.
+     Since the template assets moved out to /builder/ they are ordinary URLs and
+     are sandboxed out too, so those are inlined byte-for-byte as well. */
+  const assetDataCache = new Map();
+  async function assetAsDataURI(url) {
+    if (assetDataCache.has(url)) return assetDataCache.get(url);
+    const p = fetch(url)
+      .then((r) => r.blob())
+      .then((b) => new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = rej;
+        fr.readAsDataURL(b);
+      }))
+      .catch(() => null);
+    assetDataCache.set(url, p);
+    return p;
+  }
+  async function draftSVG() {
+    const c = svg.cloneNode(true);
+    c.setAttribute('xmlns', SVGNS);
+    // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
+    // artifact, so it must not travel into the exported print document.
+    [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
+    c.querySelectorAll('.hit,[data-role="guide"]').forEach((el) => el.remove());
+    // the selection highlight is a screen affordance, not part of the artwork
+    c.querySelectorAll('path[stroke]').forEach((p) => {
+      if (p.getAttribute('stroke') !== '#000' && p.getAttribute('fill') === 'none'
+        && p.getAttribute('stroke-width') === '9') p.setAttribute('stroke', '#000');
+    });
+    const toData = (el, maxSide = 1600) => {
+      const k = Math.min(1, maxSide / Math.max(el.naturalWidth || 1, el.naturalHeight || 1));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round((el.naturalWidth || 1) * k));
+      cv.height = Math.max(1, Math.round((el.naturalHeight || 1) * k));
+      const g = cv.getContext('2d'); if (!g) return null;
+      g.drawImage(el, 0, 0, cv.width, cv.height);
+      return cv.toDataURL('image/jpeg', 0.9);
+    };
+    const pending = [];
+    c.querySelectorAll('image').forEach((im) => {
+      const href = im.getAttribute('href') || '';
+      if (href.startsWith('data:')) return;
+      const role = im.getAttribute('data-role');
+      if (href.startsWith('blob:')) {
+        let src = null;
+        if (role === 'panel') {
+          const s = state.get(im.getAttribute('data-panel'));
+          if (s) { if (s.cut && s.cutUrl) src = s.cutUrl; else if (s.el) src = toData(s.el); }
+        } else if (role === 'logo' && nodes.logo) {
+          const probe = new Image(); probe.src = href;
+          if (probe.complete && probe.naturalWidth) src = toData(probe, 800);
+        }
+        if (src) im.setAttribute('href', src);
+        return;
+      }
+      // an ordinary URL (/builder/...): inline it losslessly or it drops out
+      pending.push(assetAsDataURI(href).then((d) => { if (d) im.setAttribute('href', d); }));
+    });
+    await Promise.all(pending);
+    return new XMLSerializer().serializeToString(c);
+  }
+  $('download').addEventListener('click', async () => {
+    const s = await draftSVG();
+    const blob = new Blob([s], { type: 'image/svg+xml' });
+    const img = new Image(); const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const c = T.canvas, k = 1400 / Math.max(c.width, c.height);
+      const cv = document.createElement('canvas'); cv.width = Math.round(c.width * k); cv.height = Math.round(c.height * k);
+      const g = cv.getContext('2d'); g.drawImage(img, 0, 0, cv.width, cv.height);
+      g.save(); g.globalAlpha = 0.18; g.fillStyle = '#000';
+      g.font = `700 ${Math.round(cv.width / 16)}px ui-sans-serif,system-ui,sans-serif`;
+      g.textAlign = 'center'; g.translate(cv.width / 2, cv.height / 2); g.rotate(-Math.PI / 9);
+      g.fillText('DRAFT — no comic effect applied', 0, 0); g.restore();
+      cv.toBlob((b) => {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+        a.download = `${TK}-draft.png`; a.click();
+      });
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
+  /* ---------- add to basket ---------- */
+  /* Saves the build first -- recipe, scene and the photos themselves -- then puts a
+     line in the basket carrying the returned pendingPersonalisation id. The photos
+     go to Netlify Blobs via the function; they never touch Sanity. */
+  let basketBusy = false;
+  $('addBasket').addEventListener('click', async () => {
+    if (basketBusy) return;
+    const filled = T.panels
+      .map((p) => [p.id, state.get(p.id)])
+      .filter(([, s]) => s && !s.demo && s.file);
+    if (filled.length !== T.panels.length || !consentBox.checked) return;
+    if (uploading > 0 || !saveId) return;      // nothing to attach the brief to yet
+
+    const btn = $('addBasket'), hint = $('basketHint');
+    basketBusy = true; btn.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Saving…';
+    hint.textContent = 'Saving your artwork…';
+    try {
+      // the photos went up as they were dropped; this posts only the brief
+      const fd = new FormData();
+      fd.append('id', saveId);
+      fd.append('recipe', JSON.stringify(recipe()));
+      fd.append('notes', $('notes').value || '');
+
+      const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.id) throw new Error(data.error || 'Could not save your artwork');
+
+      const sizeIdx = Math.max(0, (T.sizes || []).indexOf(T.size));
+      const cartFormat = CART_FORMAT[fmt] || 'poster';
+      const cartSize = CART_SIZE[sizeIdx] || 'large';
+      // the same photo may fill several panels, so count the distinct files
+      const photos = new Set(filled.map(([, s]) =>
+        `${s.file.name}|${s.file.size}|${s.file.lastModified}`)).size;
+      const description = [TEMPLATE_WORD[TK] || T.name, T.size ? T.size.label : '',
+        FORMAT_WORD[fmt] || fmt, `${photos} photo${photos === 1 ? '' : 's'}`]
+        .filter(Boolean).join(' · ');
+
+      // the host page already publishes the product identity for its own cart button
+      const pd = document.getElementById('product-data');
+      const ds = (pd && pd.dataset) || {};
+      const { addToCart } = await import('../stores/cart');
+      addToCart({
+        productId: ds.productId || TK,
+        slug: ds.productSlug || TK,
+        title: ds.productTitle || TEMPLATE_WORD[TK] || T.name,
+        format: cartFormat,
+        size: cartSize,
+        quantity: 1,
+        unitPrice: (PRICES[cartFormat] || {})[cartSize] + (PERSONALISATION_FEE[TK] || 0),
+        accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
+        imageUrl: ds.productImage || '',
+        personalisationId: saveId,
+        description,
+      });
+      btn.textContent = 'Added to basket';
+      hint.textContent = 'Saved. You can keep building and add another.';
+      setTimeout(() => { btn.textContent = label; }, 2000);
+    } catch (e) {
+      btn.textContent = label;
+      hint.textContent = e.message || 'Something went wrong saving your artwork.';
+    } finally {
+      basketBusy = false;
+      refresh();
+    }
+  });
+
+  if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
+  load(INITIAL);
+  try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }
+
+  return { MODE };
+}

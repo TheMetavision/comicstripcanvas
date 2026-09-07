@@ -1,12 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
-import { allProductsQuery, productBySlugQuery } from '../../lib/queries';
-import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
+import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
+import { PRICES, FORMAT_LABELS, SIZES, PERSONALISATION_FEE } from '../../data/products';
+import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
 export async function getStaticPaths() {
-  const products = await sanityClient.fetch(allProductsQuery);
+  const products = await sanityClient.fetch(allProductSlugsQuery);
   return products.map((product: any) => ({
     params: { slug: product.slug },
   }));
@@ -38,6 +39,19 @@ const hasImages = product.images && product.images.length > 0;
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
+
+// The three personalised products each open the builder on their own template.
+// Orientation and full-bleed variants are switches inside the builder itself.
+const BUILDER_TEMPLATE: Record<string, 'strip' | 'cover' | 'icon-portrait'> = {
+  'personalised-strips': 'strip',
+  'personalised-book-covers': 'cover',
+  'personalised-icons': 'icon-portrait',
+};
+const builderTemplate = BUILDER_TEMPLATE[product.slug];
+
+const personalisationFee = builderTemplate ? PERSONALISATION_FEE[builderTemplate] : undefined;
+const personalisedFrom =
+  personalisationFee !== undefined ? PRICES.poster.small + personalisationFee : undefined;
 
 const relatedProducts = product.relatedProducts || [];
 const seoTitle = product.seo?.metaTitle || product.title;
@@ -120,57 +134,79 @@ const seoDesc = product.seo?.metaDescription || product.description;
             {product.title}
           </h1>
 
-          <div id="current-price" class="price-tag text-3xl mb-4">
-            From £{basePrice.toFixed(2)}
-          </div>
-          <p class="font-source text-gray-400 text-sm mb-4">Posters from £9.99 &middot; Canvas from £26.99 &mdash; choose your format below</p>
+          {product.isPersonalised && personalisedFrom !== undefined ? (
+            <Fragment>
+              {/* The builder owns format, size and the artwork fee here, so this is a
+                  static "from" price. Deliberately no id="current-price": that is the
+                  hook updatePrice() writes to, and it must not flatten this copy. */}
+              <div class="price-tag text-3xl mb-1">From £{personalisedFrom.toFixed(2)}</div>
+              <p class="font-source text-gray-400 text-sm mb-4">
+                Posters from £{PRICES.poster.small.toFixed(2)}, canvas from £{PRICES['canvas-standard'].small.toFixed(2)},
+                plus £{personalisationFee} personalisation. Choose your size and format in the builder.
+              </p>
+            </Fragment>
+          ) : (
+            <Fragment>
+              <div id="current-price" class="price-tag text-3xl mb-4">
+                From £{basePrice.toFixed(2)}
+              </div>
+              <p class="font-source text-gray-400 text-sm mb-4">Posters from £9.99 &middot; Canvas from £26.99 &mdash; choose your format below</p>
+            </Fragment>
+          )}
 
           <p class="font-source text-gray-300 leading-relaxed text-base mb-8">{product.description}</p>
 
-          <!-- Format Selector -->
-          <div class="mb-6">
-            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Print Format</h3>
-            <div class="grid grid-cols-3 gap-2">
-              {(Object.entries(FORMAT_LABELS) as [ProductFormat, string][]).map(([key, label]) => (
-                <button
-                  class="format-btn border-4 border-black bg-panel-dark py-3 px-2 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
-                  data-format={key}
-                  style="box-shadow: 2px 2px 0 #000;">
-                  {label}
-                </button>
-              ))}
+          {/* Personalised products are configured and priced in the builder below,
+             which owns format, size and the artwork fee. Showing the standard
+             purchase block here would let one be bought with no layout and no fee. */}
+          {!product.isPersonalised && (
+            <Fragment>
+            <!-- Format Selector -->
+            <div class="mb-6">
+              <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Print Format</h3>
+              <div class="grid grid-cols-3 gap-2">
+                {(Object.entries(FORMAT_LABELS) as [ProductFormat, string][]).map(([key, label]) => (
+                  <button
+                    class="format-btn border-4 border-black bg-panel-dark py-3 px-2 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
+                    data-format={key}
+                    style="box-shadow: 2px 2px 0 #000;">
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <!-- Size Selector -->
-          <div class="mb-6">
-            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
-            <div class="grid grid-cols-3 gap-2">
-              {(Object.entries(SIZES) as [ProductSize, string][]).map(([key, label]) => (
-                <button
-                  class="size-btn border-4 border-black bg-panel-dark py-3 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
-                  data-size={key}
-                  style="box-shadow: 2px 2px 0 #000;">
-                  {label}
-                </button>
-              ))}
+            <!-- Size Selector -->
+            <div class="mb-6">
+              <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
+              <div class="grid grid-cols-3 gap-2">
+                {(Object.entries(SIZES) as [ProductSize, string][]).map(([key, label]) => (
+                  <button
+                    class="size-btn border-4 border-black bg-panel-dark py-3 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
+                    data-size={key}
+                    style="box-shadow: 2px 2px 0 #000;">
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <!-- Quantity -->
-          <div class="mb-8">
-            <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Quantity</h3>
-            <div class="flex items-center gap-0">
-              <button id="qty-dec" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">-</button>
-              <span id="qty-display" class="w-12 h-10 bg-charcoal border-y-4 border-black text-off-white font-russo text-sm flex items-center justify-center">1</span>
-              <button id="qty-inc" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">+</button>
+            <!-- Quantity -->
+            <div class="mb-8">
+              <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Quantity</h3>
+              <div class="flex items-center gap-0">
+                <button id="qty-dec" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">-</button>
+                <span id="qty-display" class="w-12 h-10 bg-charcoal border-y-4 border-black text-off-white font-russo text-sm flex items-center justify-center">1</span>
+                <button id="qty-inc" class="w-10 h-10 bg-panel-dark border-4 border-black text-off-white font-bold text-lg hover:bg-comic-red transition-colors">+</button>
+              </div>
             </div>
-          </div>
 
-          <!-- Add to Cart -->
-          <button id="add-to-cart" class="btn-primary w-full text-xl text-center mb-4">
-            ADD TO CART
-          </button>
+            <!-- Add to Cart -->
+            <button id="add-to-cart" class="btn-primary w-full text-xl text-center mb-4">
+              ADD TO CART
+            </button>
+            </Fragment>
+          )}
 
           {!product.isPersonalised && (
             <a href="/personalise" class="btn-secondary w-full text-xl text-center block mb-4">
@@ -193,6 +229,17 @@ const seoDesc = product.seo?.metaDescription || product.description;
           </div>
         </div>
       </div>
+
+      {builderTemplate && (
+        <div id="builder" class="mt-12">
+          <h2 class="section-heading mb-3">BUILD YOUR ARTWORK</h2>
+          <p class="font-source text-gray-400 text-sm mb-6 max-w-2xl">
+            Drop your photos in, set your wording and choose your size. Download a draft to check
+            it over before you order.
+          </p>
+          <ProductBuilder template={builderTemplate} mode="customer" />
+        </div>
+      )}
     </div>
   </section>
 
@@ -320,7 +367,10 @@ const seoDesc = product.seo?.metaDescription || product.description;
 
     if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');
     if (sizeBtns[0]) activateBtn(sizeBtns, sizeBtns[0], 'border-comic-yellow');
-    updatePrice();
+    // updatePrice() exists to reflect the selected format and size. Personalised
+    // products have neither -- the builder owns pricing -- so it must not run and
+    // overwrite the rendered "from" copy with a flat figure.
+    if (formatBtns.length && sizeBtns.length) updatePrice();
 
     document.getElementById('add-to-cart')?.addEventListener('click', async () => {
       const { addToCart } = await import('../../stores/cart');

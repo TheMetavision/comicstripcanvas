@@ -20,6 +20,17 @@ export const PRICES: Record<ProductFormat, Record<ProductSize, number>> = {
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
+// Artwork fee for a personalised build, by builder template. Mirrors
+// resolveStyle() in netlify/functions/personalise.mjs, which is what actually
+// charges the customer -- keep these in sync.
+export const PERSONALISATION_FEE: Record<string, number> = {
+  strip: 25,
+  cover: 10,
+  'cover-fullbleed': 10,
+  'icon-portrait': 10,
+  'icon-landscape': 10,
+};
+
 export const SIZES: Record<ProductSize, string> = {
   small: 'Small (12x8")',
   medium: 'Medium (16x12")',

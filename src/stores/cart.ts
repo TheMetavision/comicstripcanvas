@@ -14,6 +14,10 @@ export interface CartItem {
   unitPrice: number;
   accentColor: string;
   imageUrl?: string;
+  /** pendingPersonalisation._id, when this line was built in the product builder. */
+  personalisationId?: string;
+  /** e.g. "Comic cover · 16 × 24 in · gallery wrap · 1 photo" */
+  description?: string;
 }
 
 // Free postage threshold — single source of truth for CSC.
@@ -49,9 +53,17 @@ export const amountToFreeShipping = computed(cartTotal, (total) =>
 
 export function addToCart(item: Omit<CartItem, 'id'>) {
   const current = cartItems.get();
-  const existing = current.find(
-    (i) => i.productId === item.productId && i.format === item.format && i.size === item.size
-  );
+  // Every personalised build is unique -- two covers at the same size and format
+  // are different artwork -- so those lines must never merge into one another.
+  const existing = item.personalisationId
+    ? undefined
+    : current.find(
+        (i) =>
+          !i.personalisationId &&
+          i.productId === item.productId &&
+          i.format === item.format &&
+          i.size === item.size
+      );
   if (existing) {
     cartItems.set(
       current.map((i) =>
@@ -59,7 +71,10 @@ export function addToCart(item: Omit<CartItem, 'id'>) {
       )
     );
   } else {
-    cartItems.set([...current, { ...item, id: `${item.productId}-${item.format}-${item.size}-${Date.now()}` }]);
+    const id = item.personalisationId
+      ? `${item.personalisationId}`
+      : `${item.productId}-${item.format}-${item.size}-${Date.now()}`;
+    cartItems.set([...current, { ...item, id }]);
   }
   cartOpen.set(true);
 }
