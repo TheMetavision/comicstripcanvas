@@ -43,6 +43,8 @@ const structure = (S: any) =>
       // order-in-progress record, so it is grouped by where each one has got to
       // rather than listed flat.
       S.listItem()
+        // explicit id so the order email can deep-link to this list
+        .id('personalisations')
         .title('Personalisations')
         .icon(() => '\u{1F3A8}')
         .child(

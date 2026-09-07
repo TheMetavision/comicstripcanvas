@@ -36,6 +36,8 @@ const BRAND = {
   cyan: '#00AEEF',
   dark: '#111111',
   site: 'https://comicstripcanvas.co.uk',
+  studio: 'https://comicstripcanvas.sanity.studio',
+  studioPersonalisations: 'https://comicstripcanvas.sanity.studio/structure/personalisations',
 };
 
 const ORDER_COUNTER_ID = 'orderCounter';
@@ -584,12 +586,20 @@ async function fulfilOrder(session) {
                 
                 <div style="margin-top: 24px; padding: 20px; background: #f0fff0; border-radius: 8px; border-left: 4px solid #28a745;">
                   <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #28a745;">Action Required</strong><br/><br/>
+                  ${builderPersonalised ? `
+                  <p style="color: #444; line-height: 1.7; margin: 0; font-size: 14px;">
+                    This order was built by the customer in the product builder. Their approved
+                    layout, photos and notes are on the
+                    <a href="${BRAND.studioPersonalisations}" style="color: ${BRAND.pink}; font-weight: bold;">Personalisations</a>
+                    entry in the Studio (Needs attention). The print file is produced by the render
+                    job and appears on the same entry once ready &mdash; nothing to prepare by hand.
+                  </p>` : `
                   <ol style="color: #444; line-height: 2; margin: 0; padding-left: 20px; font-size: 14px;">
-                    <li>Open <a href="https://comicstripcanvas.sanity.studio" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
+                    <li>Open <a href="${BRAND.studio}" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
                     ${isPersonalised
                       ? '<li>Download customer photos from links above</li><li>Create the custom artwork from the brief</li><li>Print and dispatch, then add tracking and update status to "Dispatched"</li>'
                       : '<li>Prepare artwork for printing</li><li>Update status to "In Production"</li><li>Add tracking and update to "Dispatched"</li>'}
-                  </ol>
+                  </ol>`}
                 </div>
                 
                 <p style="color: #aaa; margin-top: 20px; font-size: 11px;">
