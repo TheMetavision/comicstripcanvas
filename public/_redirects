@@ -3,22 +3,22 @@
 /index.php/product/:slug  /store/:slug/  301
 
 # CATEGORY PAGES — comic icons
-/category/comic-icons  /comic-book-icons  301
-/category/comic-icons/*  /comic-book-icons  301
-/index.php/category/comic-icons  /comic-book-icons  301
-/index.php/category/comic-icons/*  /comic-book-icons  301
+/category/comic-icons  /store/comic-book-icons/  301
+/category/comic-icons/*  /store/comic-book-icons/  301
+/index.php/category/comic-icons  /store/comic-book-icons/  301
+/index.php/category/comic-icons/*  /store/comic-book-icons/  301
 
 # CATEGORY PAGES — comic book covers
-/category/comic-book-covers  /comic-book-covers  301
-/category/comic-book-covers/*  /comic-book-covers  301
-/index.php/category/comic-book-covers  /comic-book-covers  301
-/index.php/category/comic-book-covers/*  /comic-book-covers  301
+/category/comic-book-covers  /store/comic-book-covers/  301
+/category/comic-book-covers/*  /store/comic-book-covers/  301
+/index.php/category/comic-book-covers  /store/comic-book-covers/  301
+/index.php/category/comic-book-covers/*  /store/comic-book-covers/  301
 
 # CATEGORY PAGES — comic strips
-/category/comic-strips  /comic-book-strips  301
-/category/comic-strips/*  /comic-book-strips  301
-/index.php/category/comic-strips  /comic-book-strips  301
-/index.php/category/comic-strips/*  /comic-book-strips  301
+/category/comic-strips  /store/comic-book-strips/  301
+/category/comic-strips/*  /store/comic-book-strips/  301
+/index.php/category/comic-strips  /store/comic-book-strips/  301
+/index.php/category/comic-strips/*  /store/comic-book-strips/  301
 
 # PRODUCTS LISTING PAGES
 /products  /  301
@@ -35,8 +35,8 @@
 /index.php/page/what-we-do  /services  301
 
 # ZYRO SUFFIX URLS — PLACEHOLDER ARTWORK NAMES
-/artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /comic-book-covers  301
-/artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes  /comic-book-icons  301
+/artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/comic-book-covers/  301
+/artwork-name-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/comic-book-icons/  301
 
 # ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (original 6)
 /deadpool-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/deadpool-icon/  301
@@ -48,7 +48,7 @@
 # ZYRO SUFFIX URLS — EXPLICIT PRODUCT REDIRECTS (appended 2026-04-22)
 /marty-mcfly-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/marty-mcfly-cover/  301
 /audrey-hepburn-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/audrey-hepburn/  301
-/mark-renton-trainspotting-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/mark-renton-trainspotting/  301
+/mark-renton-trainspotting-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/trainspotting/  301
 /xxx-tentacion-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/xxxtentacion/  301
 /bricktop-snatch-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/bricktop/  301
 /bruno-mars-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/bruno-mars/  301
@@ -65,7 +65,7 @@
 /usain-bolt-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/usain-bolt-cover/  301
 /zz-top-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/zz-top/  301
 /gremlins-comic-strip-art-available-in-3-formats-and-3-different-sizes  /store/gremlins/  301
-/ronaldo-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/ronaldo/  301
+/ronaldo-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/comic-book-icons/  301
 /diego-maradona-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/diego-maradona/  301
 /leo-messi-comic-icons-art-available-in-3-formats-and-3-different-sizes  /store/leo-messi-icon/  301
 
