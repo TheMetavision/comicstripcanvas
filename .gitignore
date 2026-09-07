@@ -25,3 +25,7 @@ pnpm-debug.log*
 
 # Local Netlify folder
 .netlify
+
+tools/builder/renderer/run/*
+!tools/builder/renderer/run/.gitkeep
+tools/builder/renderer/node_modules/
