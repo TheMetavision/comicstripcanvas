@@ -112,6 +112,9 @@ export default async (req, context) => {
     // travels through Stripe metadata.
     const pendingDoc = await sanity.create({
       _type: 'pendingPersonalisation',
+      // created as the customer starts checkout, so it is awaiting payment.
+      // Nothing should ever land without a status -- the Studio groups on it.
+      status: 'awaiting_payment',
       style: styleConfig.label,
       customerTitle,
       captionText,

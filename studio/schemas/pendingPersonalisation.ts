@@ -16,6 +16,10 @@ import { defineType, defineField } from 'sanity';
  * Documents that are never claimed (customer abandoned checkout) can be safely
  * bulk-deleted at any time — they contain no payment information.
  *
+ * These are NOT throwaway any more. They are the order-in-progress record for
+ * builder-made artwork, and the Studio lists them under Personalisations,
+ * grouped by status.
+ *
  * netlify/functions/personalise-save.mjs also creates these, from the product
  * builder, at "Add to basket" time — before any payment. Those carry the built
  * scene (recipe + sceneSvg) and Netlify Blob keys for the customer's photos.
@@ -23,11 +27,25 @@ import { defineType, defineField } from 'sanity';
  * IMPORTANT: customer photos are never uploaded to Sanity's asset library. Only
  * their Blob keys are stored here, in photoKeys / styledKeys.
  */
+const STATUSES = [
+  { title: 'Draft', value: 'draft' },
+  { title: 'Awaiting payment', value: 'awaiting_payment' },
+  { title: 'Paid', value: 'paid' },
+  { title: 'Preparing', value: 'preparing' },
+  { title: 'Rendered', value: 'rendered' },
+  { title: 'Approved', value: 'approved' },
+  { title: 'In production', value: 'in_production' },
+  { title: 'Dispatched', value: 'dispatched' },
+  { title: 'On hold', value: 'on_hold' },
+];
+const STATUS_TITLE: Record<string, string> = Object.fromEntries(
+  STATUSES.map((s) => [s.value, s.title])
+);
+
 export default defineType({
   name: 'pendingPersonalisation',
   title: 'Pending Personalisation',
   type: 'document',
-  // Hidden from the main Studio desk structure — these are transient.
   fields: [
     defineField({
       name: 'style',
@@ -123,7 +141,7 @@ export default defineType({
       type: 'number',
       readOnly: true,
       description:
-        'The worst effective DPI across all panels. Below 150 the print will look soft.',
+        'The worst effective DPI across all panels. What counts as soft depends on the output: below 150 for a poster print, below 100 for either canvas wrap.',
     }),
     defineField({
       name: 'status',
@@ -131,20 +149,25 @@ export default defineType({
       type: 'string',
       initialValue: 'draft',
       options: {
-        list: [
-          { title: 'Draft', value: 'draft' },
-          { title: 'Awaiting payment', value: 'awaiting_payment' },
-          { title: 'Paid', value: 'paid' },
-          { title: 'Preparing', value: 'preparing' },
-          { title: 'Rendered', value: 'rendered' },
-          { title: 'Approved', value: 'approved' },
-          { title: 'In production', value: 'in_production' },
-          { title: 'Dispatched', value: 'dispatched' },
-          { title: 'On hold', value: 'on_hold' },
-        ],
+        list: STATUSES,
         layout: 'dropdown',
       },
     }),
+    // ── stamped by the Stripe webhook once the order is paid ──────────────
+    defineField({
+      name: 'stripeSessionId',
+      title: 'Stripe Session',
+      type: 'string',
+      readOnly: true,
+    }),
+    defineField({
+      name: 'orderId',
+      title: 'Order',
+      type: 'string',
+      readOnly: true,
+      description: 'The order document this build was paid for on.',
+    }),
+
     defineField({
       name: 'photoKeys',
       title: 'Photo Blob Keys',
@@ -188,11 +211,19 @@ export default defineType({
       date: 'createdAt',
       status: 'status',
       template: 'templateId',
+      printSize: 'printSize',
     },
-    prepare({ title, style, date, status, template }) {
+    prepare({ title, style, date, status, template, printSize }) {
+      // status · template · print size · date
+      const parts = [
+        STATUS_TITLE[status] || status,
+        template || style,
+        printSize,
+        date ? new Date(date).toLocaleDateString('en-GB') : null,
+      ].filter(Boolean);
       return {
         title: title || 'Pending personalisation',
-        subtitle: `${status ? status + ' — ' : ''}${style || template || '—'} — ${date ? new Date(date).toLocaleString('en-GB') : ''}`,
+        subtitle: parts.join(' · '),
       };
     },
   },

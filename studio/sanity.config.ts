@@ -2,6 +2,16 @@ import { defineConfig } from 'sanity';
 import { structureTool } from 'sanity/structure';
 import { schemaTypes } from './schemas';
 
+// A personalisation group: one workflow stage, newest first.
+const personalisations = (S: any, title: string, filter: string, params?: any) => {
+  let list = S.documentTypeList('pendingPersonalisation')
+    .title(title)
+    .filter(filter)
+    .defaultOrdering([{ field: 'createdAt', direction: 'desc' }]);
+  if (params) list = list.params(params);
+  return S.listItem().title(title).child(list);
+};
+
 // Custom desk structure for singleton + grouped document types
 const structure = (S: any) =>
   S.list()
@@ -27,6 +37,36 @@ const structure = (S: any) =>
           S.documentTypeList('order')
             .title('Orders')
             .defaultOrdering([{ field: 'createdAt', direction: 'desc' }])
+        ),
+
+      // Personalisations — artwork built in the product builder. This is the
+      // order-in-progress record, so it is grouped by where each one has got to
+      // rather than listed flat.
+      S.listItem()
+        // explicit id so the order email can deep-link to this list
+        .id('personalisations')
+        .title('Personalisations')
+        .icon(() => '\u{1F3A8}')
+        .child(
+          S.list()
+            .title('Personalisations')
+            .items([
+              personalisations(S, 'Needs attention',
+                '_type == "pendingPersonalisation" && status in $s',
+                { s: ['paid', 'preparing', 'rendered', 'on_hold'] }),
+              personalisations(S, 'In production',
+                '_type == "pendingPersonalisation" && status in $s',
+                { s: ['approved', 'in_production'] }),
+              personalisations(S, 'Dispatched',
+                '_type == "pendingPersonalisation" && status == "dispatched"'),
+              S.divider(),
+              // Abandoned or unpaid builds: kept visible rather than hidden, but last.
+              // Documents from the older checkout flow (personalise.mjs) carry no
+              // status at all, so they are folded in here instead of being unreachable.
+              personalisations(S, 'Drafts',
+                '_type == "pendingPersonalisation" && (status in $s || !defined(status))',
+                { s: ['draft', 'awaiting_payment'] }),
+            ])
         ),
 
       // Contact Submissions (separate workflow from Orders — public enquiries)

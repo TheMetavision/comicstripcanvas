@@ -36,9 +36,67 @@ const BRAND = {
   cyan: '#00AEEF',
   dark: '#111111',
   site: 'https://comicstripcanvas.co.uk',
+  studio: 'https://comicstripcanvas.sanity.studio',
+  studioPersonalisations: 'https://comicstripcanvas.sanity.studio/structure/personalisations',
 };
 
 const ORDER_COUNTER_ID = 'orderCounter';
+
+/**
+ * Mark every personalised build on a paid session, and kick off its render.
+ *
+ * checkout.mjs stamps personalisationId onto each personalised line item's
+ * product metadata, so the builds are recoverable from the session with no
+ * metadata size limit. Exported so it can be exercised on its own.
+ */
+export async function settlePersonalisations({ session, orderId, orderNumber, lineItems, deps }) {
+  const { sanity: db = sanity, fetch: http = fetch, siteUrl = process.env.URL
+    || process.env.SITE_URL || 'https://comicstripcanvas.co.uk' } = deps || {};
+
+  const ids = [...new Set(
+    (lineItems || [])
+      .map((li) => li.price?.product?.metadata?.personalisationId)
+      .filter(Boolean)
+  )];
+  if (!ids.length) return [];
+
+  const results = [];
+  for (const id of ids) {
+    try {
+      await db
+        .patch(id)
+        .set({ status: 'paid', stripeSessionId: session.id, orderId, orderNumber })
+        .commit();
+    } catch (err) {
+      // Never fail the order for this: the payment is taken and the order
+      // exists. Surface it loudly instead so it can be picked up by hand.
+      console.error(`Could not mark personalisation ${id} paid:`, err.message);
+      results.push({ id, marked: false, rendered: false, error: err.message });
+      continue;
+    }
+
+    // The renderer does not exist yet. Ask for it anyway so the wiring is real,
+    // and say so plainly when it is not there rather than failing silently.
+    let rendered = false;
+    try {
+      const res = await http(`${siteUrl}/api/render-personalisation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, orderId, orderNumber }),
+      });
+      rendered = res.ok;
+      if (res.status === 404) {
+        console.log(`Render for ${id} not triggered: /api/render-personalisation returned 404 (function not deployed yet).`);
+      } else if (!res.ok) {
+        console.error(`Render for ${id} failed: ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`Could not reach the render function for ${id}:`, err.message);
+    }
+    results.push({ id, marked: true, rendered });
+  }
+  return results;
+}
 
 /**
  * Atomically allocate the next order number, e.g. "CSC-1001".
@@ -94,7 +152,11 @@ async function fulfilOrder(session) {
         return new Response('Already processed', { status: 200 });
       }
 
-      const isPersonalised = session.metadata?.isPersonalised === 'true';
+      // The old /personalise flow announces itself in session metadata. Builder
+      // lines do not -- each carries personalisationId on its own line item -- so
+      // this flag selects the old code path and nothing else.
+      const legacyPersonalised = session.metadata?.isPersonalised === 'true';
+      let builderPersonalised = false;
 
       // Stripe API 2025+ moved shipping details under collected_information
       const shipping =
@@ -126,7 +188,7 @@ async function fulfilOrder(session) {
       // email copy can be tailored (no Name/Title or Caption references).
       let isStrip = false;
 
-      if (isPersonalised) {
+      if (legacyPersonalised) {
         const style = session.metadata?.style || '';
         const format = session.metadata?.format || '';
         const size = session.metadata?.size || '';
@@ -204,6 +266,12 @@ async function fulfilOrder(session) {
           limit: 100,
         });
 
+        // An order is personalised if anything in it was built in the builder,
+        // whatever the session metadata does or does not say.
+        builderPersonalised = stripeItems.data.some(
+          (li) => li.price?.product?.metadata?.personalisationId
+        );
+
         const stdItems = stripeItems.data.map((li) => {
           const meta = li.price?.product?.metadata || {};
           return {
@@ -239,6 +307,8 @@ async function fulfilOrder(session) {
           )
           .join('');
       }
+
+      const isPersonalised = legacyPersonalised || builderPersonalised;
 
       // Allocate the human-readable order number. If allocation fails, throw so
       // the outer handler returns 500 and Stripe retries — the idempotency guard
@@ -304,6 +374,24 @@ async function fulfilOrder(session) {
         } catch (err) {
           console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
         }
+      }
+
+      // Builder-made lines: mark each build paid and start its render. Runs after
+      // the order is persisted so a retry can never render against no order.
+      try {
+        const paidLines = await stripe.checkout.sessions.listLineItems(session.id, {
+          expand: ['data.price.product'],
+          limit: 100,
+        });
+        const settled = await settlePersonalisations({
+          session, orderId, orderNumber, lineItems: paidLines.data,
+        });
+        if (settled.length) {
+          console.log(`Settled ${settled.length} personalisation(s) for ${orderNumber}: `
+            + settled.map((s) => `${s.id}=${s.marked ? 'paid' : 'FAILED'}/${s.rendered ? 'render queued' : 'no render'}`).join(', '));
+        }
+      } catch (err) {
+        console.error('Could not settle personalisations for', session.id, err.message);
       }
 
       // ── Email templates ──────────────────────────────────────
@@ -498,12 +586,20 @@ async function fulfilOrder(session) {
                 
                 <div style="margin-top: 24px; padding: 20px; background: #f0fff0; border-radius: 8px; border-left: 4px solid #28a745;">
                   <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #28a745;">Action Required</strong><br/><br/>
+                  ${builderPersonalised ? `
+                  <p style="color: #444; line-height: 1.7; margin: 0; font-size: 14px;">
+                    This order was built by the customer in the product builder. Their approved
+                    layout, photos and notes are on the
+                    <a href="${BRAND.studioPersonalisations}" style="color: ${BRAND.pink}; font-weight: bold;">Personalisations</a>
+                    entry in the Studio (Needs attention). The print file is produced by the render
+                    job and appears on the same entry once ready &mdash; nothing to prepare by hand.
+                  </p>` : `
                   <ol style="color: #444; line-height: 2; margin: 0; padding-left: 20px; font-size: 14px;">
-                    <li>Open <a href="https://comicstripcanvas.sanity.studio" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
+                    <li>Open <a href="${BRAND.studio}" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
                     ${isPersonalised
                       ? '<li>Download customer photos from links above</li><li>Create the custom artwork from the brief</li><li>Print and dispatch, then add tracking and update status to "Dispatched"</li>'
                       : '<li>Prepare artwork for printing</li><li>Update status to "In Production"</li><li>Add tracking and update to "Dispatched"</li>'}
-                  </ol>
+                  </ol>`}
                 </div>
                 
                 <p style="color: #aaa; margin-top: 20px; font-size: 11px;">
