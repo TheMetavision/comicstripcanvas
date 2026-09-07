@@ -840,7 +840,7 @@ export function initProductBuilder() {
   /* Pixels are cheaper to lose than quality: below about 0.75 JPEG artefacts
      start to show, and the comic styling applied later amplifies them. So give
      up resolution first and only trade quality once the pixel steps run out. */
-  const ENCODE_LADDER = [[5000, 0.9], [4000, 0.9], [4000, 0.82]];
+  const ENCODE_LADDER = [[5000, 0.9], [4000, 0.9], [4000, 0.82], [3000, 0.82]];
   // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
   // still misses that after the ladder surfaces as a per-panel upload error.
   const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
@@ -902,6 +902,36 @@ export function initProductBuilder() {
     refresh();
   }
 
+  /* The panel must show, and be measured from, the file that was actually
+     stored -- not the original the customer dropped. Otherwise they position
+     one image while another is kept, and the dpi reading (and the recipe's
+     sourcePx / effectiveDpi) describe a file nobody has. Zoom and offset are
+     in canvas units and the aspect ratio is unchanged, so the framing the
+     customer set is preserved across the swap. */
+  function adoptEncoded(id, encoded) {
+    return new Promise((resolve) => {
+      const s = state.get(id);
+      if (!s || s.demo) return resolve();
+      const url = URL.createObjectURL(encoded), probe = new Image();
+      probe.onload = () => {
+        const old = s.url;
+        s.url = url; s.el = probe; s.file = encoded;
+        s.natW = probe.naturalWidth || s.natW;
+        s.natH = probe.naturalHeight || s.natH;
+        const n = nodes[id];
+        if (n && n.img) n.img.setAttribute("href", url);
+        if (s.cut) { s.cutKey = null; applyCut(id); }   // recut from the stored file
+        if (old && old !== url) { try { URL.revokeObjectURL(old); } catch (e) { /* already gone */ } }
+        layout(id);                                     // recomputes s.dpi from natW
+        if (selected === id) syncPanel();
+        refresh();
+        resolve();
+      };
+      probe.onerror = () => resolve();                  // keep the original rather than blank the panel
+      probe.src = url;
+    });
+  }
+
   /* One photo, one request -- and one at a time. The first upload creates the
      document and hands back the id every later one has to carry, so they must
      not be in flight together: a board drop of twelve would otherwise race and
@@ -923,6 +953,8 @@ export function initProductBuilder() {
         saveId = data.id;
         const s = state.get(id);
         if (s) { s.key = data.key; s.uploadError = null; }
+        // the stored file is the one the customer should be working with
+        if (sending !== file) await adoptEncoded(id, sending);
       } catch (e) {
         const s = state.get(id);
         if (s) s.uploadError = e.message || "Upload failed";
