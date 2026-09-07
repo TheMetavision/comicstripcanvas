@@ -1,5 +1,18 @@
 import Stripe from 'stripe';
+import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
+
+// Read-only: the dataset is public, so no token is needed here and none is
+// given. Fees are content, not code -- they live on the product document so
+// they can be changed without a deploy.
+const sanity = createClient({
+  projectId: 'lwbwahym',
+  dataset: 'production',
+  apiVersion: '2026-04-11',
+  useCdn: false,
+});
+
+const isPersonalisationId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2024-12-18.acacia',
@@ -43,8 +56,24 @@ export default async (req, context) => {
       });
     }
 
+    // A personalised line carries the id of the build it was made from. The
+    // artwork fee for it comes off that product's document in Sanity, in one
+    // query for the whole basket -- never from the client, and never hard-coded.
+    const personalisedSlugs = [...new Set(
+      items.filter((i) => i.personalisationId).map((i) => i.slug).filter(Boolean)
+    )];
+    let feeBySlug = {};
+    if (personalisedSlugs.length) {
+      const rows = await sanity.fetch(
+        '*[_type == "product" && slug.current in $slugs]{ "slug": slug.current, personalisationFee }',
+        { slugs: personalisedSlugs }
+      );
+      feeBySlug = Object.fromEntries(rows.map((r) => [r.slug, r.personalisationFee]));
+    }
+
     // Server-authoritative pricing (H1): never trust the client's unitPrice.
-    // Each line's price comes from the PRICES table, looked up by format+size.
+    // Each line's price comes from the PRICES table, looked up by format+size,
+    // plus the artwork fee for a personalised build.
     let subtotalPence = 0;
     for (const item of items) {
       const canonical = PRICES[item.format]?.[item.size];
@@ -53,6 +82,25 @@ export default async (req, context) => {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      item.fee = 0;
+      if (item.personalisationId) {
+        if (!isPersonalisationId(item.personalisationId)) {
+          return new Response(JSON.stringify({ error: 'Invalid personalisation reference' }), {
+            status: 400, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        const fee = feeBySlug[item.slug];
+        // Refuse rather than undercharge: a missing fee would silently sell
+        // bespoke artwork at the plain print price.
+        if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
+          console.error(`No personalisationFee on product "${item.slug}" — refusing to undercharge.`);
+          return new Response(JSON.stringify({ error: 'This personalised product is not priced yet. Please contact us.' }), {
+            status: 400, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        item.fee = fee;
       }
       if (
         typeof item.quantity !== 'number' ||
@@ -65,8 +113,10 @@ export default async (req, context) => {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      item.unitPrice = canonical; // override anything the client sent
-      subtotalPence += Math.round(canonical * 100) * item.quantity;
+      // override anything the client sent; the fee rides on the same line so
+      // quantity, totals and the free-postage threshold all stay consistent
+      item.unitPrice = canonical + item.fee;
+      subtotalPence += Math.round(item.unitPrice * 100) * item.quantity;
     }
 
     const qualifiesForFreeShipping = subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE;
@@ -86,12 +136,18 @@ export default async (req, context) => {
         currency: 'gbp',
         product_data: {
           name: item.title,
-          description: `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
+          description: item.fee
+            ? `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size} — includes £${item.fee.toFixed(2)} personalisation`
+            : `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
           metadata: {
             productId: item.productId,
             slug: item.slug,
             format: item.format,
             size: item.size,
+            // the webhook reads this back to mark the build paid and render it
+            ...(item.personalisationId
+              ? { personalisationId: item.personalisationId, personalisationFee: String(item.fee) }
+              : {}),
           },
         },
         unit_amount: Math.round(item.unitPrice * 100),

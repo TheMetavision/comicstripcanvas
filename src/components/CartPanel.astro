@@ -363,6 +363,9 @@
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             imageUrl: item.imageUrl,
+            // checkout needs this to price the artwork fee and to stamp the
+            // build onto the Stripe line so the webhook can find it again
+            personalisationId: item.personalisationId,
           })),
         }),
       });

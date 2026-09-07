@@ -99,6 +99,15 @@ export default defineType({
       description: 'Enable for products that use the personalisation workflow',
     }),
     defineField({
+      name: 'personalisationFee',
+      title: 'Personalisation Fee (£)',
+      type: 'number',
+      hidden: ({ document }: any) => !document?.isPersonalised,
+      validation: (Rule: any) => Rule.min(0),
+      description:
+        'Artwork fee added on top of the print price for a personalised build. Read at checkout by netlify/functions/checkout.mjs -- changing it here changes what customers are charged, with no deploy.',
+    }),
+    defineField({
       name: 'sortOrder',
       title: 'Sort Order',
       type: 'number',

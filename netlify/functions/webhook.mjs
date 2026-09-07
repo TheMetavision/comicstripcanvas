@@ -41,6 +41,62 @@ const BRAND = {
 const ORDER_COUNTER_ID = 'orderCounter';
 
 /**
+ * Mark every personalised build on a paid session, and kick off its render.
+ *
+ * checkout.mjs stamps personalisationId onto each personalised line item's
+ * product metadata, so the builds are recoverable from the session with no
+ * metadata size limit. Exported so it can be exercised on its own.
+ */
+export async function settlePersonalisations({ session, orderId, orderNumber, lineItems, deps }) {
+  const { sanity: db = sanity, fetch: http = fetch, siteUrl = process.env.URL
+    || process.env.SITE_URL || 'https://comicstripcanvas.co.uk' } = deps || {};
+
+  const ids = [...new Set(
+    (lineItems || [])
+      .map((li) => li.price?.product?.metadata?.personalisationId)
+      .filter(Boolean)
+  )];
+  if (!ids.length) return [];
+
+  const results = [];
+  for (const id of ids) {
+    try {
+      await db
+        .patch(id)
+        .set({ status: 'paid', stripeSessionId: session.id, orderId, orderNumber })
+        .commit();
+    } catch (err) {
+      // Never fail the order for this: the payment is taken and the order
+      // exists. Surface it loudly instead so it can be picked up by hand.
+      console.error(`Could not mark personalisation ${id} paid:`, err.message);
+      results.push({ id, marked: false, rendered: false, error: err.message });
+      continue;
+    }
+
+    // The renderer does not exist yet. Ask for it anyway so the wiring is real,
+    // and say so plainly when it is not there rather than failing silently.
+    let rendered = false;
+    try {
+      const res = await http(`${siteUrl}/api/render-personalisation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, orderId, orderNumber }),
+      });
+      rendered = res.ok;
+      if (res.status === 404) {
+        console.log(`Render for ${id} not triggered: /api/render-personalisation returned 404 (function not deployed yet).`);
+      } else if (!res.ok) {
+        console.error(`Render for ${id} failed: ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`Could not reach the render function for ${id}:`, err.message);
+    }
+    results.push({ id, marked: true, rendered });
+  }
+  return results;
+}
+
+/**
  * Atomically allocate the next order number, e.g. "CSC-1001".
  * Uses a Sanity transaction with a patch precondition so two simultaneous
  * orders can never receive the same number.
@@ -304,6 +360,24 @@ async function fulfilOrder(session) {
         } catch (err) {
           console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
         }
+      }
+
+      // Builder-made lines: mark each build paid and start its render. Runs after
+      // the order is persisted so a retry can never render against no order.
+      try {
+        const paidLines = await stripe.checkout.sessions.listLineItems(session.id, {
+          expand: ['data.price.product'],
+          limit: 100,
+        });
+        const settled = await settlePersonalisations({
+          session, orderId, orderNumber, lineItems: paidLines.data,
+        });
+        if (settled.length) {
+          console.log(`Settled ${settled.length} personalisation(s) for ${orderNumber}: `
+            + settled.map((s) => `${s.id}=${s.marked ? 'paid' : 'FAILED'}/${s.rendered ? 'render queued' : 'no render'}`).join(', '));
+        }
+      } catch (err) {
+        console.error('Could not settle personalisations for', session.id, err.message);
       }
 
       // ── Email templates ──────────────────────────────────────

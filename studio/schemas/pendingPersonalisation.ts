@@ -153,6 +153,21 @@ export default defineType({
         layout: 'dropdown',
       },
     }),
+    // ── stamped by the Stripe webhook once the order is paid ──────────────
+    defineField({
+      name: 'stripeSessionId',
+      title: 'Stripe Session',
+      type: 'string',
+      readOnly: true,
+    }),
+    defineField({
+      name: 'orderId',
+      title: 'Order',
+      type: 'string',
+      readOnly: true,
+      description: 'The order document this build was paid for on.',
+    }),
+
     defineField({
       name: 'photoKeys',
       title: 'Photo Blob Keys',
