@@ -20,9 +20,10 @@ export const PRICES: Record<ProductFormat, Record<ProductSize, number>> = {
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
-// Artwork fee for a personalised build, by builder template. Mirrors
-// resolveStyle() in netlify/functions/personalise.mjs, which is what actually
-// charges the customer -- keep these in sync.
+// Personalisation fee for a build, by builder template. This is the figure the
+// site DISPLAYS. What the customer is actually charged is the personalisationFee
+// field on the product document in Sanity, which checkout.mjs reads -- so these
+// must be kept in step with Sanity, not with each other.
 export const PERSONALISATION_FEE: Record<string, number> = {
   strip: 25,
   cover: 10,

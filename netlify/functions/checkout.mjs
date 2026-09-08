@@ -33,7 +33,7 @@ const SIZE_LABELS = {
 // Stripe's minimum chargeable amount for GBP.
 const STRIPE_MIN_PENCE = 30; // £0.30
 
-// Free postage threshold and standard rate — keep in sync with src/stores/cart.ts and /api/personalise
+// Free postage threshold and standard rate — keep in sync with src/stores/cart.ts
 const FREE_SHIPPING_THRESHOLD_PENCE = 5000; // £50.00
 const STANDARD_SHIPPING_PENCE = 495;        // £4.95
 

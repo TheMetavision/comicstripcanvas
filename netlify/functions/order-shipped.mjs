@@ -34,7 +34,7 @@ const sanity = createClient({
 // the handler exists -- so the platform surfaces an opaque 500 with no log line
 // from this function. Deferring it turns the same condition into something
 // readable. Memoised, so warm containers still reuse one client. Mirrors
-// getStripe() in personalise.mjs.
+// getStripe() in webhook.mjs.
 let resendClient;
 function getResend() {
   if (resendClient) return resendClient;

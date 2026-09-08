@@ -1,5 +1,5 @@
 // Shared catalogue constants for the Netlify Functions.
-// Single source of truth for PRICES so checkout.mjs and personalise.mjs can
+// Single source of truth for PRICES so the functions that price an order can
 // never drift on what to charge. This is a helper module, not a function
 // (it lives under _shared/ and the filename doesn't match the dir), so Netlify
 // won't expose it as an endpoint — it's bundled into whichever function imports it.

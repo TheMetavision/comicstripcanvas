@@ -1,14 +1,58 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import PersonalisationWizard from '../components/PersonalisationWizard.astro';
 import FAQAccordion from '../components/FAQAccordion.astro';
 import { sanityClient } from '../lib/sanity';
 import { faqsByPageQuery } from '../lib/queries';
+import { PRICES, PERSONALISATION_FEE } from '../data/products';
+
 const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
+
+// This page used to host the five-step commission form. The builder replaced it
+// and lives on the product pages themselves, so this is now a signpost to the
+// three that mount it.
+//
+// `slug` must match a key of BUILDER_TEMPLATE in src/pages/store/[slug].astro --
+// that map is what decides whether a product page renders the builder at all.
+// `template` must match a key of PERSONALISATION_FEE, so the fee shown here is
+// the same number checkout charges rather than a copy of it.
+const STYLES = [
+  {
+    slug: 'personalised-book-covers',
+    template: 'cover',
+    label: 'Comic Book Cover',
+    desc: 'You as the star of a bold, vintage-style comic book cover.',
+    img: 'https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg',
+    accent: 'text-comic-yellow',
+    hover: 'hover:border-comic-yellow',
+  },
+  {
+    slug: 'personalised-icons',
+    template: 'icon-portrait',
+    label: 'Comic Book Icon',
+    desc: 'Your portrait transformed into a striking pop-art graphic icon.',
+    img: 'https://cdn.sanity.io/images/lwbwahym/production/a30bbbcbffdf8289dd7b3def522f2075abe2e50d-2752x1536.jpg',
+    accent: 'text-comic-cyan',
+    hover: 'hover:border-comic-cyan',
+  },
+  {
+    slug: 'personalised-strips',
+    template: 'strip',
+    label: 'Comic Book Strip',
+    desc: 'Your story told across multiple panels in classic comic strip style.',
+    img: 'https://cdn.sanity.io/images/lwbwahym/production/5895d21b1e695781263a08dc0acf608cdc8c098f-1248x832.jpg',
+    accent: 'text-comic-red',
+    hover: 'hover:border-comic-red',
+  },
+].map((style) => {
+  const fee = PERSONALISATION_FEE[style.template];
+  // Matches the "from" price on the product page: cheapest format plus the fee.
+  return { ...style, fee, from: PRICES.poster.small + fee };
+});
 ---
+
 <BaseLayout
   title="Personalise Your Comic Art"
-  description="Create a personalised comic book canvas print, framed print, or poster from your own photos. Comic covers, pop icons, and strip art. Made to order with a 2-3 working day proof."
+  description="Create a personalised comic book canvas print, framed print, or poster from your own photos. Comic covers, pop icons, and strip art, built by you in the browser."
 >
   <section class="relative bg-panel-dark halftone-bg py-16 overflow-hidden">
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
@@ -26,13 +70,54 @@ const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
         <span class="text-comic-yellow block">COMIC MASTERPIECE</span>
       </h1>
       <p class="font-source text-gray-300 text-lg max-w-2xl">
-        Follow the steps below to design your personalised comic art. We'll send you a proof within 2-3 working days and get your artwork printed once you're happy.
+        Choose a style, drop your photos in, and see your layout as you build it.
       </p>
     </div>
   </section>
+
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-    <PersonalisationWizard />
+    <div class="text-center mb-10">
+      <h2 class="section-heading">CHOOSE YOUR STYLE</h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {STYLES.map((style) => (
+        <a
+          href={`/store/${style.slug}`}
+          class={`group flex flex-col bg-panel-dark border-4 border-black p-5 text-center transition-all duration-200 hover:-translate-y-1 ${style.hover}`}
+          style="box-shadow: 4px 4px 0 #000000;"
+        >
+          <div class="aspect-video mb-4 overflow-hidden bg-mid-grey">
+            <img
+              src={style.img}
+              alt={`${style.label} example — Comic Strip Canvas`}
+              class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+          </div>
+
+          <h3 class={`font-bangers text-2xl tracking-wide uppercase ${style.accent}`}>{style.label}</h3>
+          <p class="font-source text-gray-400 text-sm leading-relaxed mt-2 mb-4">{style.desc}</p>
+
+          {/* Pushes the price and button to the bottom so the three cards line
+              up even though the descriptions are different lengths. */}
+          <div class="mt-auto">
+            <div class="price-tag text-2xl mb-1">From £{style.from.toFixed(2)}</div>
+            <p class="font-source text-gray-400 text-xs mb-4">
+              Posters from £{PRICES.poster.small.toFixed(2)}, canvas from £{PRICES['canvas-standard'].small.toFixed(2)},
+              plus £{style.fee} personalisation.
+            </p>
+            <span class="btn-primary text-base w-full">Start Building</span>
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <p class="font-source text-gray-500 text-sm text-center mt-8">
+      Every size and format is chosen inside the builder, and you'll see a proof before anything is printed.
+    </p>
   </div>
+
   <!-- FAQ -->
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
     <section class="mb-20 reveal">

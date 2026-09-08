@@ -6,7 +6,7 @@ import { emailHeader } from './_shared/email.mjs';
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
 // opaque 500 and retry the delivery forever with nothing in the logs to say
-// why. Memoised. Mirrors getStripe() in personalise.mjs.
+// why. Memoised. Mirrors getStripe() below.
 let stripeClient;
 function getStripe() {
   if (stripeClient) return stripeClient;
@@ -30,7 +30,7 @@ const sanity = createClient({
 // the handler exists -- so the platform surfaces an opaque 500 with no log line
 // from this function. Deferring it turns the same condition into something
 // readable. Memoised, so warm containers still reuse one client. Mirrors
-// getStripe() in personalise.mjs.
+// the getResend() helper above.
 let resendClient;
 function getResend() {
   if (resendClient) return resendClient;

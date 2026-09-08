@@ -32,7 +32,7 @@ const sanity = createClient({
 // is absent, and at module scope that throw happens at IMPORT time -- before
 // the handler exists -- so a missing key took down Hold and Re-render too,
 // neither of which sends anything. Memoised, so warm containers still reuse one
-// client. Mirrors getStripe() in personalise.mjs.
+// client. Mirrors getStripe() in webhook.mjs.
 let resendClient;
 function getResend() {
   if (resendClient) return resendClient;
