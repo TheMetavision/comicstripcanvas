@@ -116,3 +116,11 @@
 /store/tyler-durden/  /store/tyler-durden-icon/  301
 /store/usain-bolt  /store/usain-bolt-icon/  301
 /store/usain-bolt/  /store/usain-bolt-icon/  301
+
+# OLD PERSONALISE FLOW — the five-step form's Stripe success page.
+# The form is gone: the builder lives on the product pages and its checkout
+# lands on /order-confirmation instead. These keep old links, and any legacy
+# Stripe session still in flight, off a 404. Netlify carries the original
+# query string (?session_id=...) through, which is harmless here.
+/personalise-confirmation  /personalise  301
+/personalise-confirmation/  /personalise  301
