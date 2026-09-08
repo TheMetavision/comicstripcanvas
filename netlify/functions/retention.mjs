@@ -196,13 +196,18 @@ export default async (req) => {
     });
   }
 
-  // The scheduler always runs for real. A manual call is a dry run unless it
-  // says otherwise, so the destructive path is never the one you get by
-  // accident.
+  // A manual call is a dry run unless it explicitly asks not to be, so the
+  // destructive path is never what you get by accident.
+  //
+  // An explicit dryRun:true is honoured even on a scheduled-shaped invocation.
+  // That matters because `netlify functions:invoke` sends the scheduler's own
+  // payload, so without this a developer asking for a dry run gets a real
+  // deletion -- which is exactly what happened the first time this was tested.
+  // The real scheduler never sends dryRun, so production behaviour is unchanged.
   const url = new URL(req.url);
-  const dryRun = scheduled
-    ? false
-    : !(url.searchParams.get('dry-run') === 'false' || body?.dryRun === false);
+  const askedForDryRun = url.searchParams.get('dry-run') !== 'false' && body?.dryRun !== false;
+  const explicitDryRun = body?.dryRun === true || url.searchParams.get('dry-run') === 'true';
+  const dryRun = explicitDryRun || (scheduled ? false : askedForDryRun);
 
   try {
     const report = await runRetention({ dryRun });
