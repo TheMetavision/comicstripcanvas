@@ -19,7 +19,11 @@ export default defineConfig({
   output: 'static',
   adapter: netlify(),
   redirects: {
+    // One entry only. Astro normalises trailing slashes before it builds the
+    // route table, so listing '/personalised-products/' as well is the same
+    // route twice and the router warns about the collision. The single rule
+    // still covers both spellings: it emits `/personalised-products` into
+    // _redirects, and Netlify matches that with or without the trailing slash.
     '/personalised-products': '/personalise/',
-    '/personalised-products/': '/personalise/',
   },
 });

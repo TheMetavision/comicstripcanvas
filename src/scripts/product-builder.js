@@ -1336,13 +1336,24 @@ export function initProductBuilder() {
             : 'Renders the print master and creates a draft product in the Studio.';
     }
   }
+  /* Both exporters work on a copy of the live scene, and that copy is built in
+     an inert document rather than with svg.cloneNode().
+
+     A detached clone still belongs to the page's document, so its <image>
+     elements keep loading: cloneNode re-requested every asset, and the moment
+     exportSVG() swapped them for {{TOKEN}}s the browser went and fetched those
+     too -- /admin/{{LOGO}} and friends, resolved relative to the page, 404 every
+     time. A document from DOMImplementation has no browsing context, so nothing
+     inside it fetches anything. */
+  const inertDoc = document.implementation.createHTMLDocument('scene-export');
+  const sceneCopy = () => inertDoc.importNode(svg, true);
   /* The preview and the print file are the same document. Rather than rebuilding
      the scene server-side from numbers -- where any drift means the customer gets
      something they didn't approve -- the builder exports its own SVG with every
      asset replaced by a token. The renderer swaps the tokens for full-resolution
      files and rasterises the identical document. */
   function exportSVG() {
-    const c = svg.cloneNode(true);
+    const c = sceneCopy();
     c.setAttribute('xmlns', SVGNS);
     c.removeAttribute('style');
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
@@ -1430,7 +1441,7 @@ export function initProductBuilder() {
     return p;
   }
   async function draftSVG() {
-    const c = svg.cloneNode(true);
+    const c = sceneCopy();
     c.setAttribute('xmlns', SVGNS);
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
