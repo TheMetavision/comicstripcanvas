@@ -139,8 +139,12 @@ export const GET: APIRoute = async () => {
       <g:shipping>
         <g:country>GB</g:country>
         <g:service>Standard</g:service>
-        <g:price>0.00 GBP</g:price>
+        <g:price>4.95 GBP</g:price>
       </g:shipping>
+      <g:free_shipping_threshold>
+        <g:country>GB</g:country>
+        <g:price_threshold>50.00 GBP</g:price_threshold>
+      </g:free_shipping_threshold>
       <g:shipping_weight>0.5 kg</g:shipping_weight>
     </item>`);
         }
