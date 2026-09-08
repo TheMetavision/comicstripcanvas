@@ -31,10 +31,16 @@ const client = createClient({
 // The FAQ `answer` field is plain text, not rich text. An earlier version of
 // this script wrote block arrays here, which the Studio shows as [object Object]
 // and the site renders the same way. Writing a string overwrites that cleanly.
+//
+// personalisationFee is here too, because it is Sanity-held data rather than
+// copy: checkout.mjs charges from that field and the site displays it from the
+// same field, so it must not be edited by hand in one place and typed into
+// copy in another. As of September 2026 it is £10 for all three products.
 
 /* ------------------------------------------------------------------ products */
 const PRODUCTS = {
   'personalised-icons': {
+    fee: 10,
     title: 'Your Photo as an Icon',
     description:
       'Turn your favourite photo into a personalised comic icon. Drop your picture ' +
@@ -46,6 +52,7 @@ const PRODUCTS = {
       'Made to order. Free UK P&P.',
   },
   'personalised-book-covers': {
+    fee: 10,
     title: 'Your Photo as a Book Cover',
     description:
       'Turn your favourite photo into a personalised comic book cover. Drop your picture ' +
@@ -57,6 +64,7 @@ const PRODUCTS = {
       'Made to order. Free UK P&P.',
   },
   'personalised-strips': {
+    fee: 10,
     title: 'Your Photo as a Strip',
     description:
       'Turn your favourite photos into a personalised comic strip. Drop your pictures into ' +
@@ -128,14 +136,13 @@ const FAQS = [
       'A Comic Book Cover is a bold, magazine-style design with your subject as the star. ' +
       'A Comic Book Icon is a graphic portrait with strong colours and your own quote. ' +
       'A Comic Book Strip tells a story across twelve panels — ideal for a sequence of ' +
-      'moments. Covers and Icons carry a £10 personalisation fee; Strips £25, reflecting ' +
-      'the twelve-photo layout and the larger print.',
+      'moments. Each carries a £10 personalisation fee.',
   },
   {
     match: 'How much does a personalised comic canvas cost?',
     answer:
       'Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or ' +
-      '£28.99 (gallery frame). Add £10 to personalise a Cover or Icon, or £25 for a Strip. ' +
+      '£28.99 (gallery frame). Add £10 to personalise a Cover, Icon or Strip. ' +
       'Small, Medium and Large are priced separately — see the full price list on the ' +
       'Services page.',
   },
@@ -157,11 +164,90 @@ const FAQS = [
   },
 ];
 
+/* ---------------------------------------------------------------------- blog */
+// Blog bodies are portable text, so these are exact span replacements rather
+// than whole-field rewrites: only the sentence that is wrong changes, and a
+// span already fixed is left alone, so re-running does nothing.
+const BLOG = {
+  "what-is-pop-art-wall-art": [
+    [
+      "in which case a personalised comic art commission delivers exactly that.",
+      "in which case a personalised comic piece you build yourself delivers exactly that."
+    ],
+    [
+      "or go fully personal with a commission from your own photo.",
+      "or go fully personal and build your own from your own photo."
+    ]
+  ],
+  "choosing-the-right-size-canvas": [
+    [
+      "For personalised commissions, think about where",
+      "For personalised pieces, think about where"
+    ],
+    [
+      "or start a personalised commission.",
+      "or build your own personalised piece."
+    ]
+  ],
+  "personalised-gifts-uk": [
+    [
+      "At £25 personalisation fee, it's the premium option — and it shows.",
+      "It carries the same £10 personalisation fee as the others — and it shows."
+    ],
+    [
+      "Personalised commissions use the same base pricing",
+      "Personalised pieces use the same base pricing"
+    ],
+    [
+      "Personalisation fee: +£10 for Covers and Icons, +£25 for Strips.",
+      "Personalisation fee: +£10 for Covers, Icons and Strips."
+    ],
+    [
+      "For personalised commissions, allow at least 10 days",
+      "For personalised pieces, allow at least 10 days"
+    ],
+    [
+      "with no proof stage required.",
+      "with no approval stage required."
+    ]
+  ],
+  "fathers-day-gift-ideas-sport-film-music-uk": [
+    [
+      "that's where a personalised football commission becomes the gift",
+      "that's where a personalised football piece becomes the gift"
+    ],
+    [
+      "and we'll turn it into his own Comic Book Icon.",
+      "and build it into his own Comic Book Icon."
+    ],
+    [
+      "a personalised commission turns that into something made just for him.",
+      "a personalised piece you build yourself turns that into something made just for him."
+    ],
+    [
+      "That's what a personalised Comic Strip Canvas commission is",
+      "That's what a personalised Comic Strip Canvas piece is"
+    ],
+    [
+      "plus £25 for personalisation.",
+      "plus £10 for personalisation."
+    ],
+    [
+      "Personalised commissions",
+      "Personalised pieces"
+    ],
+    [
+      "Start your commission at the personalise page.",
+      "Start building at the personalise page."
+    ]
+  ]
+};
+
 /* --------------------------------------------------------------------- run */
 const changes = [];
 
 const products = await client.fetch(
-  '*[_type=="product" && category=="personalised"]{_id,title,slug,description,seo}');
+  '*[_type=="product" && category=="personalised"]{_id,title,slug,description,seo,personalisationFee}');
 
 for (const p of products) {
   const spec = PRODUCTS[p.slug?.current];
@@ -171,6 +257,7 @@ for (const p of products) {
   if (p.description !== spec.description) patch.description = spec.description;
   const meta = p.seo?.metaDescription;
   if (meta !== spec.seo) patch['seo.metaDescription'] = spec.seo;
+  if (p.personalisationFee !== spec.fee) patch.personalisationFee = spec.fee;
   if (Object.keys(patch).length) changes.push({ id: p._id, label: p.title, patch });
 }
 
@@ -183,6 +270,10 @@ for (const spec of FAQS) {
   for (const f of targets) {
     if (seen.has(f._id)) continue;
     seen.add(f._id);
+    // Compare before listing, like the product loop above. Without this the dry
+    // run reported every FAQ as changing on every run, which made it useless for
+    // seeing what a run would actually do.
+    if (f.answer === spec.answer) continue;
     changes.push({
       id: f._id, label: `FAQ: ${spec.match}`,
       patch: { answer: spec.answer },
@@ -192,6 +283,30 @@ for (const spec of FAQS) {
     console.warn(`  ! "${spec.match}" appears ${hits.length}x — ` +
       `updating the first (${hits[0]._id}); delete the duplicate in the Studio: ` +
       hits.slice(1).map((h) => h._id).join(', '));
+  }
+}
+
+const posts = await client.fetch('*[_type=="blogPost"]{_id,title,slug,body}');
+for (const post of posts) {
+  const specs = BLOG[post.slug?.current];
+  if (!specs || !Array.isArray(post.body)) continue;
+  let touched = 0;
+  const body = post.body.map((block) => {
+    if (!Array.isArray(block.children)) return block;
+    return {
+      ...block,
+      children: block.children.map((child) => {
+        if (typeof child.text !== 'string') return child;
+        let text = child.text;
+        for (const [from, to] of specs) if (text.includes(from)) text = text.split(from).join(to);
+        if (text === child.text) return child;
+        touched++;
+        return { ...child, text };
+      }),
+    };
+  });
+  if (touched) {
+    changes.push({ id: post._id, label: `blog: ${post.slug.current} (${touched} span(s))`, patch: { body } });
   }
 }
 
