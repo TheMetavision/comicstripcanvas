@@ -36,6 +36,15 @@
   memory = 3008
   external_node_modules = ["@resvg/resvg-js"]
 
+# Photo retention, once a day. Customer photographs are deleted 90 days after
+# the order was dispatched, and abandoned builds 30 days after creation; see
+# netlify/functions/retention.mjs for the rules and what is exempt.
+#
+# The schedule lives here rather than in an inline `export const config`,
+# matching how this project keeps function config out of the source files.
+[functions."retention"]
+  schedule = "@daily"
+
 # The webhook posts to /api/render-personalisation. The function is a background
 # function, so its real name carries the -background suffix; this rewrite keeps
 # the caller unaware of that. It must come BEFORE the /api/* rule below, which

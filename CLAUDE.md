@@ -35,9 +35,9 @@ Either keep the dataset public, or give the function a read token and use it the
 
 ### Notes
 
-Pending: Resend DNS verify, domain DNS to Netlify, Sanity build hook.
+Pending: Resend DNS verify, domain DNS to Netlify.
 
-Resolved 2026-09-07 -- both verified against production, not assumed:
+Resolved -- verified against production, not assumed:
 
 - **personalise function 500 error.** `/api/personalise` returns 200 in production
   and for all 27 valid style x format x size inputs locally. The inline
@@ -46,4 +46,16 @@ Resolved 2026-09-07 -- both verified against production, not assumed:
   produced a 404, not a 500.
 - **live Stripe keys.** Already in place. A production POST to `/api/personalise`
   returns a `cs_live_...` Checkout session URL.
+- **Sanity build hook.** Exists and fires on product changes (2026-09-08). The
+  Sanity webhook "Netlify rebuild" POSTs to Netlify build hook
+  `69e7bb39d8d2859ae7a81ff1` ("Sanity Content Update", branch `main`). Confirmed
+  from the deploy history rather than assumed: three `product` documents were
+  updated at 21:16 on 2026-09-07 and hook-triggered production deploys ran at
+  21:16 and 21:18. The hook is filtered -- roughly twenty `contactSubmission`
+  writes in the same window triggered nothing -- but the exact GROQ filter is
+  only visible in sanity.io/manage; `SANITY_WRITE_TOKEN` has no management-API
+  scope, so `sanity hook list` and the API cannot show it.
+
+  This matters for pricing: `personalisationFee` is read from Sanity at build
+  time, so a fee edit reaches the site only once this hook's rebuild finishes.
 
