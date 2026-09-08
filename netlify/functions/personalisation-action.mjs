@@ -27,7 +27,18 @@ const sanity = createClient({
   useCdn: false,
 });
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Built on first use, not at import. `new Resend()` throws when RESEND_API_KEY
+// is absent, and at module scope that throw happens at IMPORT time -- before
+// the handler exists -- so a missing key took down Hold and Re-render too,
+// neither of which sends anything. Memoised, so warm containers still reuse one
+// client. Mirrors getStripe() in personalise.mjs.
+let resendClient;
+function getResend() {
+  if (resendClient) return resendClient;
+  if (!process.env.RESEND_API_KEY) return null;
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+}
 
 const isId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 const json = (body, status = 200) =>
@@ -134,6 +145,8 @@ async function approve(doc, id, origin) {
   const subject = 'Your Comic Strip Canvas artwork is ready to approve';
 
   try {
+    const resend = getResend();
+    if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
     const { error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
       to: email,

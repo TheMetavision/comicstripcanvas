@@ -28,7 +28,19 @@ const sanity = createClient({
   useCdn: false,
 });
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Built on first use, not at import. `new Resend()` throws when RESEND_API_KEY
+// is absent, and at module scope that throw happens at IMPORT time -- before
+// the handler exists -- so the platform surfaces an opaque 500 with no log line
+// from this function. Deferring it turns the same condition into something
+// readable. Memoised, so warm containers still reuse one client. Mirrors
+// getStripe() in personalise.mjs.
+let resendClient;
+function getResend() {
+  if (resendClient) return resendClient;
+  if (!process.env.RESEND_API_KEY) return null;
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+}
 
 // Brand constants — match webhook.mjs exactly so emails feel consistent.
 const BRAND = {
@@ -301,13 +313,32 @@ export default async (req, context) => {
     </div>`;
 
   // ── Send the email ──────────────────────────────────────────────────────
+  const resend = getResend();
+  if (!resend) {
+    // Deliberately not marked as sent, so a later webhook fire retries this
+    // once the key is in place -- nothing is lost, it is only deferred.
+    console.error(`order-shipped: RESEND_API_KEY is not set - cannot email ${orderNumber}.`);
+    return new Response(
+      JSON.stringify({ error: 'RESEND_API_KEY is not set on this deploy', orderNumber }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   try {
-    await resend.emails.send({
+    // Resend reports a rejected send by RETURNING an error, not by throwing --
+    // an invalid key, an unverified sending domain or a bad address all come
+    // back this way. Ignoring it marked the order as emailed and returned 200,
+    // so the customer silently never got their dispatch notice and nothing
+    // retried. webhook.mjs already checks this; this now matches it.
+    const { error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
       to: [order.customerEmail],
       subject: `📦 Your order is on the way (${orderNumber}) — Comic Strip Canvas`,
       html,
     });
+    if (error) {
+      throw new Error(`${error.name || 'Error'}: ${error.message || 'Resend rejected the send'}`);
+    }
     console.log(`Shipping email sent for ${orderNumber} to ${order.customerEmail} via ${carrierName}`);
   } catch (emailErr) {
     console.error(`Failed to send shipping email for ${orderNumber}:`, emailErr);

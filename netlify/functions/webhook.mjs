@@ -2,9 +2,19 @@ import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2024-12-18.acacia',
-});
+// Same trap as the Resend client below: `new Stripe()` throws without a key,
+// and at module scope that throw lands at IMPORT time, so Stripe would get an
+// opaque 500 and retry the delivery forever with nothing in the logs to say
+// why. Memoised. Mirrors getStripe() in personalise.mjs.
+let stripeClient;
+function getStripe() {
+  if (stripeClient) return stripeClient;
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: '2024-12-18.acacia',
+  });
+  return stripeClient;
+}
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -14,7 +24,19 @@ const sanity = createClient({
   useCdn: false,
 });
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Built on first use, not at import. `new Resend()` throws when RESEND_API_KEY
+// is absent, and at module scope that throw happens at IMPORT time -- before
+// the handler exists -- so the platform surfaces an opaque 500 with no log line
+// from this function. Deferring it turns the same condition into something
+// readable. Memoised, so warm containers still reuse one client. Mirrors
+// getStripe() in personalise.mjs.
+let resendClient;
+function getResend() {
+  if (resendClient) return resendClient;
+  if (!process.env.RESEND_API_KEY) return null;
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+}
 
 const FORMAT_LABELS = {
   poster: 'Poster Print',
@@ -140,6 +162,8 @@ async function getNextOrderNumber() {
 // (delayed methods like Klarna, once the payment clears). Idempotent via the
 // deterministic order _id, so it is safe from either path or on a retry.
 async function fulfilOrder(session) {
+  // Non-null: the handler refuses the request before ever getting here.
+  const stripe = getStripe();
       // ── Idempotency guard (C3) ───────────────────────────────
       // Stripe may deliver the same event more than once. Use a deterministic
       // order _id derived from the session id, and bail out before ANY side
@@ -491,6 +515,8 @@ async function fulfilOrder(session) {
 
       if (emailLooksValid) {
       try {
+        const resend = getResend();
+        if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
         const { error } = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [customerEmail],
@@ -543,6 +569,8 @@ async function fulfilOrder(session) {
       // ── Send production team notification email ───────────────
       const teamEmail = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
       try {
+        const resend = getResend();
+        if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
         const { error } = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [teamEmail],
@@ -626,6 +654,17 @@ async function fulfilOrder(session) {
 export default async (req, context) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
+  }
+
+  // A 503 rather than a 200: nothing has been recorded yet, so Stripe should
+  // keep the event and redeliver it once the deploy is configured properly.
+  const stripe = getStripe();
+  if (!stripe) {
+    console.error('Stripe webhook: STRIPE_SECRET_KEY is not set — cannot verify or fulfil.');
+    return new Response(
+      JSON.stringify({ error: 'STRIPE_SECRET_KEY is not set on this deploy' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   const body = await req.text();
