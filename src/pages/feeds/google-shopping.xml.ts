@@ -4,11 +4,15 @@ import type { APIRoute } from 'astro';
 import { createClient } from '@sanity/client';
 import imageUrlBuilder from '@sanity/image-url';
 
+// Uncached, even though this runs per request rather than at build. A stale
+// price in a shopping feed gets items disapproved by Google, which is a worse
+// outcome than a slower response -- and the caller is a crawler, not a
+// customer waiting on a page. Each request costs one live API read.
 const sanityClient = createClient({
   projectId: 'lwbwahym',
   dataset: 'production',
   apiVersion: '2024-01-01',
-  useCdn: true,
+  useCdn: false,
 });
 
 const builder = imageUrlBuilder(sanityClient);

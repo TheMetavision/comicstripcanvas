@@ -11,7 +11,7 @@ import type { SanityImageSource } from '@sanity/image-url/lib/types/types';
 //
 // Note there are other clients in the tree that do not come through here:
 // src/pages/store/personalised.astro (build time, also uncached) and
-// src/pages/feeds/google-shopping.xml.ts (per request, still on the CDN).
+// src/pages/feeds/google-shopping.xml.ts (per request). All three are uncached.
 export const sanityClient = createClient({
   projectId: 'lwbwahym',
   dataset: 'production',
