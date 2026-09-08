@@ -11,10 +11,18 @@
  */
 
 export const EMAIL_BRAND = {
-  // The 440x440 EmailLogo.png asset out of Sanity, requested at 2x and shown at
-  // 140px so it stays sharp on retina displays.
+  // The 440x440 EmailLogo.png asset out of Sanity. Only 48% of that square is
+  // artwork -- the rest is dead black padding -- so it is cropped to the mark
+  // itself and then sized. Without the crop, a 160px box would show a 77px
+  // logo; with it, the mark really is 160px wide.
+  //
+  // The rect is measured from THIS revision of the asset. If EmailLogo.png is
+  // ever replaced, re-measure it (or drop the rect if the new one is already
+  // tightly cropped) -- a stale rect would crop the wrong region.
   logo: 'https://cdn.sanity.io/images/lwbwahym/production/d3b36041ed3eb60d6ef9e6a6353c30ab79363be4-440x440.png',
-  logoWidth: 140,
+  logoRect: '116,130,211,186',
+  logoWidth: 160,
+  logoHeight: 141,
   yellow: '#FFF200',
   pink: '#EC008C',
   cyan: '#00AEEF',
@@ -29,7 +37,9 @@ export const EMAIL_BRAND = {
   sans: "Arial, Helvetica, sans-serif",
 };
 
-const LOGO_2X = `${EMAIL_BRAND.logo}?w=280&amp;h=280&amp;fit=max`;
+// Cropped region is 211px wide natively, comfortably above the 160px it is
+// displayed at, so it stays crisp without upscaling.
+const LOGO_SRC = `${EMAIL_BRAND.logo}?rect=${EMAIL_BRAND.logoRect}`;
 
 /**
  * Charcoal bar, logo, tagline, then a 4px comic-pink rule. Sits directly on
@@ -39,9 +49,9 @@ export const emailHeader = `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
     <tr>
       <td align="center" bgcolor="${EMAIL_BRAND.headerBar}" style="background: ${EMAIL_BRAND.headerBar}; padding: 28px 24px 24px;">
-        <img src="${LOGO_2X}" alt="Comic Strip Canvas"
-             width="${EMAIL_BRAND.logoWidth}" height="${EMAIL_BRAND.logoWidth}"
-             style="display: block; margin: 0 auto; width: ${EMAIL_BRAND.logoWidth}px; height: ${EMAIL_BRAND.logoWidth}px; border: 0; outline: none; text-decoration: none;" />
+        <img src="${LOGO_SRC}" alt="Comic Strip Canvas"
+             width="${EMAIL_BRAND.logoWidth}" height="${EMAIL_BRAND.logoHeight}"
+             style="display: block; margin: 0 auto; width: ${EMAIL_BRAND.logoWidth}px; height: ${EMAIL_BRAND.logoHeight}px; border: 0; outline: none; text-decoration: none;" />
         <p style="margin: 14px 0 0; font-family: ${EMAIL_BRAND.sans}; font-size: 13px; letter-spacing: 1px; color: #777777; text-align: center;">BOLD POP CULTURE WALL ART</p>
       </td>
     </tr>
