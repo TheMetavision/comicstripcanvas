@@ -19,6 +19,12 @@ export const EMAIL_BRAND = {
   pink: '#EC008C',
   cyan: '#00AEEF',
   dark: '#111111',
+  // The header bar alone is pure black. EmailLogo.png has no alpha channel and
+  // a black background, so on #111111 it showed as a darker square around the
+  // logo; matching the bar to the logo makes the seam disappear. Sanity's ?bg=
+  // only fills transparency, so it cannot be fixed at request time. Everything
+  // else -- footers, rules, borders -- stays on `dark`.
+  headerBar: '#000000',
   site: 'https://comicstripcanvas.co.uk',
   sans: "Arial, Helvetica, sans-serif",
 };
@@ -32,7 +38,7 @@ const LOGO_2X = `${EMAIL_BRAND.logo}?w=280&amp;h=280&amp;fit=max`;
 export const emailHeader = `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
     <tr>
-      <td align="center" bgcolor="${EMAIL_BRAND.dark}" style="background: ${EMAIL_BRAND.dark}; padding: 28px 24px 24px;">
+      <td align="center" bgcolor="${EMAIL_BRAND.headerBar}" style="background: ${EMAIL_BRAND.headerBar}; padding: 28px 24px 24px;">
         <img src="${LOGO_2X}" alt="Comic Strip Canvas"
              width="${EMAIL_BRAND.logoWidth}" height="${EMAIL_BRAND.logoWidth}"
              style="display: block; margin: 0 auto; width: ${EMAIL_BRAND.logoWidth}px; height: ${EMAIL_BRAND.logoWidth}px; border: 0; outline: none; text-decoration: none;" />
