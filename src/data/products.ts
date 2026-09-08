@@ -20,17 +20,11 @@ export const PRICES: Record<ProductFormat, Record<ProductSize, number>> = {
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
 
-// Personalisation fee for a build, by builder template. This is the figure the
-// site DISPLAYS. What the customer is actually charged is the personalisationFee
-// field on the product document in Sanity, which checkout.mjs reads -- so these
-// must be kept in step with Sanity, not with each other.
-export const PERSONALISATION_FEE: Record<string, number> = {
-  strip: 25,
-  cover: 10,
-  'cover-fullbleed': 10,
-  'icon-portrait': 10,
-  'icon-landscape': 10,
-};
+// NOTE: there is deliberately no PERSONALISATION_FEE constant here. The fee is
+// read from the personalisationFee field on the product document in Sanity --
+// the same field checkout.mjs prices from -- so what is displayed and what is
+// charged cannot drift. A missing value fails the build rather than falling
+// back to a number, because a silent fallback is how you undercharge.
 
 export const SIZES: Record<ProductSize, string> = {
   small: 'Small (12x8")',

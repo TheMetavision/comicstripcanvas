@@ -54,6 +54,15 @@ export const productsByCategoryQuery = `
   }
 `;
 
+// Personalisation fees by slug. /personalise prices its cards from this so the
+// cards, the product pages and checkout.mjs all read the one field in Sanity.
+export const personalisationFeesQuery = `
+  *[_type == "product" && slug.current in $slugs] {
+    "slug": slug.current,
+    personalisationFee
+  }
+`;
+
 export const productBySlugQuery = `
   *[_type == "product" && slug.current == $slug][0] {
     _id,
@@ -71,6 +80,7 @@ export const productBySlugQuery = `
     tags,
     featured,
     isPersonalised,
+    personalisationFee,
     seo,
     "relatedProducts": *[_type == "product" && category == ^.category && slug.current != $slug][0..2] {
       _id,

@@ -28,11 +28,28 @@ interface Props {
   template: BuilderTemplate;
   /** "customer" (default) or "studio". Both behave identically for now. */
   mode?: BuilderMode;
+  /**
+   * The product's personalisation fee, in pounds, read from Sanity by the page.
+   * Passed in rather than looked up here so the basket line, the product page
+   * and checkout all price from the one field. Required on purpose: no default,
+   * because a default would quietly undercharge.
+   */
+  personalisationFee: number;
 }
 
-const { template, mode = 'customer' } = Astro.props;
+const { template, mode = 'customer', personalisationFee } = Astro.props;
 
-const builderData = JSON.stringify({ PATHS, COVER, CAPBOX, BOXES, METRICS });
+if (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee)) {
+  throw new Error(
+    `ProductBuilder: personalisationFee must be a number (got ${JSON.stringify(personalisationFee)}). ` +
+    'It comes from the personalisationFee field on the product in Sanity.'
+  );
+}
+
+const builderData = JSON.stringify({
+  PATHS, COVER, CAPBOX, BOXES, METRICS,
+  PERSONALISATION_FEE: personalisationFee,
+});
 ---
 
 <div

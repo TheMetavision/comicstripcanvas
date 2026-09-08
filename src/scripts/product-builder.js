@@ -25,7 +25,7 @@
  *      downloaded draft. Inlining restores the prototype's draft exactly.
  */
 
-import { PRICES, PERSONALISATION_FEE } from '../data/products';
+import { PRICES } from '../data/products';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -67,7 +67,7 @@ export function initProductBuilder() {
   const dataEl = document.getElementById('csc-builder-data');
   if (!root || !dataEl) return;
 
-  const { PATHS, COVER, CAPBOX, BOXES, METRICS } = JSON.parse(dataEl.textContent);
+  const { PATHS, COVER, CAPBOX, BOXES, METRICS, PERSONALISATION_FEE } = JSON.parse(dataEl.textContent);
 
   /** "customer" | "studio" -- plumbed through; both behave identically today. */
   const MODE = root.dataset.mode === 'studio' ? 'studio' : 'customer';
@@ -1525,7 +1525,7 @@ export function initProductBuilder() {
         format: cartFormat,
         size: cartSize,
         quantity: 1,
-        unitPrice: (PRICES[cartFormat] || {})[cartSize] + (PERSONALISATION_FEE[TK] || 0),
+        unitPrice: (PRICES[cartFormat] || {})[cartSize] + PERSONALISATION_FEE,
         accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
         imageUrl: ds.productImage || '',
         personalisationId: saveId,

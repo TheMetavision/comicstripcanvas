@@ -2,8 +2,8 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import FAQAccordion from '../components/FAQAccordion.astro';
 import { sanityClient } from '../lib/sanity';
-import { faqsByPageQuery } from '../lib/queries';
-import { PRICES, PERSONALISATION_FEE } from '../data/products';
+import { faqsByPageQuery, personalisationFeesQuery } from '../lib/queries';
+import { PRICES } from '../data/products';
 
 const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
 
@@ -12,13 +12,11 @@ const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
 // three that mount it.
 //
 // `slug` must match a key of BUILDER_TEMPLATE in src/pages/store/[slug].astro --
-// that map is what decides whether a product page renders the builder at all.
-// `template` must match a key of PERSONALISATION_FEE, so the fee shown here is
-// the same number checkout charges rather than a copy of it.
-const STYLES = [
+// that map is what decides whether a product page renders the builder at all --
+// and must be a product in Sanity carrying a personalisationFee.
+const STYLE_DEFS = [
   {
     slug: 'personalised-book-covers',
-    template: 'cover',
     label: 'Comic Book Cover',
     desc: 'You as the star of a bold, vintage-style comic book cover.',
     img: 'https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg',
@@ -27,7 +25,6 @@ const STYLES = [
   },
   {
     slug: 'personalised-icons',
-    template: 'icon-portrait',
     label: 'Comic Book Icon',
     desc: 'Your portrait transformed into a striking pop-art graphic icon.',
     img: 'https://cdn.sanity.io/images/lwbwahym/production/a30bbbcbffdf8289dd7b3def522f2075abe2e50d-2752x1536.jpg',
@@ -36,15 +33,29 @@ const STYLES = [
   },
   {
     slug: 'personalised-strips',
-    template: 'strip',
     label: 'Comic Book Strip',
     desc: 'Your story told across multiple panels in classic comic strip style.',
     img: 'https://cdn.sanity.io/images/lwbwahym/production/5895d21b1e695781263a08dc0acf608cdc8c098f-1248x832.jpg',
     accent: 'text-comic-red',
     hover: 'hover:border-comic-red',
   },
-].map((style) => {
-  const fee = PERSONALISATION_FEE[style.template];
+];
+
+// Fees come from Sanity, not from a constant here, so a card can never quote a
+// figure checkout would not charge. Missing means the build stops: a fallback
+// number is exactly the bug this is meant to prevent.
+const feeRows: Array<{ slug: string; personalisationFee?: number }> =
+  await sanityClient.fetch(personalisationFeesQuery, { slugs: STYLE_DEFS.map((s) => s.slug) });
+const feeBySlug = new Map(feeRows.map((r) => [r.slug, r.personalisationFee]));
+
+const STYLES = STYLE_DEFS.map((style) => {
+  const fee = feeBySlug.get(style.slug);
+  if (typeof fee !== 'number' || !Number.isFinite(fee)) {
+    throw new Error(
+      `No personalisationFee in Sanity for "${style.slug}" (got ${JSON.stringify(fee)}). ` +
+      'Set it on the product document -- /personalise prices its cards from that field.'
+    );
+  }
   // Matches the "from" price on the product page: cheapest format plus the fee.
   return { ...style, fee, from: PRICES.poster.small + fee };
 });

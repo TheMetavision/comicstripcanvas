@@ -2,7 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
-import { PRICES, FORMAT_LABELS, SIZES, PERSONALISATION_FEE } from '../../data/products';
+import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
 import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
@@ -49,7 +49,16 @@ const BUILDER_TEMPLATE: Record<string, 'strip' | 'cover' | 'icon-portrait'> = {
 };
 const builderTemplate = BUILDER_TEMPLATE[product.slug];
 
-const personalisationFee = builderTemplate ? PERSONALISATION_FEE[builderTemplate] : undefined;
+// The fee comes from Sanity, the same field checkout.mjs prices from. A build
+// that mounts the builder without one is a build that would display a price it
+// cannot charge, so stop rather than guess.
+const personalisationFee = product.personalisationFee;
+if (builderTemplate && (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee))) {
+  throw new Error(
+    `Product "${product.slug}" mounts the builder but has no personalisationFee in Sanity ` +
+    `(got ${JSON.stringify(personalisationFee)}). Set it on the product document.`
+  );
+}
 const personalisedFrom =
   personalisationFee !== undefined ? PRICES.poster.small + personalisationFee : undefined;
 
@@ -237,7 +246,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
             Drop your photos in, set your wording and choose your size. Download a draft to check
             it over before you order.
           </p>
-          <ProductBuilder template={builderTemplate} mode="customer" />
+          <ProductBuilder template={builderTemplate} mode="customer" personalisationFee={personalisationFee} />
         </div>
       )}
     </div>

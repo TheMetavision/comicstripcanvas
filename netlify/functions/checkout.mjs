@@ -14,9 +14,21 @@ const sanity = createClient({
 
 const isPersonalisationId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2024-12-18.acacia',
-});
+// Built on first use, not at import. `new Stripe()` throws without a key, and
+// at module scope that throw lands at IMPORT time -- before the handler exists
+// -- so the browser gets an opaque 500 with no JSON body and no log line from
+// this function, on the one request that matters most. Memoised, so warm
+// containers still reuse one client. Matches webhook.mjs, order-shipped.mjs and
+// personalisation-action.mjs.
+let stripeClient;
+function getStripe() {
+  if (stripeClient) return stripeClient;
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: '2024-12-18.acacia',
+  });
+  return stripeClient;
+}
 
 const FORMAT_LABELS = {
   poster: 'Poster Print',
@@ -42,6 +54,15 @@ export default async (req, context) => {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const stripe = getStripe();
+  if (!stripe) {
+    console.error('checkout: STRIPE_SECRET_KEY is not set — cannot create a session.');
+    return new Response(JSON.stringify({ error: 'Payments are not configured on this deploy' }), {
+      status: 503,
       headers: { 'Content-Type': 'application/json' },
     });
   }
