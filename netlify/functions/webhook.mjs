@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
+import { emailHeader } from './_shared/email.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -52,7 +53,6 @@ const SIZE_LABELS = {
 
 // Brand constants
 const BRAND = {
-  logo: 'https://comicstripcanvas.co.uk/logo.png',
   yellow: '#FFF200',
   pink: '#EC008C',
   cyan: '#00AEEF',
@@ -419,18 +419,6 @@ async function fulfilOrder(session) {
       }
 
       // ── Email templates ──────────────────────────────────────
-      const emailHeader = `
-        <div style="background: ${BRAND.dark}; padding: 32px 24px; text-align: center;">
-          <table role="presentation" style="margin: 0 auto; border-collapse: collapse;">
-            <tr>
-              <td style="text-align: center;">
-                <img src="${BRAND.logo}" alt="Comic Strip Canvas" width="280" style="max-width: 280px; width: 100%; height: auto; display: block; margin: 0 auto; border: 0;" />
-              </td>
-            </tr>
-          </table>
-          <p style="color: #777; margin: 16px 0 0; font-size: 13px; letter-spacing: 1px; text-align: center;">BOLD POP CULTURE WALL ART</p>
-        </div>`;
-
       const emailFooter = `
         <div style="background: ${BRAND.dark}; padding: 24px; text-align: center;">
           <p style="margin: 0 0 8px; font-size: 12px; color: #666;">

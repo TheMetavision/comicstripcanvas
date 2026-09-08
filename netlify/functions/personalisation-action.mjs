@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
+import { EMAIL_BRAND, emailHeader, button } from './_shared/email.mjs';
 
 /**
  * Studio document actions that need to reach outside Sanity.
@@ -60,13 +61,6 @@ const newToken = () => {
   const b = new Uint8Array(24);
   crypto.getRandomValues(b);
   return [...b].map((n) => n.toString(16).padStart(2, '0')).join('');
-};
-
-const BRAND = {
-  yellow: '#FFF200',
-  pink: '#EC008C',
-  dark: '#111111',
-  site: 'https://comicstripcanvas.co.uk',
 };
 
 export default async (req, context) => {
@@ -200,42 +194,61 @@ async function rerender(doc, id, origin) {
 /* ------------------------------------------------------------------ email --- */
 function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject }) {
   const mailto = `mailto:${shopEmail}?subject=${encodeURIComponent('Re: ' + subject)}`;
+  const B = EMAIL_BRAND;
+  const body = `font-family: ${B.sans}; font-size: 15px; line-height: 1.6; color: #444444;`;
+
   return `
-  <div style="background:#f4f4f4;padding:24px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-    <div style="max-width:640px;margin:0 auto;background:#ffffff;">
-      <div style="background:${BRAND.dark};padding:24px;text-align:center;">
-        <p style="margin:0;color:${BRAND.yellow};font-size:20px;font-weight:bold;letter-spacing:1px;">COMIC STRIP CANVAS</p>
-      </div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: #f4f4f4;">
+  <tr>
+    <td align="center" style="padding: 24px 12px;">
 
-      <div style="padding:28px 24px;">
-        <h1 style="margin:0 0 8px;font-size:22px;color:${BRAND.dark};">Your artwork is ready to approve</h1>
-        <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#444;">
-          This is exactly the layout you set in the builder &mdash; your photos, your wording,
-          your sizing. Nothing has been moved.
-        </p>
+      <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width: 640px; max-width: 640px; border-collapse: collapse; background: #ffffff;">
+        <tr>
+          <td style="padding: 0;">${emailHeader}</td>
+        </tr>
 
-        <div style="border:3px solid ${BRAND.dark};margin:0 0 22px;">
-          <img src="${proofUrl}" alt="Your artwork proof" style="display:block;width:100%;height:auto;border:0;" />
-        </div>
+        <tr>
+          <td style="padding: 28px 24px 4px; ${body}">
+            <h1 style="margin: 0 0 10px; font-family: ${B.sans}; font-size: 22px; line-height: 1.3; color: ${B.dark};">Your artwork is ready to approve</h1>
+            <p style="margin: 0; ${body}">This is exactly the layout you set in the builder &mdash; your photos, your wording, your sizing. Nothing has been moved.</p>
+          </td>
+        </tr>
 
-        <div style="text-align:center;margin:0 0 20px;">
-          <a href="${approveLink}"
-             style="display:inline-block;background:${BRAND.yellow};color:#000;text-decoration:none;
-                    font-size:17px;font-weight:bold;letter-spacing:1px;padding:15px 38px;
-                    border:3px solid #000;">APPROVE THIS ARTWORK</a>
-        </div>
+        <tr>
+          <td align="center" style="padding: 22px 24px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+              <tr>
+                <td style="border: 3px solid ${B.dark}; font-size: 0; line-height: 0;">
+                  <img src="${proofUrl}" alt="Your artwork proof" width="586"
+                       style="display: block; width: 100%; max-width: 586px; height: auto; border: 0; outline: none; text-decoration: none;" />
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-        <p style="margin:0;text-align:center;font-size:13px;color:#666;">
-          <a href="${mailto}" style="color:${BRAND.pink};">Something&rsquo;s not right?</a>
-          Reply and we&rsquo;ll put it right before anything is printed.
-        </p>
-      </div>
+        <tr>
+          <td align="center" style="padding: 0 24px 22px;">${button(approveLink, 'Approve this artwork')}</td>
+        </tr>
 
-      <div style="background:${BRAND.dark};padding:18px;text-align:center;">
-        <a href="${BRAND.site}" style="color:${BRAND.pink};text-decoration:none;font-size:12px;">comicstripcanvas.co.uk</a>
-      </div>
-    </div>
-  </div>`;
+        <tr>
+          <td align="center" style="padding: 0 24px 30px; font-family: ${B.sans}; font-size: 13px; line-height: 1.6; color: #666666;">
+            <a href="${mailto}" style="color: ${B.pink}; text-decoration: underline;">Something&rsquo;s not right?</a>
+            Reply and we&rsquo;ll put it right before anything is printed.
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" bgcolor="${B.dark}" style="background: ${B.dark}; padding: 22px 24px;">
+            <a href="${B.site}" style="font-family: ${B.sans}; font-size: 12px; color: ${B.pink}; text-decoration: none;">comicstripcanvas.co.uk</a>
+            <p style="margin: 8px 0 0; font-family: ${B.sans}; font-size: 11px; color: #555555;">&copy; ${new Date().getFullYear()} Comic Strip Canvas. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>`;
 }
 
 // NOTE: deliberately NO `export const config = { path }` here.
