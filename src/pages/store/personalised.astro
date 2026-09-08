@@ -2,10 +2,13 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { createClient } from '@sanity/client';
 
+// Build-time only, so uncached for the same reason as src/lib/sanity.ts: the
+// CDN lags a publish, and a build triggered by a content edit could otherwise
+// bake in the content it was meant to pick up.
 const client = createClient({
   projectId: 'lwbwahym',
   dataset: 'production',
-  useCdn: true,
+  useCdn: false,
   apiVersion: '2024-01-01',
 });
 
