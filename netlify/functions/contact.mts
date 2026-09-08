@@ -7,13 +7,21 @@
  * and sends a branded acknowledgement back to the customer.
  *
  * Flow:
- *   1. Validate request (POST, JSON body, required fields)
- *   2. Honeypot check (`botcheck` must be empty)
- *   3. Rate-limit by hashed IP (3 submissions per 10 minutes per IP)
- *   4. Write a Sanity doc (status: 'new', generated refCode)
- *   5. Send notification email to the team via Resend (best-effort)
- *   6. Send acknowledgement email to the customer via Resend (best-effort)
- *   7. Return { success: true, refCode }
+ *   1. Validate request (POST, JSON body)
+ *   2. Verify the Cloudflare Turnstile token against siteverify
+ *   3. Honeypot check (`botcheck` and `companyWebsite` must be empty)
+ *   4. Reject a message body carrying more than two URLs
+ *   5. Validate required fields
+ *   6. Rate-limit by hashed IP (3 submissions per 10 minutes per IP)
+ *   7. Write a Sanity doc (status: 'new', generated refCode)
+ *   8. Send notification email to the team via Resend (best-effort)
+ *   9. Send acknowledgement email to the customer via Resend (best-effort)
+ *  10. Return { success: true, refCode }
+ *
+ * Spam defences run before anything is written or emailed, and before the
+ * Sanity/Resend clients are built, so a rejected submission costs one outbound
+ * request to Cloudflare and nothing else. The two honeypots answer 200 with a
+ * fake reference: a bot that is told it failed simply retries with a variation.
  *
  * Sanity write happens BEFORE either email: if email fails, the submission
  * is still persisted and recoverable. Both sends are best-effort and never
@@ -24,6 +32,9 @@
  *   SANITY_PROJECT_ID, SANITY_DATASET, SANITY_API_TOKEN
  *   RESEND_API_KEY, NOTIFICATION_FROM, NOTIFICATION_TO
  *   BRAND_NAME, SITE_URL
+ *   TURNSTILE_SECRET_KEY  Cloudflare Turnstile secret (server side). The public
+ *                     TURNSTILE_SITE_KEY is read by src/pages/contact.astro at
+ *                     BUILD time, so changing it needs a rebuild.
  *   LOGO_URL          absolute https URL of the logo for the email header
  *   EMAIL_HEADER_BG   header background (default #0e0e14; use #000000 for a
  *                     logo that sits on a black background, to avoid a seam)
@@ -87,6 +98,79 @@ function sanitiseString(v, max = 500) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// Counts URL-ish things in a message. Two branches: anything with a scheme or a
+// `www.` prefix (matched broadly, since that shape is unambiguous), and bare
+// hostnames restricted to a list of real TLDs -- an open `.[a-z]{2,}` rule turns
+// an unspaced sentence like "great.Thanks" into a false positive. The leading
+// lookbehind keeps the domain half of an email address from being counted.
+const URL_TLDS = [
+  'com', 'net', 'org', 'io', 'co', 'uk', 'us', 'de', 'fr', 'nl', 'es', 'it',
+  'pl', 'ru', 'cn', 'in', 'br', 'jp', 'au', 'ca', 'ch', 'se', 'no', 'dk', 'fi',
+  'info', 'biz', 'me', 'tv', 'cc', 'xyz', 'top', 'shop', 'store', 'site',
+  'online', 'club', 'live', 'link', 'click', 'icu', 'vip', 'pro', 'app', 'dev',
+  'ai', 'gg', 'to', 'ly', 'art', 'blog', 'design', 'studio', 'agency', 'media',
+  'email', 'fun', 'life', 'world',
+].join('|');
+
+const URL_RE = new RegExp(
+  String.raw`(?<![@\w.-])(?:` +
+    String.raw`(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>"']+` +
+    '|' +
+    String.raw`[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:` +
+      URL_TLDS +
+    String.raw`)(?![a-z])(?:\/[^\s<>"']*)?` +
+  ')',
+  'gi'
+);
+
+// More than this many URLs in a message body is spam, not an enquiry.
+const MAX_URLS = 2;
+
+function countUrls(text) {
+  if (typeof text !== 'string' || !text) return 0;
+  const matches = text.match(URL_RE);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * Verifies a Turnstile token with Cloudflare.
+ *
+ * Returns { ok: true } on a pass, or { ok: false, status, error } describing how
+ * to answer. A token Cloudflare rejects is the caller's problem (400); a
+ * siteverify call that never completes is ours (503, retryable) -- failing open
+ * there would hand every spammer a trivial bypass.
+ */
+async function verifyTurnstile(secret, token, remoteIp) {
+  const body = new URLSearchParams({ secret, response: token });
+  if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
+
+  let outcome;
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    outcome = await res.json();
+  } catch (err) {
+    console.error('turnstile siteverify unreachable:', err && err.message);
+    return {
+      ok: false,
+      status: 503,
+      error: 'Could not run the anti-spam check right now. Please try again in a moment.',
+    };
+  }
+
+  if (outcome && outcome.success) return { ok: true };
+
+  console.warn('turnstile verification failed:', JSON.stringify(outcome && outcome['error-codes']));
+  return {
+    ok: false,
+    status: 400,
+    error: 'Anti-spam check failed. Please reload the page and try again.',
+  };
 }
 
 function escapeHtml(s) {
@@ -173,6 +257,82 @@ export const handler = async (event) => {
     return { statusCode: 405, headers, body: JSON.stringify({ success: false, error: 'Method not allowed' }) };
   }
 
+  // ── Parse the body ──────────────────────────────────────────────
+  let payload;
+  try {
+    payload = JSON.parse(event.body || '{}');
+  } catch {
+    return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'Invalid request body.' }) };
+  }
+
+  // ── Turnstile — runs before anything is read, written or emailed ─
+  // Env vars are read here, inside the handler, not at module scope.
+  const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '';
+  if (!TURNSTILE_SECRET_KEY) {
+    console.error('contact endpoint misconfigured: TURNSTILE_SECRET_KEY is not set');
+    return {
+      statusCode: 503,
+      headers,
+      body: JSON.stringify({
+        success: false,
+        error: 'The contact form is temporarily unavailable. Please email us directly.',
+      }),
+    };
+  }
+
+  // The widget posts `cf-turnstile-response`; the form's own script sends it as
+  // `turnstileToken`. Accept either so a plain form post also works.
+  const turnstileToken = sanitiseString(
+    payload.turnstileToken || payload['cf-turnstile-response'] || '',
+    2048
+  );
+  if (!turnstileToken) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({
+        success: false,
+        error: 'Anti-spam check missing. Please complete the challenge and try again.',
+      }),
+    };
+  }
+
+  const clientIp = extractIp(event);
+  const verdict = await verifyTurnstile(TURNSTILE_SECRET_KEY, turnstileToken, clientIp);
+  if (!verdict.ok) {
+    return {
+      statusCode: verdict.status,
+      headers,
+      body: JSON.stringify({ success: false, error: verdict.error }),
+    };
+  }
+
+  // ── Honeypots — answer 200 so the bot believes it succeeded ──────
+  // `botcheck` is an off-screen checkbox, `companyWebsite` an off-screen text
+  // field. Neither is reachable by keyboard or screen reader, so anything in
+  // either one is automation. The submission is dropped without a trace.
+  const honeypotTripped =
+    (typeof payload.botcheck === 'string' && payload.botcheck.trim().length > 0) ||
+    (typeof payload.companyWebsite === 'string' && payload.companyWebsite.trim().length > 0);
+  if (honeypotTripped) {
+    console.warn('contact honeypot tripped — submission discarded');
+    return { statusCode: 200, headers, body: JSON.stringify({ success: true, refCode: 'MSG-IGNORED' }) };
+  }
+
+  // ── Link limit — a genuine enquiry does not carry a link farm ────
+  // Counted on the raw body, before sanitiseString truncates it, so links
+  // padded out past the 5000-character cut still count.
+  if (countUrls(typeof payload.message === 'string' ? payload.message : '') > MAX_URLS) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({
+        success: false,
+        error: `Your message contains too many links (maximum ${MAX_URLS}). Please remove some and try again.`,
+      }),
+    };
+  }
+
   // ── Env-var sanity check ────────────────────────────────────────
   const SANITY_PROJECT_ID = process.env.SANITY_PROJECT_ID || '';
   const SANITY_DATASET = process.env.SANITY_DATASET || 'production';
@@ -203,19 +363,7 @@ export const handler = async (event) => {
     siteUrl: SITE_URL,
   };
 
-  // ── Parse + validate ────────────────────────────────────────────
-  let payload;
-  try {
-    payload = JSON.parse(event.body || '{}');
-  } catch {
-    return { statusCode: 400, headers, body: JSON.stringify({ success: false, error: 'Invalid request body.' }) };
-  }
-
-  // Honeypot — silently 200 so bots think they succeeded
-  if (typeof payload.botcheck === 'string' && payload.botcheck.length > 0) {
-    return { statusCode: 200, headers, body: JSON.stringify({ success: true, refCode: 'MSG-IGNORED' }) };
-  }
-
+  // ── Validate the fields ─────────────────────────────────────────
   const name = sanitiseString(payload.name, 120);
   const email = sanitiseString(payload.email, 200);
   const phone = sanitiseString(payload.phone, 80);
@@ -250,8 +398,7 @@ export const handler = async (event) => {
   const resend = new Resend(RESEND_API_KEY);
 
   // ── Rate-limit: 3 submissions per IP per rolling 10 minutes ─────
-  const ip = extractIp(event);
-  const submitterIp = hashIp(ip);
+  const submitterIp = hashIp(clientIp);
   try {
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const recentCount = await sanity.fetch(
