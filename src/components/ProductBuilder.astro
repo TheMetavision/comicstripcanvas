@@ -34,12 +34,13 @@ interface Props {
    * and checkout all price from the one field. Required on purpose: no default,
    * because a default would quietly undercharge.
    */
-  personalisationFee: number;
+  personalisationFee?: number;
 }
 
 const { template, mode = 'customer', personalisationFee } = Astro.props;
 
-if (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee)) {
+// Only customer mode prices anything, so only customer mode needs the fee.
+if (mode === 'customer' && (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee))) {
   throw new Error(
     `ProductBuilder: personalisationFee must be a number (got ${JSON.stringify(personalisationFee)}). ` +
     'It comes from the personalisationFee field on the product in Sanity.'
@@ -48,7 +49,7 @@ if (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFe
 
 const builderData = JSON.stringify({
   PATHS, COVER, CAPBOX, BOXES, METRICS,
-  PERSONALISATION_FEE: personalisationFee,
+  PERSONALISATION_FEE: personalisationFee ?? 0,
 });
 ---
 
@@ -95,6 +96,7 @@ const builderData = JSON.stringify({
     <aside
       class="flex w-full flex-none flex-col gap-5 overflow-y-auto border-t-4 border-black bg-panel-dark p-4 lg:w-[352px] lg:border-l-4 lg:border-t-0"
     >
+      {mode === 'customer' && (
       <section id="consentBox" class="border-4 border-comic-yellow bg-dark-grey p-3">
         <div class="flex items-start gap-2.5">
           <input type="checkbox" id="consent" class="mt-0.5 h-5 w-5 flex-none accent-comic-red" />
@@ -105,6 +107,7 @@ const builderData = JSON.stringify({
         </div>
         <p class="b-hint" id="consentHint">Tick this before adding your first photo.</p>
       </section>
+      )}
 
       <section id="colourBox">
         <h3 id="colourTitle" class="b-h">Border colour</h3>
@@ -207,6 +210,7 @@ const builderData = JSON.stringify({
         </p>
       </section>
 
+      {mode === 'customer' && (
       <section id="basketBox">
         <h3 class="b-h">Add to basket</h3>
         <label for="notes" class="b-lab">Anything we should know?</label>
@@ -216,6 +220,18 @@ const builderData = JSON.stringify({
         <button id="addBasket" class="b-btn b-btn-primary mt-3 w-full" disabled>Add to basket</button>
         <p class="b-hint" id="basketHint"></p>
       </section>
+      )}
+      {mode === 'studio' && (
+      <section id="studioBox">
+        <h3 class="b-h">Save as product</h3>
+        <label for="studioTitle" class="b-lab">Product title</label>
+        <input id="studioTitle" type="text" maxlength="120"
+          class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"
+          placeholder="e.g. Adam Ant &mdash; Stand and Deliver" />
+        <button id="saveProduct" class="b-btn b-btn-primary mt-3 w-full">Save as product</button>
+        <p class="b-hint" id="studioHint">Renders the print master and creates a draft product in the Studio.</p>
+      </section>
+      )}
     </aside>
   </div>
 

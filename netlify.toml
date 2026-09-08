@@ -36,6 +36,17 @@
   memory = 3008
   external_node_modules = ["@resvg/resvg-js"]
 
+# The studio print master is the same size job, for the same reason.
+[functions."studio-render-background"]
+  memory = 3008
+  external_node_modules = ["@resvg/resvg-js"]
+
+# studio-save renders the listing image itself, so it needs resvg too -- but it
+# stays a synchronous function because it answers with the new product's URL.
+[functions."studio-save"]
+  memory = 3008
+  external_node_modules = ["@resvg/resvg-js"]
+
 # Photo retention, once a day. Customer photographs are deleted 90 days after
 # the order was dispatched, and abandoned builds 30 days after creation; see
 # netlify/functions/retention.mjs for the rules and what is exempt.
@@ -52,6 +63,14 @@
 [[redirects]]
   from = "/api/render-personalisation"
   to = "/.netlify/functions/render-personalisation-background"
+  status = 200
+  force = true
+
+# Same arrangement for the studio print master: studio-save posts to
+# /api/studio-render and does not need to know the -background suffix.
+[[redirects]]
+  from = "/api/studio-render"
+  to = "/.netlify/functions/studio-render-background"
   status = 200
   force = true
 

@@ -990,7 +990,9 @@ export function initProductBuilder() {
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
       layout(id); select(id); refresh(); palette(probe);
-      upload(id, file);            // goes up now, not at Add to basket
+      // Customer mode uploads as photos are dropped. Studio mode keeps the
+      // file in state and never sends it anywhere until Save as product.
+      if (MODE === 'customer') upload(id, file);
     };
     probe.src = url;
   }
@@ -1037,8 +1039,12 @@ export function initProductBuilder() {
   /* Must be given before the first photo goes in. The timestamp is what ends up
      on the pendingPersonalisation document as consentAt. */
   let consentAt = null;
-  const consentBox = $('consent');
-  consentBox.addEventListener('change', () => {
+  const consentBox = $('consent');            // customer mode only
+  /* Studio mode has nothing to consent to: the photos are never uploaded, so
+     they stay in the browser for the length of the session and go no further. */
+  const consented = () => MODE === 'studio' || !!(consentBox && consentBox.checked);
+  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+  if (consentBox) consentBox.addEventListener('change', () => {
     if (consentBox.checked) consentAt = consentAt || new Date().toISOString();
     else consentAt = null;
     $('consentHint').textContent = consentBox.checked
@@ -1047,7 +1053,7 @@ export function initProductBuilder() {
     refresh();
   });
   function hasConsent() {
-    if (consentBox.checked) return true;
+    if (consented()) return true;
     $('consentHint').textContent = 'Please tick this before adding photos.';
     try { consentBox.focus(); } catch (e) { /* not focusable yet */ }
     return false;
@@ -1310,13 +1316,24 @@ export function initProductBuilder() {
     if (btn) {
       const failed = [...state.values()].filter((s) => !s.demo && s.uploadError).length;
       btn.disabled = basketBusy || uploading > 0 || failed > 0
-        || !consentBox.checked || real !== total;
+        || !consented() || real !== total;
       $('basketHint').textContent = basketBusy ? ''
-        : !consentBox.checked ? 'Tick the consent box to get started.'
+        : !consented() ? 'Tick the consent box to get started.'
           : uploading > 0 ? `Uploading — ${uploading} photo${uploading === 1 ? '' : 's'} to go…`
             : failed > 0 ? 'A photo did not upload. Drop it in again to retry.'
               : real === total ? ''
                 : `Add your own photo to every panel — ${total - real} to go.`;
+    }
+
+    const save = $('saveProduct');
+    if (save) {
+      const titled = ($('studioTitle').value || '').trim().length > 0;
+      save.disabled = studioBusy || real !== total || !titled;
+      if (studioMsg) { showStudioMsg(); return; }
+      $('studioHint').textContent = studioBusy ? ''
+        : real !== total ? `Fill every panel — ${total - real} to go.`
+          : !titled ? 'Give the product a title before saving.'
+            : 'Renders the print master and creates a draft product in the Studio.';
     }
   }
   /* The preview and the print file are the same document. Rather than rebuilding
@@ -1461,16 +1478,22 @@ export function initProductBuilder() {
     const blob = new Blob([s], { type: 'image/svg+xml' });
     const img = new Image(); const url = URL.createObjectURL(blob);
     img.onload = () => {
-      const c = T.canvas, k = 1400 / Math.max(c.width, c.height);
+      // Studio mode is producing artwork to sell, so it gets the canvas at its
+      // own size with nothing stamped across it. Customer mode stays capped and
+      // watermarked: that draft is a preview, not a deliverable.
+      const full = MODE === 'studio';
+      const c = T.canvas, k = full ? 1 : 1400 / Math.max(c.width, c.height);
       const cv = document.createElement('canvas'); cv.width = Math.round(c.width * k); cv.height = Math.round(c.height * k);
       const g = cv.getContext('2d'); g.drawImage(img, 0, 0, cv.width, cv.height);
-      g.save(); g.globalAlpha = 0.18; g.fillStyle = '#000';
-      g.font = `700 ${Math.round(cv.width / 16)}px ui-sans-serif,system-ui,sans-serif`;
-      g.textAlign = 'center'; g.translate(cv.width / 2, cv.height / 2); g.rotate(-Math.PI / 9);
-      g.fillText('DRAFT — no comic effect applied', 0, 0); g.restore();
+      if (!full) {
+        g.save(); g.globalAlpha = 0.18; g.fillStyle = '#000';
+        g.font = `700 ${Math.round(cv.width / 16)}px ui-sans-serif,system-ui,sans-serif`;
+        g.textAlign = 'center'; g.translate(cv.width / 2, cv.height / 2); g.rotate(-Math.PI / 9);
+        g.fillText('DRAFT — no comic effect applied', 0, 0); g.restore();
+      }
       cv.toBlob((b) => {
         const a = document.createElement('a'); a.href = URL.createObjectURL(b);
-        a.download = `${TK}-draft.png`; a.click();
+        a.download = `${TK}-${full ? 'studio' : 'draft'}.png`; a.click();
       });
       URL.revokeObjectURL(url);
     };
@@ -1481,12 +1504,16 @@ export function initProductBuilder() {
      line in the basket carrying the returned pendingPersonalisation id. The photos
      go to Netlify Blobs via the function; they never touch Sanity. */
   let basketBusy = false;
-  $('addBasket').addEventListener('click', async () => {
+  let studioBusy = false;
+  /* Sticky result of the last save. refresh() runs right after a save finishes
+     and would otherwise overwrite the outcome with the idle hint. */
+  let studioMsg = null;
+  on('addBasket', 'click', async () => {
     if (basketBusy) return;
     const filled = T.panels
       .map((p) => [p.id, state.get(p.id)])
       .filter(([, s]) => s && !s.demo && s.file);
-    if (filled.length !== T.panels.length || !consentBox.checked) return;
+    if (filled.length !== T.panels.length || !consented()) return;
     if (uploading > 0 || !saveId) return;      // nothing to attach the brief to yet
 
     const btn = $('addBasket'), hint = $('basketHint');
@@ -1542,6 +1569,87 @@ export function initProductBuilder() {
       refresh();
     }
   });
+
+  /* ---------- studio: save as product ---------- */
+  /* The photos have stayed in the browser up to this point. They are sent once,
+     with the recipe and the scene, and the function renders the print master and
+     creates a draft product; it never stores the photos. */
+  function studioSecret(reset) {
+    let v = '';
+    try { v = reset ? '' : (sessionStorage.getItem('csc-studio-secret') || ''); } catch (e) { /* private mode */ }
+    if (!v) {
+      v = window.prompt('Studio secret (PERSONALISATION_ACTION_SECRET)') || '';
+      try { sessionStorage.setItem('csc-studio-secret', v); } catch (e) { /* private mode */ }
+    }
+    return v;
+  }
+
+  on('saveProduct', 'click', async () => {
+    if (studioBusy) return;
+    const title = ($('studioTitle').value || '').trim();
+    const filled = T.panels
+      .map((p) => [p.id, state.get(p.id)])
+      .filter(([, s]) => s && !s.demo && s.file);
+    if (!title || filled.length !== T.panels.length) return;
+
+    const btn = $('saveProduct'), hint = $('studioHint');
+    studioBusy = true; btn.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Saving…';
+    hint.textContent = 'Rendering the print master…';
+    try {
+      const r = recipe();
+      const fd = new FormData();
+      fd.append('title', title);
+      fd.append('sceneSvg', r.svg || '');
+      const rest = Object.assign({}, r); delete rest.svg;
+      fd.append('recipe', JSON.stringify(rest));
+      for (const [id, st] of filled) {
+        const sending = await encodeForUpload(st.file);
+        fd.append('image:' + id, sending, sending.name || (id + '.jpg'));
+      }
+      const res = await fetch('/api/studio-save', {
+        method: 'POST',
+        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
+        throw new Error('That secret was not accepted — click Save again to re-enter it.');
+      }
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not save the product');
+
+      studioMsg = {
+        text: `Saved as a draft — listing ${data.listing.width} x ${data.listing.height}, ` +
+              `print master (${data.print.width}px wide) rendering in the background. `,
+        href: data.studioUrl,
+        label: 'Open "' + data.title + '" in the Studio',
+      };
+      btn.textContent = 'Saved';
+      setTimeout(() => { btn.textContent = label; }, 2500);
+    } catch (e) {
+      btn.textContent = label;
+      studioMsg = { text: e.message || 'Something went wrong saving the product.' };
+    } finally {
+      studioBusy = false;
+      refresh();
+    }
+  });
+
+  function showStudioMsg() {
+    const hint = $('studioHint');
+    if (!hint || !studioMsg) return;
+    hint.textContent = studioMsg.text;
+    if (!studioMsg.href) return;
+    const a = document.createElement('a');
+    a.href = studioMsg.href; a.target = '_blank'; a.rel = 'noopener';
+    a.style.color = '#FFF200'; a.style.textDecoration = 'underline';
+    a.textContent = studioMsg.label;
+    hint.appendChild(a);
+  }
+
+  // Editing the title starts a new save, so the last result stops applying.
+  on('studioTitle', 'input', () => { studioMsg = null; refresh(); });
 
   if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
   load(INITIAL);

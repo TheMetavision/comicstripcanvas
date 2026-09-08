@@ -1,0 +1,73 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductBuilder from '../../components/ProductBuilder.astro';
+
+/**
+ * Studio mode: the same builder the customer uses, for the shop to design
+ * catalogue pieces. Photos stay in the browser, drafts download at full size
+ * with no watermark, and Save as product renders the print master and creates a
+ * draft product in Sanity.
+ *
+ * The builder's own switcher only offers variants within one family (cover and
+ * full-bleed cover, portrait and landscape icon), so the family tabs below pick
+ * which family it opens on. `?t=` is applied to the mount point by the inline
+ * script, which runs before the island's module script.
+ *
+ * NOT AUTHENTICATED. There is no admin auth in this project to put it behind --
+ * see the note in the page body. What protects the destructive part is the
+ * shared secret on /api/studio-save: this page cannot create anything without
+ * it, so an unauthenticated visitor gets a builder and nothing else.
+ */
+const FAMILIES = [
+  { key: 'cover', label: 'Cover' },
+  { key: 'icon-portrait', label: 'Icon' },
+  { key: 'strip', label: 'Strip' },
+];
+---
+
+<BaseLayout
+  title="Studio builder"
+  description="Internal design tool."
+  noindex={true}
+>
+  <div class="mx-auto max-w-[1500px] px-4 py-8">
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <h1 class="font-bangers text-3xl uppercase tracking-wide text-off-white">Studio builder</h1>
+      <span class="flex-1"></span>
+      <span class="font-source text-sm text-gray-400">Template:</span>
+      {FAMILIES.map((f) => (
+        <a href={`/admin/studio?t=${f.key}`}
+           data-family={f.key}
+           class="family-tab border-[3px] border-black bg-panel-dark px-4 py-2 font-russo text-sm uppercase tracking-wide text-off-white hover:border-comic-yellow">
+          {f.label}
+        </a>
+      ))}
+    </div>
+
+    <ProductBuilder template="cover" mode="studio" />
+
+    <p class="mt-4 font-source text-xs text-gray-500">
+      Photos stay in this browser and are only sent when you press Save as product.
+      Saving asks for the studio secret once per session.
+    </p>
+  </div>
+
+  <script is:inline>
+    // Runs before the island's module script, so the builder initialises on the
+    // family named in ?t= rather than the mount default.
+    (function () {
+      var allowed = ['cover', 'icon-portrait', 'strip'];
+      var t = new URLSearchParams(location.search).get('t');
+      if (allowed.indexOf(t) === -1) t = 'cover';
+      var root = document.getElementById('csc-builder-root');
+      if (root) root.dataset.template = t;
+      var tabs = document.querySelectorAll('.family-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].dataset.family === t) {
+          tabs[i].style.borderColor = '#FFF200';
+          tabs[i].style.color = '#FFF200';
+        }
+      }
+    })();
+  </script>
+</BaseLayout>
