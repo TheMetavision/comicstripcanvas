@@ -27,6 +27,30 @@ Without it the files are absent in production and every call throws. This is
 the first `included_files` entry in the project — the fonts do **not** work this
 way, they are fetched over HTTP from `${origin}/builder/fonts/`.
 
+## Measured
+
+Nano Banana Pro, these three references, five test photographs:
+
+| Size | Time | Output |
+| ---- | ---- | ------ |
+| 2K   | ~36 s | |
+| 4K   | ~52 s | 5504 × 3072 from a 16:9 source |
+
+All five passed on likeness — faces, poses, framing and the number of people
+came back as they went in.
+
+Known limits, in the order they are likely to be noticed:
+
+- **Clothing text can garble.** The prompt now asks for it letter for letter,
+  which helps but does not guarantee it. A photo whose subject is a slogan
+  t-shirt is the weak case.
+- **Backgrounds shift to the references' purple/orange palette.** Accepted as
+  house style — it is what makes the output look like ours — but it does mean
+  the references' colouring propagates to every order, which is worth
+  remembering before swapping them.
+- **Small framing drift.** Not enough to change the composition, but the crop
+  is not pixel-identical to the source.
+
 ## Choosing them
 
 They define the output, so it is worth being fussy:

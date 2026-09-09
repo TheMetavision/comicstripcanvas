@@ -30,7 +30,8 @@ export const STYLE_PROMPT =
   'of people, same positions, same framing, same crop. Do not add, remove, replace or move anything. Do not ' +
   "change anyone's identity, age, gender or ethnicity. Apply only the linework, colouring, shading and texture " +
   'of the reference style. No text, captions, speech bubbles, borders, panels, watermarks or signatures. ' +
-  'Output one finished image at the same aspect ratio as the photograph.';
+  'Output one finished image at the same aspect ratio as the photograph. ' +
+  'Preserve hair colour and skin tone. Reproduce any printed text on clothing exactly, letter for letter.';
 
 const REF_DIR = fileURLToPath(new URL('./style-refs/', import.meta.url));
 const REF_FILES = ['ref-1.jpg', 'ref-2.jpg', 'ref-3.jpg'];
