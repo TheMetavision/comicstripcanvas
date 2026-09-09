@@ -207,14 +207,13 @@ const builderData = JSON.stringify({
           <div class="b-stat"><span>Uploaded</span><span id="uploaded"></span></div>
         )}
         {/*
-          Studio only. This banner is a production instruction -- "the artwork
-          has to be extended before this can be printed" -- addressed to whoever
-          prepares the file. It shipped visible in customer mode, where a
-          customer picking a canvas was told their own order could not be
-          printed. Not rendered at all outside studio mode, so no future change
-          to refresh() can put it back in front of a customer.
+          The wrap banner that used to sit here is gone entirely, in both modes.
+          It compared the finish's wrap against an ART_WRAP table that was 0 for
+          every template, so it fired on every canvas order -- and build()
+          already extends the background and full-bleed art into the wrap
+          region, so the exported SVG covers it. See the note where ART_WRAP
+          was defined in product-builder.js.
         */}
-        {mode === 'studio' && <div class="b-flag" id="outWarn" hidden></div>}
         <p class="b-hint">
           On canvas the dashed line is the front face &mdash; anything outside it wraps around the
           frame edge and won&rsquo;t be seen head-on.

@@ -134,11 +134,16 @@ async function savePhoto(form, file) {
     }
   }
 
-  await getStore(STORE).set(key, buf, {
+  const store = getStore(STORE);
+  await store.set(key, buf, {
     metadata: {
       panelId,
       contentType: type,
       originalName: str(file.name, 120),
+      // Read by the retention job's orphan sweep. Blobs carry no server-side
+      // timestamp -- list() returns keys and etags only -- so the age of a blob
+      // has to be something we write ourselves.
+      uploadedAt: new Date().toISOString(),
     },
   });
 
@@ -148,24 +153,58 @@ async function savePhoto(form, file) {
       ? new Date(consentRaw).toISOString()
       : new Date().toISOString();
 
-  if (creating) {
-    await sanity.create({
-      _id: id,
-      _type: 'pendingPersonalisation',
-      status: 'draft',
-      photoKeys: [key],
-      styledKeys: [],
-      consentAt,
-      createdAt: new Date().toISOString(),
-    });
-  } else {
-    // unset-then-insert keeps this idempotent when a panel is re-uploaded
-    await sanity
-      .patch(id)
-      .setIfMissing({ photoKeys: [] })
-      .unset([`photoKeys[@ == "${key}"]`])
-      .append('photoKeys', [key])
-      .commit();
+  /* The blob goes up before the document, and if the document write fails the
+     blob is taken back down again.
+
+     The blob is the half with no owner: nothing points at it, so nothing will
+     ever find it again. Before this, a failed create left one behind for good
+     -- retention walks documents, so a blob belonging to no document was
+     invisible to it. A burst of failing uploads (a phone on a bad connection,
+     which is exactly when creates fail) leaked one blob per attempt.
+
+     Writing the document first was the other option and is worse: the id is
+     only handed back on success, so a client that failed after the create
+     would retry and make a SECOND document, leaking documents instead of
+     blobs -- visible in the Studio, and referencing photos that may not exist.
+     Keys are deterministic per panel, so a retry of this path overwrites
+     rather than accumulating. The sweep in retention.mjs catches whatever
+     still slips through, e.g. if this delete fails too. */
+  try {
+    if (creating) {
+      await sanity.create({
+        _id: id,
+        _type: 'pendingPersonalisation',
+        status: 'draft',
+        photoKeys: [key],
+        styledKeys: [],
+        consentAt,
+        createdAt: new Date().toISOString(),
+      });
+    } else {
+      // unset-then-insert keeps this idempotent when a panel is re-uploaded
+      await sanity
+        .patch(id)
+        .setIfMissing({ photoKeys: [] })
+        .unset([`photoKeys[@ == "${key}"]`])
+        .append('photoKeys', [key])
+        .commit();
+    }
+  } catch (err) {
+    // Only the create can strand a blob: a failed patch leaves the document,
+    // and the document still owns the prefix. Deleting on a failed patch would
+    // throw away a photo the customer had already uploaded successfully.
+    if (creating) {
+      try {
+        await store.delete(key);
+        console.warn(`personalise-save: create failed for ${id}, removed orphaned blob ${key}`);
+      } catch (delErr) {
+        console.error(
+          `personalise-save: create failed for ${id} AND its blob ${key} could not be removed ` +
+          `(${delErr.message}) — retention's orphan sweep will collect it`
+        );
+      }
+    }
+    throw err;
   }
 
   return json({ id, key });
@@ -197,7 +236,12 @@ async function saveThumb(form, file) {
 
   const key = `personalisation/${id}/thumb.jpg`;
   await getStore(STORE).set(key, buf, {
-    metadata: { contentType: 'image/jpeg', role: 'basket-thumb' },
+    // uploadedAt as above: the orphan sweep has no other way to age a blob.
+    metadata: {
+      contentType: 'image/jpeg',
+      role: 'basket-thumb',
+      uploadedAt: new Date().toISOString(),
+    },
   });
 
   return json({ id, key });

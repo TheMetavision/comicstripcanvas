@@ -4,10 +4,15 @@ import { getStore } from '@netlify/blobs';
 /**
  * Photo retention. Runs daily (schedule lives in netlify.toml).
  *
- * Customer photographs should not sit in the blob store forever. Two rules:
+ * Customer photographs should not sit in the blob store forever. Three rules:
  *
  *   dispatched  90 days after the linked order was dispatched
  *   abandoned   30 days after creation, if still draft or awaiting_payment
+ *   orphaned     7 days after upload, if no document references the blob
+ *
+ * The first two walk documents and delete the blobs underneath them. The third
+ * walks the blob store instead, because a blob whose document was never
+ * written cannot be reached from any document -- see sweepOrphanBlobs.
  *
  * Everything mid-flight is untouchable regardless of age -- see PROTECTED. A
  * job someone is still working on must never be collected out from under them,
@@ -31,6 +36,12 @@ const RENDER_STORE = 'renders';
 
 const DISPATCHED_RETENTION_DAYS = 90;
 const ABANDONED_RETENTION_DAYS = 30;
+/* A blob under personalisation/<id>/ that no document references is garbage:
+   either a create that failed after the blob went up, or a document deletion
+   whose blob delete did not complete. The age guard is only there to avoid
+   racing an upload whose document has not been written yet -- a window of
+   milliseconds, so seven days is generous by any measure. */
+const ORPHAN_RETENTION_DAYS = 7;
 
 /** Live work, or work a human is holding. Never collected, at any age. */
 const PROTECTED = new Set([
@@ -97,6 +108,109 @@ export function classify(doc, now) {
 }
 
 /**
+ * Blobs that belong to no document at all.
+ *
+ * The document sweep above walks documents, so a blob whose document was never
+ * created is invisible to it -- nothing points at the blob, and nothing ever
+ * will. personalise-save now takes its own blob back down when the document
+ * write fails, so this is the second line: it catches the cases where that
+ * compensating delete could not run either, plus everything leaked before that
+ * fix shipped.
+ *
+ * Order matters. Blobs are listed FIRST and the document ids fetched second, so
+ * a document created while the listing is in flight is still in the id set. The
+ * reverse order could see a blob as unreferenced because its document was
+ * written a moment after the ids were read.
+ *
+ * On dating: Netlify Blobs exposes no server-side timestamp -- list() returns
+ * keys and etags, getMetadata() returns only the metadata we wrote -- so age
+ * comes from the uploadedAt that personalise-save now stamps on every blob. A
+ * blob with no uploadedAt therefore predates that change, which makes it older
+ * than any threshold this function could set, and it is treated as such. That
+ * is the one place here that leans towards deleting rather than keeping, and it
+ * is what lets the sweep clear the backlog the old code left behind; the
+ * "referenced by no document" test is what actually makes it safe.
+ *
+ * @param {object}  opts
+ * @param {boolean} opts.dryRun  report what would go, delete nothing
+ * @param {Date}    opts.now     injectable for testing
+ * @param {object}  opts.deps    { sanity, stores }
+ */
+export async function sweepOrphanBlobs({ dryRun = false, now = new Date(), deps = {} } = {}) {
+  const sanity = deps.sanity || defaultSanity();
+  const store = (deps.stores || {})[PHOTO_STORE] || getStore(PHOTO_STORE);
+  const label = dryRun ? 'orphan sweep (DRY RUN)' : 'orphan sweep';
+  const nowMs = now.getTime();
+  const report = { examined: 0, orphaned: [], blobsDeleted: 0, errors: [] };
+
+  let blobs;
+  try {
+    ({ blobs } = await store.list({ prefix: 'personalisation/' }));
+  } catch (err) {
+    console.error(`${label}: could not list the photo store, skipping:`, err.message);
+    report.errors.push({ stage: 'list', error: err.message });
+    return report;
+  }
+
+  // Group by the id segment. Anything not shaped like our keys is left alone --
+  // this function deletes things, so it only ever acts on what it recognises.
+  const byId = new Map();
+  for (const b of blobs) {
+    const m = /^personalisation\/(pp-[0-9a-f]{32})\/[^/]+$/.exec(b.key);
+    if (!m) continue;
+    if (!byId.has(m[1])) byId.set(m[1], []);
+    byId.get(m[1]).push(b.key);
+  }
+  report.examined = byId.size;
+  if (!byId.size) {
+    console.log(`${label}: no personalisation blobs to examine.`);
+    return report;
+  }
+
+  const ids = await sanity.fetch('*[_type == "pendingPersonalisation"]._id');
+  const referenced = new Set(ids || []);
+
+  for (const [id, keys] of byId) {
+    if (referenced.has(id)) continue;
+    try {
+      // Newest blob in the prefix decides the age of the whole prefix.
+      let newest = 0, undated = 0;
+      for (const key of keys) {
+        const meta = await store.getMetadata(key);
+        const stamp = meta && meta.metadata ? Date.parse(meta.metadata.uploadedAt) : NaN;
+        if (Number.isFinite(stamp)) newest = Math.max(newest, stamp);
+        else undated++;
+      }
+      // Every blob undated: written before uploadedAt existed, so older than
+      // any threshold. A mix means the dated ones give the real age.
+      const ageDays = newest ? Math.floor((nowMs - newest) / DAY) : Infinity;
+      if (ageDays < ORPHAN_RETENTION_DAYS) continue;
+
+      const age = newest ? `${ageDays} days old` : 'undated (predates uploadedAt)';
+      const entry = { id, blobs: keys, age, undated };
+      if (dryRun) {
+        console.log(`${label}: would delete ${keys.length} orphaned blob(s) for ${id} ` +
+          `(${age}, referenced by no document) -- ${keys.join(', ')}`);
+      } else {
+        for (const key of keys) await store.delete(key);
+        console.log(`orphan sweep: deleted ${keys.length} orphaned blob(s) for ${id} ` +
+          `(${age}, referenced by no document) -- ${keys.join(', ')}`);
+      }
+      report.orphaned.push(entry);
+      report.blobsDeleted += keys.length;
+    } catch (err) {
+      // Same posture as the document sweep: leave it for the next run.
+      console.error(`${label}: ${id} failed, left intact for the next run:`, err.message);
+      report.errors.push({ id, error: err.message });
+    }
+  }
+
+  console.log(`${label}: ${byId.size} prefix(es) examined, ${report.orphaned.length} orphaned, ` +
+    `${report.blobsDeleted} blob(s) ${dryRun ? 'would be ' : ''}deleted.`);
+  return report;
+}
+
+/**
  * @param {object}  opts
  * @param {boolean} opts.dryRun  report what would go, delete nothing
  * @param {Date}    opts.now     injectable for testing
@@ -118,13 +232,11 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
   );
 
   const report = { dryRun, examined: docs.length, deleted: [], blobsDeleted: 0, errors: [] };
-  if (!doomed.length) {
-    console.log(`${label}: nothing to delete.`);
-    return report;
-  }
+  if (!doomed.length) console.log(`${label}: no documents to delete.`);
 
-  // Only reached when there is work, so a run with nothing to do never needs a
-  // blob context at all -- which is what lets the dry run be driven locally.
+  // The orphan sweep walks the blob store directly, so unlike the document
+  // sweep it has work to do even when no document is past retention. That is
+  // the point of it: an orphaned blob has no document to be found through.
   const stores = deps.stores || {
     [PHOTO_STORE]: getStore(PHOTO_STORE),
     [RENDER_STORE]: getStore(RENDER_STORE),
@@ -165,6 +277,12 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
       report.errors.push({ id, error: err.message });
     }
   }
+
+  /* Runs after the document sweep, deliberately: the documents deleted above
+     have just had their blobs removed, so anything the sweep now finds
+     unreferenced is either a genuine orphan or a blob whose delete failed a
+     moment ago -- and the age guard keeps the second case for the next run. */
+  report.orphans = await sweepOrphanBlobs({ dryRun, now, deps: { sanity, stores } });
 
   return report;
 }

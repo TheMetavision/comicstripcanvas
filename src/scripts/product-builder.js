@@ -200,13 +200,17 @@ export function initProductBuilder() {
     t.resize(size); return t;
   }
   const WRAP = { poster: 0, standard: 1.5, gallery: 2.5 };
-  // wrap already built into each template's artwork, in inches per edge
-  // wrap already drawn into each template's artwork, in inches per edge.
-  // The strip and icon artwork IS the advertised face -- nothing extra drawn in.
-  const ART_WRAP = {
-    strip: 0, cover: 0, 'cover-fullbleed': 0,
-    'icon-portrait': 0, 'icon-landscape': 0,
-  };
+  /* There was an ART_WRAP table here, recording "wrap already drawn into each
+     template's artwork", and a banner that fired whenever the chosen finish
+     asked for more wrap than the table declared. Every entry was 0, so it fired
+     on every canvas order, and its premise was wrong: build() already extends
+     the scene into the wrap region -- the background rect/image is drawn at
+     -ex,-ey at canvas + 2*ex/ey, and a panel covering the whole canvas is
+     expanded to match -- so the exported SVG does cover the wrap on all five
+     templates. The table described the source artwork and took no account of
+     that, which made the banner a false alarm rather than a misplaced one.
+     Removed outright rather than hidden; the geometry it warned about is
+     handled in geom() and build(). */
   const FORMAT_LABEL = {
     poster: 'Poster print', standard: 'Canvas — standard wrap',
     gallery: 'Canvas — gallery wrap',
@@ -290,9 +294,6 @@ export function initProductBuilder() {
   }
 
   function wrapIn() { return WRAP[fmt] || 0; }
-  /* Artwork is drawn to face + 2*artWrap; the printed file is face + 2*wrap.
-     delta > 0 grows the canvas beyond the artwork (a thicker border, or more photo);
-     delta < 0 cuts in to artwork that already contains its wrap. */
   /* The artwork has one fixed shape; the chosen face may not share it. Scale so
      the whole design fits the face, pad the short axis with border, then add the
      wrap outside that. Each axis is worked out separately. */
@@ -846,21 +847,48 @@ export function initProductBuilder() {
     else { s.ox = Math.max(-mx, Math.min(mx, s.ox)); s.oy = Math.max(-my, Math.min(my, s.oy)); }
     img.setAttribute('x', p.x + (p.width - dw) / 2 + s.ox); img.setAttribute('y', p.y + (p.height - dh) / 2 + s.oy);
     img.setAttribute('width', dw); img.setAttribute('height', dh);
-    s.dpi = Math.round(T.canvas.dpi * s.natW / dw);
+    /* Effective print resolution of this photo, as placed.
+
+       geom().ppi is canvas pixels per printed inch AT THE CHOSEN FACE, which is
+       what this has to be measured against. It used to use T.canvas.dpi, a
+       fixed per-template constant (strip 300, cover 200), but the canvas is one
+       fixed raster mapped onto whichever face the customer picks -- so that
+       constant is only right where it happens to coincide with ppi. The strip
+       canvas is authored at 24.5 x 16.5 in; at a 12 x 8 in face every canvas
+       pixel covers half the distance, so the true resolution is roughly double
+       what the old figure claimed. Customers choosing the smaller prints were
+       being warned their photo would print soft when it would not.
+
+       dw already carries the zoom, so this stays a reading of the crop as
+       placed, not of the file in the abstract. recipe() reports it as
+       effectiveDpi, so the brief now carries the corrected figure too. */
+    s.dpi = Math.round(geom().ppi * s.natW / dw);
   }
   /* ---------- upload ---------- */
   /* Functions run on Lambda with a ~6 MB request cap, so each photo goes up on
-     its own and is re-encoded first. 5000px on the longest side is deliberate:
-     it still carries a 16 x 24 in print at 300dpi, so this is a transport
-     re-encode, not a downscale of the artwork. */
+     its own and is re-encoded first. This is a transport re-encode, not a
+     downscale of the artwork: 4000px on the longest side still carries a
+     16 x 24 in print at well over 150dpi, and comfortably more than the
+     largest face any template offers.
+
+     It used to start at 5000px, which is where iPhone uploads were dying. A
+     5000 x 3750 canvas is a 75 MB backing store, and the old code allocated a
+     fresh one per rung on top of the decoded source. iOS Safari caps canvas
+     area and, past the cap, drawImage does not throw -- it silently yields a
+     blank canvas, which then encodes to a small, plausible-looking, entirely
+     white JPEG. So: start lower, keep ONE canvas for every rung, and check
+     that the draw actually produced something. */
   /* Pixels are cheaper to lose than quality: below about 0.75 JPEG artefacts
      start to show, and the comic styling applied later amplifies them. So give
      up resolution first and only trade quality once the pixel steps run out. */
-  const ENCODE_LADDER = [[5000, 0.9], [4000, 0.9], [4000, 0.82], [3000, 0.82]];
+  const ENCODE_LADDER = [[4000, 0.9], [4000, 0.82], [3000, 0.82]];
   // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
   // still misses that after the ladder surfaces as a per-panel upload error.
   const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
   const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
+  const QUALITY_STEP = 0.06;
+  // Rungs to fall back to when a draw comes back blank, longest side in px.
+  const BLANK_FALLBACK_SIDES = [2400, 1600, 1000];
   let saveId = null;                 // pendingPersonalisation._id, set by the first upload
 
   /* Per-slot upload lifecycle. Previously two loose flags (s.uploading and
@@ -888,39 +916,110 @@ export function initProductBuilder() {
   });
   const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
 
+  /* Did the draw actually put anything on the canvas? Past iOS Safari's canvas
+     area cap drawImage is a silent no-op, leaving transparent black. Sampling a
+     grid is enough to tell that apart from a real photograph: a genuine image
+     that is uniformly one colour at every one of these points, alpha included,
+     is not something a customer photograph does.
+
+     getImageData can itself throw (a tainted canvas, or the context being lost
+     under memory pressure). Treating a throw as "not blank" is the safe way
+     round: the worst case is that we send a photo we could not inspect, rather
+     than discarding a good one. */
+  function canvasDrewSomething(g, w, h) {
+    try {
+      const xs = [0.02, 0.25, 0.5, 0.75, 0.98], ys = xs;
+      let first = null;
+      for (const fx of xs) {
+        for (const fy of ys) {
+          const x = Math.min(w - 1, Math.max(0, Math.round(fx * w)));
+          const y = Math.min(h - 1, Math.max(0, Math.round(fy * h)));
+          const d = g.getImageData(x, y, 1, 1).data;
+          const key = `${d[0]},${d[1]},${d[2]},${d[3]}`;
+          if (first === null) first = key;
+          else if (key !== first) return true;
+        }
+      }
+      // Every sample identical. Fully transparent is the iOS no-op signature.
+      return !/,0$/.test(first || '');
+    } catch (e) {
+      return true;
+    }
+  }
+
   async function encodeForUpload(file) {
+    // ONE canvas for the whole ladder. Resizing it reuses the same element and
+    // lets the previous backing store go, instead of holding four at once.
     const cv = document.createElement("canvas");
     const g = cv.getContext ? cv.getContext("2d") : null;
     if (!g) return file;                        // no canvas: send the original
     const { im, url } = await loadImage(file);
     try {
       const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height;
+      /** Draw at this longest side; false if the canvas came back blank. */
       const drawAt = (maxSide) => {
         const k = Math.min(1, maxSide / Math.max(w0, h0));   // never upscale
         cv.width = Math.max(1, Math.round(w0 * k));
         cv.height = Math.max(1, Math.round(h0 * k));
+        g.clearRect(0, 0, cv.width, cv.height);
         g.drawImage(im, 0, 0, cv.width, cv.height);
+        return canvasDrewSomething(g, cv.width, cv.height);
       };
 
-      let blob = null, q = 0;
+      let blob = null, q = 0, drew = false, blankAt = null;
       for (const [side, quality] of ENCODE_LADDER) {
-        drawAt(side); q = quality;
+        q = quality;
+        // Two rungs share 4000px (same pixels, lower quality). If that size has
+        // already come back blank, re-allocating it only to fail again costs
+        // another large backing store on the very device that could not afford
+        // the first one.
+        if (blankAt === side) continue;
+        if (!drawAt(side)) { blankAt = side; continue; }   // past the cap
+        drew = true;
         blob = await toBlob(cv, q);
         if (!blob) return file;
         if (blob.size <= UPLOAD_TARGET_BYTES) break;
       }
-      // Pixel steps exhausted; the canvas is at the last rung, so only quality
-      // is left to give. Stop at the floor rather than send mush.
+
+      /* Every rung came back blank, so the cap is below even the smallest of
+         them. Keep halving until the device will actually draw. Resolution lost
+         here is resolution the device was never going to give us, and a soft
+         photo is a far better outcome than a white rectangle the customer does
+         not discover until the proof. */
+      if (!drew) {
+        for (const side of BLANK_FALLBACK_SIDES) {
+          if (!drawAt(side)) continue;
+          drew = true;
+          q = 0.82;
+          blob = await toBlob(cv, q);
+          break;
+        }
+      }
+      // Nothing would draw at any size: send the original and let the function
+      // judge it, rather than uploading a blank.
+      if (!drew || !blob) return file;
+
+      /* Pixel steps exhausted; the canvas is at the last rung it managed, so
+         only quality is left to give. Stop at the floor rather than send mush.
+
+         The step is clamped to the floor instead of just being compared with
+         it. From 0.82 a plain 0.06 step goes 0.76, 0.70, 0.64, 0.58 -- it never
+         lands on 0.60, so the old loop ran one step BELOW the floor it names.
+         Clamping makes 0.60 the last quality actually used. */
       while (blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
-        q = Math.round((q - 0.06) * 100) / 100;
-        const next = await toBlob(cv, q);
-        if (!next) break;
-        blob = next;
+        q = Math.max(QUALITY_FLOOR, Math.round((q - QUALITY_STEP) * 100) / 100);
+        const encoded = await toBlob(cv, q);
+        if (!encoded) break;
+        blob = encoded;
       }
       const base = (file.name || "photo").replace(/\.[^.]+$/, "");
       return new File([blob], base + ".jpg", { type: "image/jpeg" });
     } finally {
+      // Release the decoded source and the canvas backing store before the next
+      // photo in the queue starts: on a phone these are the whole budget.
       URL.revokeObjectURL(url);
+      try { im.src = ""; } catch (e) { /* nothing to release */ }
+      cv.width = 0; cv.height = 0;
     }
   }
 
@@ -1072,6 +1171,42 @@ export function initProductBuilder() {
      document and hands back the id every later one has to carry, so they must
      not be in flight together: a board drop of twelve would otherwise race and
      create twelve documents. Queueing also keeps the "N to go" count honest. */
+  /* A phone on a weak uplink can sit on an open socket indefinitely -- fetch
+     has no timeout of its own, so a stalled upload used to hang the whole
+     serial queue behind it with nothing but "Uploading…" to show for it.
+     45s is comfortably longer than a 4 MiB post on a poor connection and short
+     enough that a customer has not given up. */
+  const UPLOAD_TIMEOUT_MS = 45000;
+  // Doubles as the retry sentinel and as the words the customer reads.
+  const TIMED_OUT = 'The upload timed out — the connection may be slow.';
+
+  /** POST once, aborting at the timeout. Throws Error(TIMED_OUT) on abort. */
+  async function postPhoto(fd) {
+    const ac = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ac ? setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS) : null;
+    let res;
+    try {
+      res = await fetch('/api/personalise-save',
+        { method: 'POST', body: fd, ...(ac ? { signal: ac.signal } : {}) });
+    } catch (e) {
+      // An abort and a dropped connection both land here; only the first is
+      // ours, and it is the one worth naming to the customer.
+      if (ac && ac.signal.aborted) throw new Error(TIMED_OUT);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  /* Worth one silent retry: a timeout, and the gateway codes that mean the
+     platform gave up rather than the function refusing us. A 4xx is a decision
+     -- wrong file type, too large, bad id -- and repeating it would only waste
+     the customer's data allowance to arrive at the same answer. */
+  const worthRetrying = (status, message) =>
+    message === TIMED_OUT || status === 502 || status === 503 || status === 504;
+
   let uploadChain = Promise.resolve();
   function upload(id, file) {
     setUploadState(id, PENDING);   // counted as soon as it is queued
@@ -1082,20 +1217,40 @@ export function initProductBuilder() {
       setUploadState(id, UPLOADING);
       try {
         const sending = await encodeForUpload(file);
-        const fd = new FormData();
-        fd.append("panelId", id);
-        fd.append("photo", sending, sending.name || (id + ".jpg"));
-        if (saveId) fd.append("id", saveId);
-        if (consentAt) fd.append("consentAt", consentAt);
-        const res = await fetch("/api/personalise-save", { method: "POST", body: fd });
-        const data = await res.json().catch(() => ({}));
-        // The function answers with a reason on every refusal. Carry it through
-        // verbatim rather than flattening everything to "Upload failed": "too
-        // large once encoded" and "unsupported file type" need different fixes
-        // from the customer, and only the reason tells them apart.
-        if (!res.ok || !data.id) {
-          throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
+        const buildBody = () => {
+          // A FormData that has been handed to a consumed/aborted request is
+          // not safe to send again, so each attempt gets its own.
+          const fd = new FormData();
+          fd.append("panelId", id);
+          fd.append("photo", sending, sending.name || (id + ".jpg"));
+          if (saveId) fd.append("id", saveId);
+          if (consentAt) fd.append("consentAt", consentAt);
+          return fd;
+        };
+
+        let res, data;
+        for (let attempt = 1; ; attempt++) {
+          let status = 0, message = null;
+          try {
+            ({ res, data } = await postPhoto(buildBody()));
+            if (res.ok && data.id) break;
+            status = res.status;
+            // The function answers with a reason on every refusal. Carry it
+            // through verbatim rather than flattening everything to "Upload
+            // failed": "too large once encoded" and "unsupported file type"
+            // need different fixes from the customer, and only the reason
+            // tells them apart.
+            message = data.error || `Upload failed (HTTP ${res.status})`;
+          } catch (e) {
+            message = e.message || 'Upload failed';
+          }
+          if (attempt === 1 && worthRetrying(status, message)) {
+            console.warn(`[builder] upload attempt 1 for ${id} failed (${message}) — retrying once`);
+            continue;
+          }
+          throw new Error(message);
         }
+
         saveId = data.id;
         const s = state.get(id);
         if (s) s.key = data.key;
@@ -1451,25 +1606,9 @@ export function initProductBuilder() {
     const w = wrapIn(), sz = T.size;
     if (sz) {
       const outW = (sz.w + 2 * w), outH = (sz.h + 2 * w);
-      const aw = ART_WRAP[TK] || 0;
       $('outSpec').textContent = w
         ? `${sz.label} face · file ${outW} × ${outH} in incl. ${w}" wrap`
         : `${sz.label} · file ${sz.w} × ${sz.h} in`;
-      /* Studio-only. This says the artwork has to be extended before it can be
-         printed -- a production instruction, addressed to whoever prepares the
-         file, and nothing a customer can act on. It shipped visible in customer
-         mode and told people choosing a canvas that their order could not be
-         printed. The element is not even rendered outside studio mode now; this
-         guard keeps the maths from running when it is absent. */
-      const warn = $('outWarn');
-      if (warn) {
-        const short = w - aw;
-        const show = MODE === 'studio' && short > 0.01;
-        warn.hidden = !show;
-        warn.textContent = show
-          ? `This template is drawn with ${aw}" of wrap. A ${w}" wrap needs ${short.toFixed(2)}" more on every edge — the artwork has to be extended before this can be printed.`
-          : '';
-      }
     }
     const real = mine().length;
     $('filled').textContent = `${real} of ${T.panels.length}`;
