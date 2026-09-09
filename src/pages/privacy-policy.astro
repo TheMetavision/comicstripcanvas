@@ -46,7 +46,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <h2 class="font-russo text-off-white text-lg uppercase tracking-wide mb-3">Photos & Personalised Orders</h2>
         <p>When you upload photos for personalised orders, these are stored securely and used solely for the purpose of creating your artwork. We will never use your photos for marketing without your explicit consent.</p>
         <p class="mt-3">We keep your photos and the finished artwork for 90 days after dispatch in case a reprint is needed, then delete them. If you start a personalised build but do not order, the photos you uploaded are deleted 30 days after you started it.</p>
-        <p class="mt-3">To apply the comic style, your photos are processed by Replicate (replicate.com), acting as our data processor. They are not retained by Replicate.</p>
+        <p class="mt-3">To apply the comic style, your photo is sent to Google's Gemini API, acting as our data processor. We send the photo you uploaded together with three reference images of our own artwork, which is how the style is matched. We use Google's paid API tier, under which Google does not use the data you send to train its models.</p>
+        <p class="mt-3">The styled image comes back to us and is stored in our own Netlify Blobs store alongside your original photo, under the same retention rules: 90 days after dispatch, or 30 days if you start a build and do not order.</p>
         <p class="mt-3">Before your first upload you are asked to confirm that you own the rights to the photos, or have permission to use them, and that you are happy for us to use them to make your artwork.</p>
       </div>
 
