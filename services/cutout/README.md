@@ -71,28 +71,47 @@ gcloud run deploy cutout \
 ### Deployed
 
 `https://cutout-634842895189.europe-west2.run.app` (alias
-`https://cutout-cdyki42vka-nw.a.run.app`), revision `cutout-00001-7d4`, deployed
-2026-09-09. The container starts clean — the build passed the model assertion
+`https://cutout-cdyki42vka-nw.a.run.app`), revision `cutout-00001-qnm`, deployed
+2026-09-09. The container starts clean — the build passes the model assertion
 below, and the first log line is
 `{"event":"listening","port":"8080","modelPath":"file:///app/node_modules/…/dist/"}`.
 
 **Public access needed an organization-policy exception.** The project sits under
-org `901013979338`, whose `constraints/iam.allowedPolicyMemberDomains` allows
-only customer `C038wqnn6`, so `--allow-unauthenticated` failed during the deploy
+org `901013979338`, whose `constraints/iam.allowedPolicyMemberDomains` allowed
+only customer `C038wqnn6`, so the first deploy's `--allow-unauthenticated` failed
 with `FAILED_PRECONDITION: One or more users named in the policy do not belong to
-a permitted customer`. A project-scoped override (`allValues: ALLOW`) lets the
-`allUsers` / `roles/run.invoker` binding be written; it is stored and visible in
-`gcloud run services get-iam-policy cutout`.
+a permitted customer`. With a project-scoped override in place the redeploy sets
+the policy cleanly (`Setting IAM Policy...done`).
 
-At the time of writing the service still answers 404 to unauthenticated callers
-despite that binding, and those requests leave no entry in the Cloud Run logs —
-they are refused at the edge before reaching the container. The one request that
-did reach it carried our own bearer token while auth was still required and was
-logged as `401 — The access token could not be verified`: Cloud Run reads the
-`Authorization` header itself whenever a service requires authentication. **If
-this service ever has to stay private, the service token must move out of
-`Authorization` into its own header** (`X-Cutout-Token`) in both `server.mjs` and
-`makeCutout`, or Cloud Run will eat it before the container sees it.
+**The service is nevertheless unreachable, and the fault is not in this repo.**
+Every path on both hostnames returns a Google front-end 404 in ~130 ms, from
+inside and outside the network and through `gcloud run services proxy`, and no
+request reaches Cloud Run — nothing appears in its logs. Everything Google
+reports about the service says otherwise:
+
+| | |
+| --- | --- |
+| `terminalCondition` | `Ready / CONDITION_SUCCEEDED` |
+| `ingress` | `INGRESS_TRAFFIC_ALL` |
+| `defaultUriDisabled` | unset |
+| `urls` | both hostnames listed |
+| IAM policy | one binding, `allUsers` → `roles/run.invoker` |
+| `constraints/run.allowedIngress` | `allValues: ALLOW` |
+| DNS | resolves to Cloud Run front-end IPs |
+
+Deleting the service and redeploying from source changed none of it. That leaves
+a Google-side routing fault for this project's `run.app` domain, which is a
+support case, not a configuration change. Worth trying a second region to see
+whether it is region-specific before opening one — note that europe-west2 is
+London and was chosen deliberately.
+
+One thing learned on the way, worth keeping: Cloud Run reads the `Authorization`
+header itself whenever a service requires authentication — our own bearer token
+was logged as `401 — The access token could not be verified`. Public, the header
+passes through and the scheme below works. **If this service ever has to stay
+private, the token must move out of `Authorization` into its own header**
+(`X-Cutout-Token`) in both `server.mjs` and `makeCutout`, or Cloud Run will eat
+it before the container sees it.
 
 `--allow-unauthenticated` with `--ingress all` is deliberate: Netlify functions
 have no fixed egress address to allow-list, so IAM cannot express "only our
