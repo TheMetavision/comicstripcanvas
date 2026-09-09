@@ -159,7 +159,11 @@ async function savePhoto(form, file, req) {
      posts the recipe at Add to basket, long after the first photo goes up. An
      optional templateId on the upload lets it be right from the first call;
      without one this defaults to 2K and finalise() corrects the field later.
-     Wiring the builder to send it is 10b-2b. */
+
+     It is also STORED, not just read. Styling starts within seconds of this
+     upload and the cutout step asks the document which template it is for --
+     so a templateId that only appears at Add to basket arrives long after the
+     answer was needed, and every cover quietly skipped its cutout. */
   const templateId = str(form.get('templateId'), 40) || null;
 
   const consentRaw = form.get('consentAt');
@@ -193,6 +197,7 @@ async function savePhoto(form, file, req) {
         photoKeys: [key],
         styledKeys: [],
         photos: [photoRow({ panel: panelId, rawKey: key, sha256 })],
+        ...(templateId ? { templateId } : {}),
         styleSize: styleSizeForTemplate(templateId),
         styleCalls: 0,
         consentAt,
@@ -212,6 +217,9 @@ async function savePhoto(form, file, req) {
         .transaction()
         .patch(id, (p) => p
           .setIfMissing({ photoKeys: [], styleCalls: 0 })
+          /* setIfMissing, not set: the recipe is the authority on the template
+             and finalise() may already have written it. */
+          .setIfMissing(templateId ? { templateId } : {})
           .unset([`photoKeys[@ == "${key}"]`])
           .append('photoKeys', [key]))
         .patch(id, (p) => p
