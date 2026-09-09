@@ -1,0 +1,40 @@
+# Fly.io configuration for the cutout service.
+#
+# Fly rather than Cloud Run: the run.app hostnames for our Google project never
+# routed, returning a front-end 404 for every path with no request ever reaching
+# the container. See README.md. Same container, same Dockerfile, nothing in
+# server.mjs changed.
+#
+# Builds happen on Fly's remote builder, so no local Docker is needed.
+
+app = 'csc-cutout'
+primary_region = 'lhr'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Scale to zero between orders. A cover is cut out once, minutes apart at
+  # best, so paying for an idle machine all day to save one cold start on the
+  # rare request is the wrong trade -- and the cutout runs in a background
+  # function where nobody is watching a spinner.
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  # The matting model saturates both CPUs for the length of a request, so a
+  # third concurrent image would only make all three slower. Queue instead.
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 2
+    hard_limit = 2
+
+# 2 GB and two CPUs, matching what the model needs: a 5504 x 3072 RGBA buffer
+# is 65 MB on its own, and onnxruntime wants room around it.
+[[vm]]
+  memory = '2gb'
+  cpu_kind = 'shared'
+  cpus = 2
