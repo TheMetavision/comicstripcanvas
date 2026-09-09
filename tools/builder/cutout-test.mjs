@@ -44,10 +44,21 @@ const TIMEOUT_MS = 120000;
    it as if it were on a green stage, or to feather the edge into the fill --
    all of which key badly or lose the artwork. */
 export const CUTOUT_PROMPT =
-  'Keep this artwork exactly as it is — every line, colour and detail of every person, ' +
-  'animal and object, same size, same position, same framing. Replace only the background ' +
-  'with a single flat, uniform, pure green (#00FF00) fill. No green on the subjects, no ' +
-  'shadows, no gradient, no glow, no outline, no vignette. Output the same aspect ratio.';
+  'This is a cutout task. Keep every person and animal exactly as drawn — same size, position, ' +
+  'pose, expression, clothing and framing. Delete everything else: walls, floor, ground, sky, ' +
+  'furniture, vehicles, props, signs, and any scenery behind, beside or in front of them. Fill ' +
+  'the entire remaining area with a single flat, uniform pure green (#00FF00). The green must ' +
+  'reach all four edges of the image everywhere a person or animal is not. No shadows, no ' +
+  'gradient, no glow, no outline, no vignette, nothing from the original scene left behind.';
+
+/* Round one's prompt asked to "replace only the background", and on a busy
+   composition the model read that as "put green behind the people" -- it filled
+   the gaps between figures and left the motorcycle, wall and furniture in
+   place. This one names the things to delete, and demands the green reach all
+   four edges, which is the property the detector below actually measures. */
+export const CUTOUT_RETRY_PROMPT =
+  'You returned a scene. Try again: output ONLY the people and animals from this image on a ' +
+  'pure green (#00FF00) field, as if cut out with scissors — no background objects of any kind.';
 
 /** The one-call variant: style and green-screen in the same generation. */
 export const STYLE_AND_CUTOUT_PROMPT =
@@ -57,17 +68,19 @@ export const STYLE_AND_CUTOUT_PROMPT =
 
 /* ------------------------------------------------------------ chroma key */
 
-/* Distance from pure green, in RGB, below which a pixel is background and
-   above which it is subject; between the two it is a soft edge.
-   The gap is what buys an anti-aliased edge instead of a jagged one -- comic
-   line art has hard black outlines, so the transition band can stay narrow.
-   Both are tunable: widen OUTER if green fringes survive, raise INNER if
-   green-ish parts of the artwork start dissolving. */
-export const KEY_INNER = 90;    // <= this distance: fully transparent
-export const KEY_OUTER = 165;   // >= this distance: fully opaque
+/* Keyed on GREENNESS, G - max(R, B), not on distance to #00FF00.
 
-/** The reference background colour the prompt asks for. */
-export const KEY_COLOUR = { r: 0, g: 255, b: 0 };
+   Round one used Euclidean distance and it removed green artwork: #00CC44 sits
+   85 away from pure green, inside the old inner radius, so a green hoodie or a
+   hedge dissolved along with the background. Greenness separates them properly
+   -- the fill the model actually returns measures 245-251 (sampled: rgb(0,253,2)),
+   while saturated-but-real greens land far below: #00CC44 is 136, sea green
+   #2E8B57 is 52, foliage around 50.
+
+   So the band sits high, well clear of anything that could be artwork, and the
+   60-wide ramp is what gives an anti-aliased edge rather than a jagged one. */
+export const KEY_GREEN_OPAQUE = 140;   // <= this greenness: fully opaque (subject)
+export const KEY_GREEN_CLEAR = 200;    // >= this greenness: fully transparent (background)
 
 /* A pixel is only despilled if it is part-transparent, i.e. on the edge.
    Clamping G to max(R,B) there removes the green rim the fill leaves behind
@@ -88,19 +101,18 @@ export async function chromaKey(inputBuffer) {
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i], g = data[i + 1], b = data[i + 2];
-    const d = Math.sqrt(
-      (r - KEY_COLOUR.r) ** 2 + (g - KEY_COLOUR.g) ** 2 + (b - KEY_COLOUR.b) ** 2
-    );
+    const cap = Math.max(r, b);
+    const greenness = g - cap;
 
     let a;
-    if (d <= KEY_INNER) { a = 0; fullyKeyed++; }
-    else if (d >= KEY_OUTER) { a = 255; }
-    else { a = Math.round(((d - KEY_INNER) / (KEY_OUTER - KEY_INNER)) * 255); edge++; }
-
-    if (a < DESPILL_BELOW_ALPHA && a > 0) {
-      const cap = Math.max(r, b);
-      if (g > cap) { data[i + 1] = cap; despilled++; }
+    if (greenness >= KEY_GREEN_CLEAR) { a = 0; fullyKeyed++; }
+    else if (greenness <= KEY_GREEN_OPAQUE) { a = 255; }
+    else {
+      a = Math.round(((KEY_GREEN_CLEAR - greenness) / (KEY_GREEN_CLEAR - KEY_GREEN_OPAQUE)) * 255);
+      edge++;
     }
+
+    if (a < DESPILL_BELOW_ALPHA && a > 0 && g > cap) { data[i + 1] = cap; despilled++; }
     data[i + 3] = a;
   }
 
@@ -112,8 +124,77 @@ export async function chromaKey(inputBuffer) {
       keyedPct: +((fullyKeyed / px) * 100).toFixed(2),
       edgePct: +((edge / px) * 100).toFixed(3),
       despilledPx: despilled,
+      ...borderReport(data, width, height),
     },
   };
+}
+
+/* ------------------------------------------------------- did it cut out? */
+
+/* A cutout that worked has green running off all four sides. A cutout that
+   failed -- the round-one family shot -- has green only in the gaps between
+   figures, so no border is green at all, and Dilked's partial had green on one.
+   That is a far better signal than keyed area alone: a subject filling the
+   frame legitimately keys very little, while a returned scene keys nothing at
+   the edges however much green it has in the middle. */
+export const BORDER_GREEN_MIN = 0.10;   // fraction of a border's pixels keyed
+export const COMPLETE_MIN_KEYED_PCT = 15;
+export const COMPLETE_MIN_BORDERS = 3;
+
+/* The third test, and the one that caught what the first two could not.
+
+   Keyed-area-plus-borders passes two different disasters. The skater came back
+   with the whole scene TINTED green rather than deleted, so the flat parts
+   keyed away and the pier, sea and lighthouse survived as line-art ghosts --
+   48% keyed, 3 borders, and useless. The 4K Dilked went further and painted the
+   PEOPLE green too, so the key punched holes through the cast.
+
+   Both are invisible to an area measure and obvious in the palette: a faithful
+   cutout keeps the source's colour, a tinted one shifts hard towards green.
+   Measured shift on the six runs was -3.5..-1.0 for the faithful ones against
+   +10.5, +23.3 and +45.6 for the damaged ones, so the threshold sits in a wide
+   empty gap rather than being tuned to the data. */
+export const COMPLETE_MAX_GREEN_SHIFT = 8;
+
+/** Mean (G - max(R,B)) over pixels the key kept, against the same over the source. */
+export async function greenShift(cutoutPng, sourceBuffer) {
+  const cut = await sharp(cutoutPng).raw().toBuffer({ resolveWithObject: true });
+  let sum = 0, n = 0;
+  for (let i = 0; i < cut.data.length; i += 4) {
+    if (cut.data[i + 3] < 200) continue;
+    sum += cut.data[i + 1] - Math.max(cut.data[i], cut.data[i + 2]); n++;
+  }
+  const src = await sharp(sourceBuffer).raw().toBuffer({ resolveWithObject: true });
+  const ch = src.info.channels;
+  let ss = 0, sn = 0;
+  for (let i = 0; i < src.data.length; i += ch) {
+    ss += src.data[i + 1] - Math.max(src.data[i], src.data[i + 2]); sn++;
+  }
+  return +(((n ? sum / n : 0)) - (sn ? ss / sn : 0)).toFixed(1);
+}
+
+function borderReport(data, width, height) {
+  const clear = (x, y) => data[(y * width + x) * 4 + 3] === 0;
+  const frac = (n, total) => n / Math.max(1, total);
+  let top = 0, bottom = 0, left = 0, right = 0;
+  for (let x = 0; x < width; x++) { if (clear(x, 0)) top++; if (clear(x, height - 1)) bottom++; }
+  for (let y = 0; y < height; y++) { if (clear(0, y)) left++; if (clear(width - 1, y)) right++; }
+  const borders = {
+    top: +frac(top, width).toFixed(3),
+    bottom: +frac(bottom, width).toFixed(3),
+    left: +frac(left, height).toFixed(3),
+    right: +frac(right, height).toFixed(3),
+  };
+  const greenBorders = Object.values(borders).filter((f) => f >= BORDER_GREEN_MIN).length;
+  return { borders, greenBorders };
+}
+
+/** The accept/reject rule. greenShift is optional; without it only area is judged. */
+export function isCompleteCutout(stats) {
+  if (stats.keyedPct < COMPLETE_MIN_KEYED_PCT) return false;
+  if (stats.greenBorders < COMPLETE_MIN_BORDERS) return false;
+  if (stats.greenShift != null && stats.greenShift >= COMPLETE_MAX_GREEN_SHIFT) return false;
+  return true;
 }
 
 /* --------------------------------------------------------------- the call */
@@ -265,17 +346,62 @@ async function main() {
         `${meta.width}x${meta.height} ratio ${aspectRatio} size ${imageSize} … `
       );
 
-      const gen = await generate({
-        buffer, mimeType, aspectRatio, imageSize,
-        prompt: job.mode === 'single' ? STYLE_AND_CUTOUT_PROMPT : CUTOUT_PROMPT,
-        refs: job.mode === 'single' ? await loadRefs() : null,
-      });
-      row.genMs = gen.ms;
-      row.greenPx = await sharp(gen.buffer).metadata().then((m) => [m.width, m.height]);
+      const firstPrompt = job.mode === 'single' ? STYLE_AND_CUTOUT_PROMPT : CUTOUT_PROMPT;
+      const refs = job.mode === 'single' ? await loadRefs() : null;
 
-      const t0 = Date.now();
-      const { png, stats } = await chromaKey(gen.buffer);
-      row.keyMs = Date.now() - t0;
+      let gen = await generate({ buffer, mimeType, aspectRatio, imageSize, prompt: firstPrompt, refs });
+      let t0 = Date.now();
+      let keyed = await chromaKey(gen.buffer);
+      let keyMs = Date.now() - t0;
+      keyed.stats.greenShift = await greenShift(keyed.png, buffer);
+      row.genMs = gen.ms;
+      row.attempt1 = {
+        keyedPct: keyed.stats.keyedPct, greenBorders: keyed.stats.greenBorders,
+        greenShift: keyed.stats.greenShift,
+      };
+      row.complete = isCompleteCutout(keyed.stats);
+      row.retried = false;
+
+      /* One retry, and only on a detector fail. The retry prompt is blunter
+         about what came back, which is the only lever left -- asking the same
+         question again would get the same answer. */
+      if (!row.complete) {
+        console.log(
+          `detector FAIL (${keyed.stats.keyedPct}% keyed, ${keyed.stats.greenBorders}/4 borders, ` +
+          `shift ${keyed.stats.greenShift}) — retrying once`
+        );
+        process.stdout.write('  retry … ');
+        const again = await generate({
+          buffer, mimeType, aspectRatio, imageSize, prompt: CUTOUT_RETRY_PROMPT, refs: null,
+        });
+        t0 = Date.now();
+        const keyed2 = await chromaKey(again.buffer);
+        const keyMs2 = Date.now() - t0;
+        keyed2.stats.greenShift = await greenShift(keyed2.png, buffer);
+        row.retried = true;
+        row.retryMs = again.ms;
+        row.attempt2 = {
+          keyedPct: keyed2.stats.keyedPct, greenBorders: keyed2.stats.greenBorders,
+          greenShift: keyed2.stats.greenShift,
+        };
+        // Keep the retry only if it is actually better by the detector's measure.
+        /* More green is not better if the model got there by tinting -- the
+           group's retry gained borders AND invented a dog. Only take a retry
+           that is faithful to the source palette. */
+        const retryFaithful = keyed2.stats.greenShift < COMPLETE_MAX_GREEN_SHIFT;
+        if (retryFaithful
+            && (isCompleteCutout(keyed2.stats) || keyed2.stats.greenBorders > keyed.stats.greenBorders)) {
+          gen = again; keyed = keyed2; keyMs = keyMs2;
+          row.keptAttempt = 2;
+        } else {
+          row.keptAttempt = 1;
+        }
+        row.complete = isCompleteCutout(keyed.stats);
+      }
+
+      const { png, stats } = keyed;
+      row.keyMs = keyMs;
+      row.greenPx = await sharp(gen.buffer).metadata().then((m) => [m.width, m.height]);
       Object.assign(row, stats);
       row.outBytes = png.length;
 
@@ -290,7 +416,9 @@ async function main() {
 
       console.log(
         `${gen.ms} ms gen, ${row.keyMs} ms key — ${stats.width}x${stats.height}, ` +
-        `${stats.keyedPct}% keyed, ${stats.edgePct}% edge, ${(png.length / 1048576).toFixed(1)} MB`
+        `${stats.keyedPct}% keyed, ${stats.greenBorders}/4 borders, ${stats.edgePct}% edge, ` +
+        `${(png.length / 1048576).toFixed(1)} MB — ${row.complete ? 'COMPLETE' : 'INCOMPLETE'}` +
+        `${row.retried ? ` (kept attempt ${row.keptAttempt})` : ''}`
       );
     } catch (err) {
       row.error = err instanceof StyleError
@@ -311,9 +439,12 @@ async function main() {
     ['key ms', (r) => String(r.keyMs ?? '—')],
     ['out', (r) => (r.width ? `${r.width}x${r.height}` : '—')],
     ['keyed %', (r) => (r.keyedPct != null ? String(r.keyedPct) : '—')],
+    ['borders', (r) => (r.greenBorders != null ? `${r.greenBorders}/4` : '—')],
+    ['shift', (r) => (r.greenShift != null ? String(r.greenShift) : '—')],
     ['edge %', (r) => (r.edgePct != null ? String(r.edgePct) : '—')],
     ['MB', (r) => (r.outBytes ? (r.outBytes / 1048576).toFixed(1) : '—')],
-    ['ok', (r) => (r.ok ? 'yes' : 'NO')],
+    ['retry', (r) => (r.retried ? `yes(kept ${r.keptAttempt})` : 'no')],
+    ['verdict', (r) => (r.ok ? (r.complete ? 'COMPLETE' : 'INCOMPLETE') : 'ERROR')],
   ];
   const w = cols.map(([h, get]) => Math.max(h.length, ...rows.map((r) => get(r).length)));
   const line = (cells) => '  ' + cells.map((c, i) => String(c).padEnd(w[i])).join('  ');
