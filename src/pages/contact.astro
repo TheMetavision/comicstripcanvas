@@ -57,27 +57,6 @@ if (!TURNSTILE_SITE_KEY) {
           </p>
 
           <form id="contact-form" class="space-y-5" novalidate>
-            <input type="checkbox" name="botcheck" class="hidden" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;" aria-hidden="true" />
-
-            <!--
-              Second honeypot: a plain text field with a name bots like to fill.
-              Hidden by moving it off-screen rather than with display:none, because
-              some bots skip anything that is display:none. aria-hidden keeps it out
-              of the accessibility tree and tabindex="-1" keeps it out of the tab
-              order, so neither screen-reader nor keyboard users ever meet it.
-              A filled value means a bot: the function answers 200 and drops it.
-            -->
-            <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
-              <label for="company-website">Company website (leave this field empty)</label>
-              <input
-                type="text"
-                id="company-website"
-                name="companyWebsite"
-                tabindex="-1"
-                autocomplete="off"
-              />
-            </div>
-
             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
                 <label for="name" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
@@ -169,6 +148,60 @@ if (!TURNSTILE_SITE_KEY) {
                 </p>
               </div>
             )}
+
+            {/*
+              Bot signals. Deliberately the LAST fields in the form: Chrome groups
+              nearby inputs into an address profile and autofills the group, so a
+              honeypot sitting next to name/email/phone gets filled for any visitor
+              with autofill on and their genuine enquiry is dropped. That is exactly
+              what happened with the previous `companyWebsite` field — "company" and
+              "website" are autofill-recognised tokens, and Chrome ignores
+              autocomplete="off" on fields it believes belong to an address profile.
+
+              The name is now meaningless to autofill heuristics, there is no label
+              text naming a real-world field, and the block is outside every visible
+              group. Hidden by moving the WRAPPER off-screen, not with display:none
+              on the input, because some bots skip anything display:none. aria-hidden
+              keeps it out of the accessibility tree and tabindex="-1" out of the tab
+              order, so neither screen-reader nor keyboard users ever meet it.
+
+              Kept as an Astro comment, not an HTML one: a note explaining the
+              trap must not ship in the page a bot author can read.
+            */}
+            <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
+              {/*
+                Label text is deliberately bland and instruction-free. "Leave
+                this blank" would tell a bot that reads labels to skip the trap,
+                and any real-world word ("company", "website", "address") is an
+                autofill trigger — the fault being fixed here. "Extra note"
+                is neither.
+              */}
+              <label for="csc-extra-note">Extra note</label>
+              <input
+                type="text"
+                id="csc-extra-note"
+                name="csc_extra_note"
+                tabindex="-1"
+                autocomplete="off"
+                aria-hidden="true"
+              />
+              <input
+                type="checkbox"
+                id="csc-extra-confirm"
+                name="csc_extra_confirm"
+                tabindex="-1"
+                autocomplete="off"
+                aria-hidden="true"
+              />
+            </div>
+
+            {/*
+              Form-load timestamp. Written by script on load, so a bot that posts
+              the endpoint directly never sends one (missing simply doesn't trip
+              the check — Turnstile is the defence there). A human cannot read,
+              think and type in under three seconds; a scripted fill can.
+            */}
+            <input type="hidden" name="csc_ts_load" id="csc-ts-load" value="" />
 
             <div class="pt-2">
               <button
@@ -324,6 +357,12 @@ if (!TURNSTILE_SITE_KEY) {
   const formCard = form?.closest('.bg-panel-dark') as HTMLElement | null;
   const turnstileWidget = form?.querySelector('.cf-turnstile') as HTMLElement | null;
   const turnstileError = document.getElementById('turnstile-error');
+  const tsLoadField = document.getElementById('csc-ts-load') as HTMLInputElement | null;
+
+  // Stamp the load time now. Both this and the submit time come from the same
+  // clock, so the elapsed figure the function sees is immune to any skew
+  // between the visitor's clock and the server's.
+  if (tsLoadField) tsLoadField.value = String(Date.now());
 
   function setSending(on: boolean) {
     if (submitBtn) submitBtn.disabled = on;
@@ -383,10 +422,14 @@ if (!TURNSTILE_SITE_KEY) {
       phone: String(fd.get('phone') || '').trim(),
       subject: String(fd.get('subject') || '').trim() || 'General Enquiry',
       message: String(fd.get('message') || '').trim(),
-      // Honeypot is a checkbox positioned off-screen — bots that auto-tick everything will trip it.
-      botcheck: fd.get('botcheck') ? 'on' : '',
-      // Second honeypot: an off-screen text field no real visitor can reach.
-      companyWebsite: String(fd.get('companyWebsite') || '').trim(),
+      // Honeypots: an off-screen text field and an off-screen checkbox, neither
+      // reachable by pointer, keyboard or screen reader. Anything in either is
+      // automation. Sent as strings so the function's check is a single rule.
+      csc_extra_note: String(fd.get('csc_extra_note') || '').trim(),
+      csc_extra_confirm: fd.get('csc_extra_confirm') ? 'on' : '',
+      // Elapsed time between form load and submit, from one clock.
+      csc_ts_load: String(fd.get('csc_ts_load') || ''),
+      csc_ts_submit: String(Date.now()),
       turnstileToken: token,
       pageUri: window.location.href,
     };

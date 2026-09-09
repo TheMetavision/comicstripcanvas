@@ -9,7 +9,8 @@
  * Flow:
  *   1. Validate request (POST, JSON body)
  *   2. Verify the Cloudflare Turnstile token against siteverify
- *   3. Honeypot check (`botcheck` and `companyWebsite` must be empty)
+ *   3. Honeypot check (`csc_extra_note`, `csc_extra_confirm` must be empty)
+ *   3b. Time-to-submit check (under 3s after form load = automation)
  *   4. Reject a message body carrying more than two URLs
  *   5. Validate required fields
  *   6. Rate-limit by hashed IP (3 submissions per 10 minutes per IP)
@@ -20,8 +21,15 @@
  *
  * Spam defences run before anything is written or emailed, and before the
  * Sanity/Resend clients are built, so a rejected submission costs one outbound
- * request to Cloudflare and nothing else. The two honeypots answer 200 with a
- * fake reference: a bot that is told it failed simply retries with a variation.
+ * request to Cloudflare and nothing else. The honeypots and the timing check
+ * answer 200 with a fake reference: a bot that is told it failed simply retries
+ * with a variation.
+ *
+ * Honeypot field names are deliberately meaningless (`csc_extra_note`, not
+ * `companyWebsite`). Chrome autofills fields whose name, id or label matches a
+ * real-world token, and ignores autocomplete="off" when it thinks a field
+ * belongs to an address profile — which silently discarded genuine enquiries
+ * from every visitor with autofill enabled. Renaming these is load-bearing.
  *
  * Sanity write happens BEFORE either email: if email fails, the submission
  * is still persisted and recoverable. Both sends are best-effort and never
@@ -127,6 +135,10 @@ const URL_RE = new RegExp(
 
 // More than this many URLs in a message body is spam, not an enquiry.
 const MAX_URLS = 2;
+
+// Nobody reads the form, types a name, an email and a message, and submits in
+// under three seconds. A scripted fill does it in milliseconds.
+const MIN_SUBMIT_MS = 3000;
 
 function countUrls(text) {
   if (typeof text !== 'string' || !text) return 0;
@@ -308,14 +320,42 @@ export const handler = async (event) => {
   }
 
   // ── Honeypots — answer 200 so the bot believes it succeeded ──────
-  // `botcheck` is an off-screen checkbox, `companyWebsite` an off-screen text
-  // field. Neither is reachable by keyboard or screen reader, so anything in
-  // either one is automation. The submission is dropped without a trace.
-  const honeypotTripped =
-    (typeof payload.botcheck === 'string' && payload.botcheck.trim().length > 0) ||
-    (typeof payload.companyWebsite === 'string' && payload.companyWebsite.trim().length > 0);
-  if (honeypotTripped) {
-    console.warn('contact honeypot tripped — submission discarded');
+  // Both are off-screen fields in contact.astro, unreachable by pointer,
+  // keyboard or screen reader, so anything in either is automation.
+  //
+  // A field trips ONLY when it arrives as a string that is still non-empty
+  // after trimming: nothing looser. The old check keyed on `companyWebsite`,
+  // whose name Chrome's autofill recognises, so real visitors with autofill
+  // enabled were silently discarded. That name is gone and is not accepted
+  // here any more — a browser that still has it cached cannot trip anything.
+  const HONEYPOT_FIELDS = ['csc_extra_note', 'csc_extra_confirm'];
+  const trippedField = HONEYPOT_FIELDS.find(
+    (field) => typeof payload[field] === 'string' && payload[field].trim().length > 0
+  );
+  if (trippedField) {
+    // Field name and value LENGTH only. The value and the message body are
+    // never logged: a honeypot catches misdirected humans as well as bots,
+    // and logs are not the place for either one's data.
+    console.warn(
+      `contact bot signal — honeypot field "${trippedField}" non-empty ` +
+        `(length ${payload[trippedField].trim().length}) — submission discarded`
+    );
+    return { statusCode: 200, headers, body: JSON.stringify({ success: true, refCode: 'MSG-IGNORED' }) };
+  }
+
+  // ── Time-to-submit — a second bot signal ────────────────────────
+  // Both timestamps come from the visitor's own clock (stamped on form load
+  // and again at submit), so this is an elapsed measurement with no
+  // client/server skew in it. Missing or unparseable values do NOT trip the
+  // check: a direct POST that skips the form sends none, and Turnstile is the
+  // defence there. Failing open matters — failing closed would recreate the
+  // very bug this change fixes, silently dropping genuine enquiries.
+  const elapsedMs = Number(payload.csc_ts_submit) - Number(payload.csc_ts_load);
+  if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < MIN_SUBMIT_MS) {
+    console.warn(
+      `contact bot signal — submitted ${elapsedMs}ms after form load, under the ` +
+        `${MIN_SUBMIT_MS}ms minimum — submission discarded`
+    );
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, refCode: 'MSG-IGNORED' }) };
   }
 
