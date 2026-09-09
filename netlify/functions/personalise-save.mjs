@@ -1,5 +1,7 @@
+import crypto from 'node:crypto';
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { styleSizeForTemplate, MAX_STYLE_CALLS } from './_shared/style.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -91,7 +93,7 @@ export default async (req, context) => {
 
     const photo = form.get('photo');
     return photo && typeof photo !== 'string'
-      ? await savePhoto(form, photo)
+      ? await savePhoto(form, photo, req)
       : await finalise(form);
   } catch (error) {
     console.error('Personalisation save error:', error);
@@ -100,7 +102,7 @@ export default async (req, context) => {
 };
 
 /* ---------- one photo ---------- */
-async function savePhoto(form, file) {
+async function savePhoto(form, file, req) {
   const panelId = form.get('panelId');
   if (!isPanelId(panelId)) return json({ error: 'Invalid panel id' }, 400);
 
@@ -147,6 +149,18 @@ async function savePhoto(form, file) {
     },
   });
 
+  /* Identifies the photograph itself, not the upload. The same picture dropped
+     into several panels of a strip is one model call, not twelve -- which on a
+     12-panel strip is the difference between 36 seconds and seven minutes. */
+  const sha256 = crypto.createHash('sha256').update(Buffer.from(buf)).digest('hex');
+
+  /* The template decides the style size, and it is not known here: the builder
+     posts the recipe at Add to basket, long after the first photo goes up. An
+     optional templateId on the upload lets it be right from the first call;
+     without one this defaults to 2K and finalise() corrects the field later.
+     Wiring the builder to send it is 10b-2b. */
+  const templateId = str(form.get('templateId'), 40) || null;
+
   const consentRaw = form.get('consentAt');
   const consentAt =
     typeof consentRaw === 'string' && !Number.isNaN(Date.parse(consentRaw))
@@ -177,16 +191,32 @@ async function savePhoto(form, file) {
         status: 'draft',
         photoKeys: [key],
         styledKeys: [],
+        photos: [photoRow({ panel: panelId, rawKey: key, sha256 })],
+        styleSize: styleSizeForTemplate(templateId),
+        styleCalls: 0,
         consentAt,
         createdAt: new Date().toISOString(),
       });
     } else {
-      // unset-then-insert keeps this idempotent when a panel is re-uploaded
+      /* Two arrays to append to, and a patch carries only ONE insert -- a
+         second .append() on the same patch silently REPLACES the first rather
+         than adding to it. Appending photoKeys and photos from one patch
+         therefore wrote photos and quietly dropped photoKeys, which is the
+         field kept for compatibility. Two patches in one transaction: still
+         atomic, one insert each.
+
+         unset-then-insert in each keeps it idempotent when a panel is
+         re-uploaded. */
       await sanity
-        .patch(id)
-        .setIfMissing({ photoKeys: [] })
-        .unset([`photoKeys[@ == "${key}"]`])
-        .append('photoKeys', [key])
+        .transaction()
+        .patch(id, (p) => p
+          .setIfMissing({ photoKeys: [], styleCalls: 0 })
+          .unset([`photoKeys[@ == "${key}"]`])
+          .append('photoKeys', [key]))
+        .patch(id, (p) => p
+          .setIfMissing({ photos: [] })
+          .unset([`photos[panel == "${panelId}"]`])
+          .append('photos', [photoRow({ panel: panelId, rawKey: key, sha256 })]))
         .commit();
     }
   } catch (err) {
@@ -207,7 +237,98 @@ async function savePhoto(form, file) {
     throw err;
   }
 
-  return json({ id, key });
+  // Styling is best-effort from here: the photo is stored and the document is
+  // written, so a trigger that does not fire leaves a retryable 'pending' row
+  // rather than losing anything.
+  const style = await triggerStyle({ id, panelId, sha256, req });
+
+  return json({ id, key, sha256, style });
+}
+
+const photoRow = ({ panel, rawKey, sha256, styleStatus = 'pending' }) => ({
+  _type: 'styledPhoto',
+  _key: `p-${panel}`,
+  panel,
+  rawKey,
+  sha256,
+  styleStatus,
+});
+
+/**
+ * Decide what should happen to a freshly stored photo, and set it going.
+ *
+ * Three outcomes, in order of preference: reuse an identical photo already
+ * styled on this document, refuse because the personalisation has used its
+ * quota, or invoke the background styler.
+ *
+ * Never throws. The caller has already stored the photo and answered for it;
+ * a styling trigger that fails leaves the row 'pending' and is retryable
+ * through /api/personalisation-style.
+ */
+async function triggerStyle({ id, panelId, sha256, req }) {
+  try {
+    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
+    const photos = doc?.photos || [];
+
+    /* Dedupe. The same bytes styled once, and the result pointed at from every
+       panel holding them. Only a row that is actually 'done' counts -- copying
+       a styledKey from a row still in flight would point at a blob that does
+       not exist yet. */
+    const twin = photos.find(
+      (p) => p.sha256 === sha256 && p.panel !== panelId && p.styleStatus === 'done' && p.styledKey
+    );
+    if (twin) {
+      await sanity
+        .patch(id)
+        .set({
+          [`photos[panel == "${panelId}"].styledKey`]: twin.styledKey,
+          [`photos[panel == "${panelId}"].styleStatus`]: 'done',
+          [`photos[panel == "${panelId}"].styledWidth`]: twin.styledWidth ?? null,
+          [`photos[panel == "${panelId}"].styledHeight`]: twin.styledHeight ?? null,
+          [`photos[panel == "${panelId}"].styledAt`]: new Date().toISOString(),
+        })
+        .setIfMissing({ styledKeys: [] })
+        .unset([`photos[panel == "${panelId}"].styleError`, `styledKeys[@ == "${twin.styledKey}"]`])
+        .append('styledKeys', [twin.styledKey])
+        .commit();
+      console.log(`personalise-save: ${id} ${panelId} reused the styled photo from ${twin.panel} (same sha256)`);
+      return { deduped: true, from: twin.panel };
+    }
+
+    if ((doc?.styleCalls || 0) >= MAX_STYLE_CALLS) {
+      await markFailed(id, panelId, 'cap');
+      console.warn(`personalise-save: ${id} ${panelId} refused — ${MAX_STYLE_CALLS} style calls already used`);
+      return { capped: true };
+    }
+
+    // Same shape as the webhook's call to /api/render-personalisation: post to
+    // the /api/* alias and let netlify.toml find the -background function.
+    const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+    const res = await fetch(`${origin}/api/style-photo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, panel: panelId }),
+    });
+    if (!res.ok) {
+      console.error(`personalise-save: style trigger for ${id} ${panelId} returned ${res.status}`);
+      return { triggered: false, status: res.status };
+    }
+    return { triggered: true };
+  } catch (err) {
+    console.error(`personalise-save: could not trigger styling for ${id} ${panelId}:`, err.message);
+    return { triggered: false, error: err.message };
+  }
+}
+
+/** Shared by the trigger and the retry endpoint. */
+export async function markFailed(id, panelId, reason) {
+  await sanity
+    .patch(id)
+    .set({
+      [`photos[panel == "${panelId}"].styleStatus`]: 'failed',
+      [`photos[panel == "${panelId}"].styleError`]: reason,
+    })
+    .commit();
 }
 
 /* ---------- the basket thumbnail ---------- */
@@ -286,6 +407,11 @@ async function finalise(form) {
     recipe: JSON.stringify(recipeRest),
     sceneSvg: typeof sceneSvg === 'string' ? sceneSvg : '',
     customerNotes: str(form.get('notes'), 4000),
+    // Authoritative: the template is known for certain here. Photos already
+    // styled keep the size they were done at -- correcting the field does not
+    // re-style them, and re-styling a finished cover to gain 4K would double
+    // its cost for a difference the customer has already approved.
+    styleSize: styleSizeForTemplate(recipe.template),
   };
   // omit rather than send null -- an absent field reads better in the Studio
   if (dpis.length) set.minEffectiveDpi = Math.min(...dpis);

@@ -236,7 +236,96 @@ export default defineType({
       type: 'array',
       of: [{ type: 'string' }],
       readOnly: true,
-      description: 'Netlify Blob keys for the styled/processed versions of each photo.',
+      description:
+        'Netlify Blob keys for the styled versions. Kept flat and in step with photos[] ' +
+        'so anything reading the old shape still works; photos[] is the one to read.',
+    }),
+
+    /* One row per panel, replacing the two parallel key arrays as the thing to
+       read. The arrays could not say which panel was mid-styling, which had
+       failed and why, or that two panels hold the same photograph -- and a
+       styling step that can fail per panel needs all three. The arrays are
+       still written for compatibility. */
+    defineField({
+      name: 'photos',
+      title: 'Photos',
+      type: 'array',
+      readOnly: true,
+      description:
+        'Per-panel styling state. rawKey and styledKey are Netlify Blob keys — the ' +
+        'photographs themselves are NEVER uploaded to Sanity.',
+      of: [
+        {
+          type: 'object',
+          name: 'styledPhoto',
+          fields: [
+            { name: 'panel', title: 'Panel', type: 'string' },
+            { name: 'rawKey', title: 'Raw Blob Key', type: 'string' },
+            { name: 'styledKey', title: 'Styled Blob Key', type: 'string' },
+            {
+              name: 'sha256',
+              title: 'SHA-256 of the raw bytes',
+              type: 'string',
+              description:
+                'Identifies the photograph itself. The same picture dropped into several ' +
+                'panels is styled once and the result shared, which is the difference ' +
+                'between one model call and twelve.',
+            },
+            {
+              name: 'styleStatus',
+              title: 'Style Status',
+              type: 'string',
+              options: {
+                list: [
+                  { title: 'Pending', value: 'pending' },
+                  { title: 'Styling', value: 'styling' },
+                  { title: 'Done', value: 'done' },
+                  { title: 'Failed', value: 'failed' },
+                ],
+              },
+            },
+            { name: 'styleError', title: 'Style Error', type: 'string' },
+            { name: 'styledWidth', title: 'Styled Width', type: 'number' },
+            { name: 'styledHeight', title: 'Styled Height', type: 'number' },
+            { name: 'styledAt', title: 'Styled At', type: 'datetime' },
+          ],
+          preview: {
+            select: { panel: 'panel', status: 'styleStatus', err: 'styleError', w: 'styledWidth', h: 'styledHeight' },
+            prepare({ panel, status, err, w, h }: any) {
+              return {
+                title: `${panel || '?'} — ${status || 'pending'}`,
+                subtitle: err || (w && h ? `${w} × ${h}` : ''),
+              };
+            },
+          },
+        },
+      ],
+    }),
+    defineField({
+      name: 'styleSize',
+      title: 'Style Size',
+      type: 'string',
+      readOnly: true,
+      options: {
+        list: [
+          { title: '2K', value: '2K' },
+          { title: '4K', value: '4K' },
+        ],
+      },
+      description:
+        'Output size asked of the image model, derived from the template: 4K for the ' +
+        'covers, which print largest, 2K for strips and icons. Costs roughly 52s a ' +
+        'photo against 36s, which is why it is not simply 4K everywhere.',
+    }),
+    defineField({
+      name: 'styleCalls',
+      title: 'Style Calls Used',
+      type: 'number',
+      readOnly: true,
+      description:
+        'Every model call this personalisation has made, retries included. Capped at 16 ' +
+        'so a stuck retry loop cannot run up a bill; past the cap a panel is marked ' +
+        'failed with reason "cap" rather than being called again.',
     }),
     defineField({
       name: 'customerNotes',

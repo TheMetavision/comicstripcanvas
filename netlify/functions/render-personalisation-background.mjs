@@ -40,6 +40,21 @@ const RENDERABLE = new Set(['paid', 'preparing', 'on_hold']);
 
 const isId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 
+/* A panel that has not been styled is not a broken render, it is a render asked
+   for too early -- so it gets a message a human can act on rather than a stack
+   trace. It still ends in on_hold, because the outcome is the same: somebody
+   has to look. */
+class UnstyledPanel extends Error {
+  constructor(panel, status, styleError) {
+    super(
+      `panel ${panel} not styled` +
+      (status && status !== 'missing' ? ` (${status}${styleError ? `: ${styleError}` : ''})` : '')
+    );
+    this.name = 'UnstyledPanel';
+    this.panel = panel;
+  }
+}
+
 export default async (req, context) => {
   let id = null;
   try {
@@ -89,21 +104,25 @@ async function render(id, doc, req) {
   const recipe = JSON.parse(doc.recipe || '{}');
   const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
 
-  /* The photos come out of the blob store; a styled version supersedes the
-     original for that panel. This lookup is the only part of rendering that is
-     specific to a paid customer build -- everything else is shared with
-     studio-save.mjs via _shared/render.mjs. */
+  /* Every panel renders from its STYLED photo. There is deliberately no
+     fallback to the raw one: the comic styling is the product, and a print
+     that quietly used the customer's untouched photograph for one panel would
+     be a wrong order that looks like a right one all the way to the customer.
+     Better to stop and say which panel.
+
+     photos[] is the source of truth. The flat styledKeys array is still
+     written for compatibility, but it cannot say whether a key belongs to a
+     panel that finished or one still in flight. */
   const photos = getStore(PHOTO_STORE);
-  const keyFor = (panelId) => {
-    const hit = (arr) => (arr || []).find((k) => new RegExp(`/${panelId}\\.[^/.]+$`).test(k));
-    return hit(doc.styledKeys) || hit(doc.photoKeys) || null;
-  };
+  const rowFor = (panelId) => (doc.photos || []).find((p) => p.panel === panelId) || null;
   const imageFor = async (panelId) => {
-    const key = keyFor(panelId);
-    if (!key) throw new Error(`No photo stored for panel ${panelId}`);
-    const buf = await photos.get(key, { type: 'arrayBuffer' });
-    if (!buf) throw new Error(`Photo blob missing for panel ${panelId} (${key})`);
-    return dataUri(buf, key);
+    const row = rowFor(panelId);
+    if (!row || row.styleStatus !== 'done' || !row.styledKey) {
+      throw new UnstyledPanel(panelId, row?.styleStatus || 'missing', row?.styleError || null);
+    }
+    const buf = await photos.get(row.styledKey, { type: 'arrayBuffer' });
+    if (!buf) throw new Error(`Styled blob missing for panel ${panelId} (${row.styledKey})`);
+    return dataUri(buf, row.styledKey);
   };
 
   const scene = await prepareScene({ sceneSvg: doc.sceneSvg, recipe, origin, imageFor });

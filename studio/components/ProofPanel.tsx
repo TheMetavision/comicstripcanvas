@@ -36,6 +36,24 @@ const LABEL: Record<string, string> = {
   on_hold: 'On hold',
 };
 
+/* Per-photo styling state. A render cannot start until every panel is done, so
+   when a build is sitting still this is usually the reason -- worth showing
+   next to the proof rather than making someone open the photos array. */
+const STYLE_TONE: Record<string, 'default' | 'primary' | 'positive' | 'caution' | 'critical'> = {
+  pending: 'default',
+  styling: 'primary',
+  done: 'positive',
+  failed: 'critical',
+};
+
+type PhotoRow = {
+  panel?: string;
+  styleStatus?: string;
+  styleError?: string;
+  styledWidth?: number;
+  styledHeight?: number;
+};
+
 export default function ProofPanel() {
   const status = useFormValue(['status']) as string | undefined;
   const proofUrl = useFormValue(['proofUrl']) as string | undefined;
@@ -43,6 +61,12 @@ export default function ProofPanel() {
   const holdNote = useFormValue(['holdNote']) as string | undefined;
   const templateId = useFormValue(['templateId']) as string | undefined;
   const printSize = useFormValue(['printSize']) as string | undefined;
+  const photos = (useFormValue(['photos']) as PhotoRow[] | undefined) || [];
+  const styleSize = useFormValue(['styleSize']) as string | undefined;
+  const styleCalls = useFormValue(['styleCalls']) as number | undefined;
+
+  const done = photos.filter((p) => p.styleStatus === 'done').length;
+  const failed = photos.filter((p) => p.styleStatus === 'failed');
 
   return (
     <Stack space={3}>
@@ -81,6 +105,42 @@ export default function ProofPanel() {
           </Inline>
         )}
       </Flex>
+
+      {photos.length > 0 && (
+        <Card padding={3} radius={2} shadow={1} tone={failed.length ? 'critical' : 'transparent'}>
+          <Stack space={3}>
+            <Flex align="center" gap={2} wrap="wrap">
+              <Text size={1} weight="semibold">
+                Styling — {done} of {photos.length} done
+              </Text>
+              {styleSize && <Text size={1} muted>· {styleSize}</Text>}
+              {typeof styleCalls === 'number' && (
+                <Text size={1} muted>· {styleCalls} model call{styleCalls === 1 ? '' : 's'}</Text>
+              )}
+            </Flex>
+            <Flex gap={2} wrap="wrap">
+              {photos.map((p) => (
+                <Badge
+                  key={p.panel}
+                  tone={STYLE_TONE[p.styleStatus || 'pending'] || 'default'}
+                  fontSize={1}
+                  padding={2}
+                >
+                  {p.panel}
+                  {p.styleStatus === 'done' && p.styledWidth
+                    ? ` · ${p.styledWidth}×${p.styledHeight}`
+                    : ` · ${p.styleStatus || 'pending'}`}
+                </Badge>
+              ))}
+            </Flex>
+            {failed.map((p) => (
+              <Text key={p.panel} size={1}>
+                {p.panel}: {p.styleError || 'failed'}
+              </Text>
+            ))}
+          </Stack>
+        </Card>
+      )}
 
       {renderError && (
         <Card padding={3} radius={2} shadow={1} tone="critical">

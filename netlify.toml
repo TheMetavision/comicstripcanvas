@@ -56,6 +56,25 @@
   memory = 3008
   external_node_modules = ["@resvg/resvg-js"]
 
+# The comic styling job. A background function: the model takes ~36s at 2K and
+# ~52s at 4K, well past the 10s a synchronous function gets, and background
+# functions have a 15-minute budget which is ample even for a slow 4K call.
+#
+# included_files is REPEATED here on purpose. A per-function block does not
+# inherit the top-level [functions] one, so without this line the style
+# references are absent from this function's bundle -- and it is the only
+# function that reads them, so it would be the only one that breaks.
+#
+# Memory: the three references are ~1.2 MB on disk and ~1.6 MB once base64'd
+# into the request, and a 4K result decodes to a 5504 x 3072 surface for the
+# JPEG re-encode. 1536 MB leaves room for both with the model response in
+# flight; sharp stays out of the bundle for the same reason resvg does, since
+# esbuild cannot inline a native .node binary.
+[functions."style-photo-background"]
+  memory = 1536
+  included_files = ["netlify/functions/_shared/style-refs/*.jpg"]
+  external_node_modules = ["sharp"]
+
 # Photo retention, once a day. Customer photographs are deleted 90 days after
 # the order was dispatched, and abandoned builds 30 days after creation; see
 # netlify/functions/retention.mjs for the rules and what is exempt.
@@ -72,6 +91,15 @@
 [[redirects]]
   from = "/api/render-personalisation"
   to = "/.netlify/functions/render-personalisation-background"
+  status = 200
+  force = true
+
+# Same arrangement again for the styling job: personalise-save and
+# /api/personalisation-style post to /api/style-photo. Must come BEFORE the
+# /api/* rule, which would otherwise look for a function named "style-photo".
+[[redirects]]
+  from = "/api/style-photo"
+  to = "/.netlify/functions/style-photo-background"
   status = 200
   force = true
 

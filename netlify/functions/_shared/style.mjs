@@ -33,12 +33,72 @@ export const STYLE_PROMPT =
   'Output one finished image at the same aspect ratio as the photograph. ' +
   'Preserve hair colour and skin tone. Reproduce any printed text on clothing exactly, letter for letter.';
 
-const REF_DIR = fileURLToPath(new URL('./style-refs/', import.meta.url));
 const REF_FILES = ['ref-1.jpg', 'ref-2.jpg', 'ref-3.jpg'];
 
+/* Where the references might be, in the order worth trying.
+
+   import.meta.url is NOT the source file's location once this module has been
+   bundled. esbuild inlines _shared/style.mjs into the function entry point at
+   netlify/functions/<name>.mjs, so './style-refs/' resolves one directory too
+   high and the files appear to be missing -- which is exactly what happened the
+   first time this ran under netlify dev. included_files copies them faithfully
+   to netlify/functions/_shared/style-refs/, mirroring the repo, so that is the
+   path a bundled build needs.
+
+   Trying both costs two stat calls once per cold start and removes a whole
+   class of "works locally, absent in production". */
+const REF_DIRS = [
+  process.env.STYLE_REFS_DIR,                                     // explicit override
+  fileURLToPath(new URL('./style-refs/', import.meta.url)),        // unbundled: this file's own folder
+  fileURLToPath(new URL('./_shared/style-refs/', import.meta.url)),// bundled: entry is netlify/functions/
+  path.join(process.cwd(), 'netlify/functions/_shared/style-refs'),
+].filter(Boolean);
+
+const hasAllRefs = (dir) => {
+  try {
+    return REF_FILES.every((n) => {
+      const s = fs.statSync(path.join(dir, n));
+      return s.isFile() && s.size > 0;
+    });
+  } catch (e) {
+    return false;
+  }
+};
+
 const TIMEOUT_MS = 90000;
+
+/* Covers print largest, so they are worth the extra time; strips and icons are
+   not. Measured on the reference set: 2K ~36s, 4K ~52s per photo. A twelve
+   panel strip at 4K would be ten minutes of styling for no visible gain. */
+const STYLE_SIZE_BY_TEMPLATE = {
+  strip: '2K',
+  'icon-portrait': '2K',
+  'icon-landscape': '2K',
+  cover: '4K',
+  'cover-fullbleed': '4K',
+};
+/** '2K' | '4K' for a template id; 2K for anything unrecognised. */
+export const styleSizeForTemplate = (templateId) => STYLE_SIZE_BY_TEMPLATE[templateId] || '2K';
+
+/** How many model calls one personalisation may ever make. */
+export const MAX_STYLE_CALLS = 16;
 /** Aspect ratios the image config accepts; see ImageConfig in the typings. */
 export const SUPPORTED_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+
+/* Nearest by log ratio, so 2:3 and 3:2 are judged equally far from square and a
+   wide photo is never handed a tall canvas. Lives here rather than in the test
+   harness so the harness and the pipeline cannot pick differently. */
+export function nearestRatio(width, height) {
+  if (!width || !height) return '1:1';
+  const target = Math.log(width / height);
+  let best = SUPPORTED_RATIOS[0], bestDelta = Infinity;
+  for (const r of SUPPORTED_RATIOS) {
+    const [w, h] = r.split(':').map(Number);
+    const delta = Math.abs(Math.log(w / h) - target);
+    if (delta < bestDelta) { bestDelta = delta; best = r; }
+  }
+  return best;
+}
 
 /**
  * Everything the caller needs to tell a refusal from a fault. A model that
@@ -66,22 +126,21 @@ export class StyleError extends Error {
 let refCache = null;
 export function loadStyleRefs() {
   if (refCache) return refCache;
-  const missing = [];
-  const refs = REF_FILES.map((name) => {
-    const file = path.join(REF_DIR, name);
-    if (!fs.existsSync(file)) { missing.push(name); return null; }
-    const data = fs.readFileSync(file);
-    if (!data.length) { missing.push(`${name} (empty)`); return null; }
-    return { name, data, mimeType: 'image/jpeg' };
-  });
-  if (missing.length) {
+  const dir = REF_DIRS.find(hasAllRefs);
+  if (!dir) {
     throw new Error(
-      `Style reference missing — refusing to style in an unknown style. Absent: ` +
-      `${missing.join(', ')}. Expected in ${REF_DIR}. If this is a deploy, check the ` +
-      `included_files entry for the function in netlify.toml.`
+      `Style reference missing — refusing to style in an unknown style. Wanted ` +
+      `${REF_FILES.join(', ')} in one of: ${REF_DIRS.join(' | ')}. If this is a deploy, ` +
+      `check the included_files entry for this function in netlify.toml — a per-function ` +
+      `[functions."name"] block does NOT inherit the top-level one.`
     );
   }
-  refCache = refs;
+  refCache = REF_FILES.map((name) => ({
+    name,
+    data: fs.readFileSync(path.join(dir, name)),
+    mimeType: 'image/jpeg',
+  }));
+  refCache.dir = dir;
   return refCache;
 }
 

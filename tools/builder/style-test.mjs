@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import sharp from 'sharp';
-import { styleImage, imageSize, SUPPORTED_RATIOS, StyleError } from '../../netlify/functions/_shared/style.mjs';
+import { styleImage, imageSize, nearestRatio, SUPPORTED_RATIOS, StyleError } from '../../netlify/functions/_shared/style.mjs';
 
 const OUT_DIR = fileURLToPath(new URL('./style-out/', import.meta.url));
 const LOG = path.join(OUT_DIR, 'log.jsonl');
@@ -61,20 +61,6 @@ function parseArgs(argv) {
     usage(`--ratio must be one of ${SUPPORTED_RATIOS.join(', ')}`);
   }
   return { photos, opts };
-}
-
-/* Nearest by log ratio, so 2:3 and 3:2 are judged as equally far from square
-   and a wide photo is never handed a tall canvas. */
-function nearestRatio(width, height) {
-  if (!width || !height) return '1:1';
-  const target = Math.log(width / height);
-  let best = SUPPORTED_RATIOS[0], bestDelta = Infinity;
-  for (const r of SUPPORTED_RATIOS) {
-    const [w, h] = r.split(':').map(Number);
-    const delta = Math.abs(Math.log(w / h) - target);
-    if (delta < bestDelta) { bestDelta = delta; best = r; }
-  }
-  return best;
 }
 
 const safe = (s) => String(s).replace(/[^a-zA-Z0-9._-]+/g, '-');
