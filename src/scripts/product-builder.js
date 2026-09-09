@@ -948,6 +948,11 @@ export function initProductBuilder() {
   const styleWaiting = () => styleable().filter(
     (s) => s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING
   ).length;
+  /* And the cutout, which is a SECOND wait after styling finishes -- the server
+     writes it once the panel is already 'done'. Counting it separately is the
+     whole point: styling being over does not mean there is nothing left to
+     wait for, and the poller used to think it did. */
+  const cutoutWaiting = () => styleable().filter((s) => !cutoutSettled(s)).length;
   /** 0-based index of the first slot whose STYLING failed, or -1. */
   const firstStyleFailed = () => T.panels.findIndex((p) => {
     const s = state.get(p.id);
@@ -1253,15 +1258,20 @@ export function initProductBuilder() {
 
     if (payload) await applyStyleStatus(payload);
 
-    // Keep going only while something is actually outstanding.
-    if (styleWaiting() > 0) pollTimer = setTimeout(runStylePoll, pollDelay());
+    /* Keep going while ANYTHING is outstanding. This asked only about styling,
+       and the cutout is written after the panel is committed 'done' -- so the
+       poll stopped at the exact moment the cutout became the thing worth
+       waiting for. The customer sat on "Cutting out the background…" for ever
+       with the full picture in the panel, because nobody was listening when
+       the cutout landed twenty seconds later. */
+    if (styleWaiting() > 0 || cutoutWaiting() > 0) pollTimer = setTimeout(runStylePoll, pollDelay());
     else stopStylePoll();
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || !pollPausedHidden) return;
     pollPausedHidden = false;
-    if (styleWaiting() > 0) ensureStylePoll();
+    if (styleWaiting() > 0 || cutoutWaiting() > 0) ensureStylePoll();
   });
 
   /* ---------- swapping panels ---------- */
@@ -1372,6 +1382,10 @@ export function initProductBuilder() {
       if (!s || s.demo) continue;              // the seeded example is not ours to style
       const was = s.styleState;
       s.styleState = row.styleStatus || STYLE_PENDING;
+      /* When the cutout's clock starts. The server writes the cutout after the
+         panel is already done, so this is the moment from which waiting for it
+         is reasonable -- and, past CUTOUT_GIVE_UP_MS, no longer is. */
+      if (s.styleState === STYLE_DONE && !s.styleDoneAt) s.styleDoneAt = Date.now();
       s.styleError = row.styleError || null;
       if (row.styledWidth) s.styledW = row.styledWidth;
       if (row.styledHeight) s.styledH = row.styledHeight;
@@ -1455,8 +1469,17 @@ export function initProductBuilder() {
      which is exactly long enough for someone to click it. */
   let cutoutEnabled = true;
   const wantsCutout = () => MODE === 'customer' && TK === CUTOUT_TEMPLATE && cutoutEnabled;
+  /* How long to keep asking after the styled image lands. The service gets 90s
+     server-side, so three minutes covers it with room for a retry. Past that,
+     stop waiting: a background function that died without writing either a key
+     or an error would otherwise hold the customer on "Cutting out the
+     background…" for ever, with a disabled Add to basket and no way forward.
+     Giving up costs them the toggle; not giving up costs them the order. */
+  const CUTOUT_GIVE_UP_MS = 180000;
+
   const cutoutSettled = (s) =>
-    !wantsCutout() || !!s.cutoutKey || !!s.cutoutError || s.styleState !== STYLE_DONE;
+    !wantsCutout() || !!s.cutoutKey || !!s.cutoutError || s.styleState !== STYLE_DONE
+    || (!!s.styleDoneAt && Date.now() - s.styleDoneAt > CUTOUT_GIVE_UP_MS);
 
   /** Which image a slot is currently showing. */
   const variantOf = (s) => (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled');
@@ -2272,9 +2295,8 @@ export function initProductBuilder() {
       /* On a cover the cutout is part of "ready": the customer is choosing
          between two images, and offering checkout before the second one exists
          would settle that choice for them. Settled means arrived OR refused. */
-      const cutoutWaiting = wantsCutout()
-        ? styleable().filter((x) => !cutoutSettled(x)).length : 0;
-      btn.disabled = basketBusy || busy > 0 || waiting > 0 || cutoutWaiting > 0
+      const cutWaiting = cutoutWaiting();
+      btn.disabled = basketBusy || busy > 0 || waiting > 0 || cutWaiting > 0
         || !consented() || real !== total;
       $('basketHint').textContent = basketBusy ? ''
         : !consented() ? 'Tick the consent box to get started.'
@@ -2282,7 +2304,7 @@ export function initProductBuilder() {
             : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
               : styleFailedIdx >= 0 ? styleFailureText(state.get(T.panels[styleFailedIdx].id))
                 : waiting > 0 ? `Applying your comic style — ${ready} of ${ready + waiting} ready`
-                  : cutoutWaiting > 0 ? 'Cutting out the background…'
+                  : cutWaiting > 0 ? 'Cutting out the background…'
                   : real === total ? ''
                     : `Add your own photo to every panel — ${total - real} to go.`;
     }
@@ -2646,7 +2668,7 @@ export function initProductBuilder() {
       return;
     }
     if (inFlight() > 0 || styleWaiting() > 0 || !saveId) return;   // not ready to brief yet
-    if (wantsCutout() && styleable().some((x) => !cutoutSettled(x))) return;
+    if (cutoutWaiting() > 0) return;
 
     basketBusy = true; btn.disabled = true;
     const label = btn.textContent; btn.textContent = 'Saving…';
