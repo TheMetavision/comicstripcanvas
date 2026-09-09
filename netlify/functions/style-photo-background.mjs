@@ -60,6 +60,22 @@ function shortReason(err) {
 const setPanel = (panel, fields) =>
   Object.fromEntries(Object.entries(fields).map(([k, v]) => [`photos[panel == "${panel}"].${k}`, v]));
 
+/* Did the model actually do any work?
+
+   A refusal from a gateway, an auth failure or a quota rejection never reached
+   the model, so it must not spend the cap. That mattered the moment Netlify's
+   AI Gateway started answering 401: every upload burned a call against a
+   budget of 16 without a single generation, so a build could exhaust itself
+   and become permanently unretryable over an outage that produced nothing.
+
+   A safety block DOES count -- the model looked at the photograph and gave its
+   answer. So does a timeout: nothing says the generation did not happen, and
+   assuming it did is the side to be wrong on. */
+const NEVER_REACHED_MODEL = new Set([401, 403, 429]);
+const shouldRefund = (err) =>
+  typeof err?.status === 'number' &&
+  (NEVER_REACHED_MODEL.has(err.status) || (err.status >= 500 && err.status < 600));
+
 async function markFailed(id, panel, reason) {
   try {
     await sanity.patch(id).set(setPanel(panel, { styleStatus: 'failed', styleError: reason })).commit();
@@ -70,7 +86,7 @@ async function markFailed(id, panel, reason) {
 
 export default async (req) => {
   const started = Date.now();
-  let id = null, panel = null;
+  let id = null, panel = null, charged = false;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id; panel = body.panel;
@@ -101,12 +117,8 @@ export default async (req) => {
       return new Response('Cap reached', { status: 200 });
     }
 
-    // Claim the call before making it: an increment after the fact would not
-    // count a call that timed out, which is exactly the kind that runs away.
     await sanity
       .patch(id)
-      .setIfMissing({ styleCalls: 0 })
-      .inc({ styleCalls: 1 })
       .set(setPanel(panel, { styleStatus: 'styling' }))
       .unset([`photos[panel == "${panel}"].styleError`])
       .commit();
@@ -126,6 +138,16 @@ export default async (req) => {
       `style-photo: ${id} ${panel} styling ${src.width ?? '?'}x${src.height ?? '?'} ` +
       `ratio ${aspectRatio} size ${size} refs ${loadStyleRefs().dir}`
     );
+
+    /* Claim the call immediately before making it, not earlier: everything
+       above this line -- reading the blob, sizing it -- costs nothing and must
+       not eat the customer's budget if it fails. Claiming BEFORE rather than
+       after still matters, because a call that times out may well have
+       generated, and an increment written afterwards would miss exactly the
+       kind of call that runs away. Refunded below if it never reached the
+       model at all. */
+    await sanity.patch(id).setIfMissing({ styleCalls: 0 }).inc({ styleCalls: 1 }).commit();
+    charged = true;   // set only after the increment has committed
 
     const styled = await styleImage({
       buffer: rawBuf,
@@ -189,6 +211,17 @@ export default async (req) => {
           })
         : err?.stack || err?.message
     );
+    /* Hand the call back if it never reached the model. Paired with the
+       increment above -- charged is only true once that has committed -- so
+       this cannot take the count below where it started. */
+    if (charged && shouldRefund(err) && isId(id)) {
+      try {
+        await sanity.patch(id).dec({ styleCalls: 1 }).commit();
+        console.warn(`style-photo: ${id} ${panel} refunded its call — status ${err.status} never reached the model`);
+      } catch (refundErr) {
+        console.error(`style-photo: could not refund the call for ${id} ${panel}:`, refundErr.message);
+      }
+    }
     if (isId(id) && isPanel(panel)) await markFailed(id, panel, reason);
     return new Response('Failed', { status: 500 });
   }

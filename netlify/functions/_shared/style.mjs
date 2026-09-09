@@ -208,6 +208,18 @@ export function imageSize(buf) {
    or a boolean. Nothing in this function may ever widen that. */
 const KEY_ENV_VAR = 'GOOGLE_AI_API_KEY';
 
+/* Pinned because Netlify's AI Gateway was intercepting these calls in
+   production and answering 401 itself -- the body was {"error":{"message":"",
+   "code":401,"status":"Unauthorized"}}, which is not Google's error shape, on a
+   key that was correct.
+
+   @google/genai resolves the host as: httpOptions.baseUrl, else the global set
+   by setDefaultBaseUrls(), else the GOOGLE_GEMINI_BASE_URL environment
+   variable (see getBaseUrl in the node build). An explicit baseUrl beats both,
+   so setting it here is what stops anything in the environment redirecting the
+   request away from Google. */
+const GOOGLE_API_BASE_URL = 'https://generativelanguage.googleapis.com';
+
 function describeApiKey(raw) {
   const s = String(raw ?? '');
   const trimmed = s.trim();
@@ -291,9 +303,16 @@ export async function styleImage({
      it is non-empty by the guard above, so the fallback cannot fire here --
      but the environment is reported anyway, because "someone set a second key"
      is exactly the kind of thing that produces a 401 nobody can explain. */
-  console.log('style: api key check', JSON.stringify(describeApiKey(apiKey)));
+  console.log('style: api key check', JSON.stringify({
+    ...describeApiKey(apiKey),
+    // The host actually used, and what the environment WOULD have injected had
+    // it not been pinned -- the second is the evidence that the gateway is in
+    // the way, so it is worth seeing even once the first has fixed it.
+    baseUrl: GOOGLE_API_BASE_URL,
+    baseUrlFromEnv: process.env.GOOGLE_GEMINI_BASE_URL || null,
+  }));
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { baseUrl: GOOGLE_API_BASE_URL } });
 
   /* Interleaved, and the order is load-bearing: the references are labelled and
      shown first so "the reference images" in the prompt has a referent, the
