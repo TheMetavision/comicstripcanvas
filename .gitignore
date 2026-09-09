@@ -29,3 +29,6 @@ pnpm-debug.log*
 tools/builder/renderer/run/*
 !tools/builder/renderer/run/.gitkeep
 tools/builder/renderer/node_modules/
+
+# comic style test output (local only, images + api log)
+tools/builder/style-out/

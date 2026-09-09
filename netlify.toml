@@ -28,6 +28,15 @@
 
 [functions]
   directory = "netlify/functions"
+  # The comic style references, read from disk at runtime by
+  # netlify/functions/_shared/style.mjs. esbuild only bundles what is imported,
+  # so binary assets read through fs have to be listed or they are simply absent
+  # in production and every styling call throws.
+  #
+  # Note this is the first included_files entry in the project: the brand fonts
+  # do NOT work this way -- render.mjs fetches those over HTTP from
+  # ${origin}/builder/fonts/, so there was no existing entry to follow.
+  included_files = ["netlify/functions/_shared/style-refs/*.jpg"]
 
 # A 24 x 16 in file at 300dpi is a 7200 x 4800 raster. Give the render job the
 # most memory Netlify allows, and keep resvg out of the bundle -- it ships a
