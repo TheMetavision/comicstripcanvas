@@ -1255,12 +1255,107 @@ export function initProductBuilder() {
     if (styleWaiting() > 0) ensureStylePoll();
   });
 
+  /* ---------- swapping panels ---------- */
+  /** Which slot currently holds the photograph the server calls `sp`. */
+  function slotForServerPanel(sp) {
+    for (const p of T.panels) {
+      const s = state.get(p.id);
+      if (s && !s.demo && (s.serverPanel || p.id) === sp) return p.id;
+    }
+    return null;
+  }
+
+  let swapFrom = null;   // slot id awaiting a partner, or null
+
+  /* Point a slot's nodes at whatever it now holds. Used by the swap, which
+     moves state between slots without touching the photographs themselves --
+     no upload, no style call, nothing the cap could count. */
+  function rebindSlot(id) {
+    const n = nodes[id], s = state.get(id);
+    if (!n) return;
+    if (!s) {
+      n.img.setAttribute('opacity', 0); n.img.removeAttribute('href');
+      if (n.num) n.num.setAttribute('opacity', 1);
+      if (n.plate) n.plate.setAttribute('opacity', 1);
+      n.hit.classList.remove('filled');
+      drawSlotFlag(id);
+      return;
+    }
+    /* Panels are different shapes, so a crop chosen in one is meaningless in
+       another -- a face centred in a tall panel can end up out of frame in a
+       wide one. Both sides start fit-centred and the customer re-crops if they
+       want to, which is the same reasoning as the styled swap. */
+    s.zoom = 1; s.ox = 0; s.oy = 0;
+    n.img.setAttribute('href', s.cut && s.cutUrl ? s.cutUrl : s.url);
+    n.img.setAttribute('opacity', s.demo ? 1 : (s.uploadState && s.uploadState !== UPLOADED ? 0.45 : 1));
+    if (n.num) n.num.setAttribute('opacity', s.demo ? 1 : 0);
+    if (n.plate) n.plate.setAttribute('opacity', s.demo ? 1 : 0);
+    n.hit.classList.toggle('filled', !s.demo);
+    if (s.cut) { s.cutKey = null; applyCut(id); }
+    layout(id);
+    drawSlotFlag(id);
+  }
+
+  /* Exchange two panels' contents.
+
+     The whole state object moves, which carries the photograph, its blob keys,
+     the styled image and its dimensions, and the sha256 the server dedupes on.
+     serverPanel travels with it, so the poll and the retry endpoint keep
+     addressing the photograph rather than the hole it used to sit in. Nothing
+     is uploaded and nothing is styled: this is a rearrangement of things the
+     server already has. */
+  function swapPanels(a, b) {
+    if (!a || !b || a === b) return false;
+    const sa = state.get(a), sb = state.get(b);
+    if (!sa && !sb) return false;
+    if (sb) state.set(a, sb); else state.delete(a);
+    if (sa) state.set(b, sa); else state.delete(b);
+    rebindSlot(a); rebindSlot(b);
+    select(b);
+    refresh();
+    console.log(`[builder] swapped ${a} <-> ${b}`);
+    return true;
+  }
+
+  function beginSwap(id) {
+    const s = state.get(id);
+    if (!s || s.demo) return;            // nothing to move
+    swapFrom = id;
+    if (nodes[id] && nodes[id].hit) nodes[id].hit.classList.add('swap-source');
+    syncPanel(); refresh();
+  }
+
+  function cancelSwap() {
+    if (!swapFrom) return;
+    const n = nodes[swapFrom];
+    if (n && n.hit) n.hit.classList.remove('swap-source');
+    swapFrom = null;
+    syncPanel(); refresh();
+  }
+
+  /** A tap while a swap is armed. Returns true if it consumed the tap. */
+  function handleSwapTap(id) {
+    if (!swapFrom) return false;
+    const from = swapFrom;
+    cancelSwap();
+    if (id !== from) swapPanels(from, id);   // same panel = cancel, as promised
+    return true;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && swapFrom) { e.preventDefault(); cancelSwap(); }
+  });
+
   /** Fold one status response into the slots. */
   async function applyStyleStatus(payload) {
     const rows = Array.isArray(payload.photos) ? payload.photos : [];
     let touched = false;
     for (const row of rows) {
-      const s = state.get(row.panel);
+      // Matched on serverPanel, not on the slot id: after a swap the photo the
+      // server calls panel-01 may be sitting in panel-05.
+      const slot = slotForServerPanel(row.panel);
+      if (!slot) continue;
+      const s = state.get(slot);
       if (!s || s.demo) continue;              // the seeded example is not ours to style
       const was = s.styleState;
       s.styleState = row.styleStatus || STYLE_PENDING;
@@ -1272,9 +1367,9 @@ export function initProductBuilder() {
       if (s.styleState === STYLE_DONE) {
         // A dedupe hit lands here on the very first poll, already done, with no
         // 'styling' in between. Nothing special to do -- the swap is the same.
-        await applyStyled(row.panel);
+        await applyStyled(slot);
       } else if (was !== s.styleState) {
-        drawSlotFlag(row.panel);
+        drawSlotFlag(slot);
         touched = true;
       }
     }
@@ -1291,7 +1386,7 @@ export function initProductBuilder() {
     if (!s || s.demo || s.styled || s.styledLoading) return;
     s.styledLoading = true;
     try {
-      const res = await fetch(`/api/personalisation-photo/${saveId}/${id}`, { cache: 'no-store' });
+      const res = await fetch(`/api/personalisation-photo/${saveId}/${s.serverPanel || id}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       const probe = new Image();
@@ -1341,7 +1436,7 @@ export function initProductBuilder() {
     if (selected === id) syncPanel();
     refresh();
     try {
-      const res = await fetch(`/api/personalisation-style/${saveId}/${id}?retry=1`, { method: 'POST' });
+      const res = await fetch(`/api/personalisation-style/${saveId}/${s.serverPanel || id}?retry=1`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       // A dedupe hit answers 200 with deduped:true and the panel already done;
       // the poll picks that up on its next pass like any other 'done'.
@@ -1585,6 +1680,12 @@ export function initProductBuilder() {
         // slot is uploaded the moment it is filled, so it starts queued.
         uploadState: MODE === 'customer' ? PENDING : null, uploadError: null,
         styleState: null, styleError: null, styled: false,
+        /* The panel this photograph was UPLOADED under, which stops being the
+           panel it sits in the moment anything is swapped. Every conversation
+           with the server -- the status poll, fetching the styled image, asking
+           for a re-style -- is about this id, because it is the one the server
+           knows. The slot id is only where it currently appears on screen. */
+        serverPanel: id,
       });
       drawSlotFlag(id);            // a replaced photo clears the old failure
       const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
@@ -1624,7 +1725,18 @@ export function initProductBuilder() {
     hit.addEventListener('pointerup', end); hit.addEventListener('pointercancel', end);
     // click fires after pointerup; only treat it as "choose a photo" if the
     // pointer didn't travel -- otherwise it was a reposition
+    /* Enter and Space on a focused panel do what a tap does. The panels have
+       carried tabIndex 0 and role="button" since they were built, which
+       promised keyboard operation that was never actually wired -- an SVG
+       element does not synthesise a click from Enter the way a <button> does. */
+    hit.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      e.preventDefault();
+      hit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     hit.addEventListener('click', () => {
+      // A swap in progress claims the next tap, whatever it lands on.
+      if (handleSwapTap(id)) { moved = false; return; }
       if (!moveMode && !moved) {
         /* A failed slot promises "tap to retry" on its face, so a tap has to
            mean that and not the file chooser -- re-picking the same photo
@@ -1749,6 +1861,15 @@ export function initProductBuilder() {
     $('pImg').textContent = s.demo ? 'example artwork'
       : `${s.natW} × ${s.natH}${s.styled ? ' (styled)' : ''}`;
     $('zoom').value = s.zoom;
+    /* Swap is only meaningful from a panel holding one of the customer's
+       photographs -- the seeded example is not theirs to move. While a swap is
+       armed the button is the way out of it, from any panel. */
+    const swapBtn = $('swap');
+    if (swapBtn) {
+      swapBtn.textContent = swapFrom ? 'Cancel swap' : 'Swap';
+      swapBtn.disabled = !swapFrom && (s.demo || T.panels.length < 2);
+      swapBtn.setAttribute('aria-pressed', String(!!swapFrom));
+    }
     $('cutBox').hidden = !(T.bg && T.bg.type === 'image');
     $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
 
@@ -1794,6 +1915,18 @@ export function initProductBuilder() {
 
     /* One line, and only one. Upload first for the same reason the slot overlay
        does it: until the photo is stored, styling has not been asked for. */
+    /* An armed swap owns the hint: it is a mode, and the one thing worth saying
+       is how to finish or leave it. */
+    if (swapFrom) {
+      flag.hidden = true;
+      up.classList.remove('b-hint-bad');
+      up.hidden = false;
+      up.textContent = swapFrom === selected
+        ? 'Now choose the panel to swap with — tap this one again, or press Escape, to cancel.'
+        : 'Tap to swap with the highlighted panel, or press Escape to cancel.';
+      return;
+    }
+
     const st = s.uploadState;
     const styleFailed = st === UPLOADED && s.styleState === STYLE_FAILED;
     const styling = st === UPLOADED && !s.styled
@@ -1916,6 +2049,10 @@ export function initProductBuilder() {
   $('zoom').addEventListener('input', (e) => { const s = state.get(selected); if (!s) return; s.zoom = +e.target.value; layout(selected); syncPanel(); });
   $('reset').addEventListener('click', () => { const s = state.get(selected); s.ox = s.oy = 0; s.zoom = 1; layout(selected); syncPanel(); });
   $('replace').addEventListener('click', () => ask(selected));
+  $('swap').addEventListener('click', () => {
+    if (swapFrom) cancelSwap();          // the button doubles as Cancel
+    else beginSwap(selected);
+  });
   $('logoPick').addEventListener('click', () => { pickTarget = '__logo__'; picker.click(); });
   $('logoReset').addEventListener('click', () => {
     if (!T.logo) return; T.logo.href = DEFAULT_LOGO; T.logo.custom = null; placeLogo();
@@ -2269,24 +2406,78 @@ export function initProductBuilder() {
     }
   }
 
+  /* ---------- draft watermark ---------- */
+  /* Drawn onto the exported bitmap and nowhere else.
+
+     This is the ONLY place it exists. It is not in the live SVG, so it cannot
+     reach the recipe, the basket thumbnail, the proof or the print file --
+     those all derive from the scene, and the scene never carries it. Anything
+     that wants a watermark has to ask for it here, at export, on a copy.
+
+     The old one was a single line at low opacity across the middle: on a strip
+     it covered two panels out of twelve and a screenshot of any other panel was
+     clean. Tiled at 45 degrees, every panel carries some of it.
+
+     White with a dark outline rather than one flat colour, because the artwork
+     underneath is both: flat black text vanishes on a dark panel and flat white
+     vanishes on a pale sky. An outlined glyph has an edge against either. */
+  const WATERMARK_TEXT = 'DRAFT · comicstripcanvas.co.uk';
+  const WATERMARK_ALPHA = 0.22;
+  const WATERMARK_ANGLE = -Math.PI / 4;      // 45 degrees, rising left to right
+
+  function stampWatermark(g, w, h) {
+    const size = Math.max(14, Math.round(Math.min(w, h) / 26));
+    g.save();
+    g.globalAlpha = WATERMARK_ALPHA;
+    g.font = `700 ${size}px ui-sans-serif,system-ui,sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.miterLimit = 2;
+
+    const runWidth = g.measureText(WATERMARK_TEXT).width;
+    /* Gaps set from the text itself, not from the canvas: the tile has to stay
+       legible at any output size, and a spacing that scales with the image
+       would space a strip and a cover completely differently. Row spacing is
+       tighter than column spacing so a narrow panel still catches a line. */
+    const stepX = runWidth + size * 3;
+    const stepY = size * 4.5;
+
+    // Rotating about the centre leaves the corners uncovered, so lay the grid
+    // over a square big enough to cover the canvas whatever the angle.
+    const reach = Math.ceil(Math.hypot(w, h) / 2) + Math.max(stepX, stepY);
+    g.translate(w / 2, h / 2);
+    g.rotate(WATERMARK_ANGLE);
+
+    let row = 0;
+    for (let y = -reach; y <= reach; y += stepY, row++) {
+      // Offset alternate rows so the tiling does not read as tram lines.
+      const offset = (row % 2) * (stepX / 2);
+      for (let x = -reach + offset; x <= reach; x += stepX) {
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = Math.max(2, size * 0.22);
+        g.strokeText(WATERMARK_TEXT, x, y);
+        g.fillStyle = '#FFFFFF';
+        g.fillText(WATERMARK_TEXT, x, y);
+      }
+    }
+    g.restore();
+  }
+
   $('download').addEventListener('click', async () => {
     const s = await draftSVG();
     const blob = new Blob([s], { type: 'image/svg+xml' });
     const img = new Image(); const url = URL.createObjectURL(blob);
     img.onload = () => {
-      // Studio mode is producing artwork to sell, so it gets the canvas at its
-      // own size with nothing stamped across it. Customer mode stays capped and
-      // watermarked: that draft is a preview, not a deliverable.
+      /* Studio mode still gets the canvas at full size -- it is producing
+         artwork, not previewing it -- but the watermark now applies to both.
+         A studio draft is still a draft, and one that leaves the building
+         unmarked is one that can come back as somebody's product photo. */
       const full = MODE === 'studio';
       const c = T.canvas, k = full ? 1 : 1400 / Math.max(c.width, c.height);
       const cv = document.createElement('canvas'); cv.width = Math.round(c.width * k); cv.height = Math.round(c.height * k);
       const g = cv.getContext('2d'); g.drawImage(img, 0, 0, cv.width, cv.height);
-      if (!full) {
-        g.save(); g.globalAlpha = 0.18; g.fillStyle = '#000';
-        g.font = `700 ${Math.round(cv.width / 16)}px ui-sans-serif,system-ui,sans-serif`;
-        g.textAlign = 'center'; g.translate(cv.width / 2, cv.height / 2); g.rotate(-Math.PI / 9);
-        g.fillText('DRAFT — no comic effect applied', 0, 0); g.restore();
-      }
+      stampWatermark(g, cv.width, cv.height);
       cv.toBlob((b) => {
         const a = document.createElement('a'); a.href = URL.createObjectURL(b);
         a.download = `${TK}-${full ? 'studio' : 'draft'}.png`; a.click();

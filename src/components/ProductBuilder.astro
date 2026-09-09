@@ -174,6 +174,7 @@ const builderData = JSON.stringify({
           <div class="b-row">
             <button id="reset" class="b-btn">Recentre</button>
             <button id="replace" class="b-btn">Replace</button>
+            <button id="swap" class="b-btn">Swap</button>
             <button id="clear" class="b-btn">Remove</button>
           </div>
           <div id="cutBox" hidden>
@@ -343,6 +344,15 @@ const builderData = JSON.stringify({
   .csc-builder .hit { cursor: pointer; }
   .csc-builder .hit.filled { cursor: grab; }
   .csc-builder .hit.dragging { cursor: grabbing; }
+  /* The panel waiting for a partner. Drawn on the hit area itself so it sits
+     above the artwork without another overlay node to strip from the exports. */
+  .csc-builder .hit.swap-source {
+    fill: rgba(255, 242, 0, 0.22);
+    stroke: #FFF200;
+    stroke-width: 10;
+    stroke-dasharray: 26 16;
+  }
+  .csc-builder .hit:focus-visible { outline: 3px solid var(--b-accent); outline-offset: 2px; }
   .csc-builder .movable { cursor: move; }
 
   .csc-builder .b-btn {

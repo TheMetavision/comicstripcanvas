@@ -315,6 +315,46 @@ export async function markFailed(id, panelId, reason) {
     .commit();
 }
 
+/**
+ * Re-seat photos[] into the panels the recipe puts them in.
+ *
+ * Matched on rawKey, which identifies the photograph's upload and never
+ * changes, rather than on panel, which is exactly what a swap changes.
+ *
+ * Deliberately all-or-nothing. It only rewrites when the recipe's rawKeys are
+ * a clean permutation of the existing rows' -- same set, no duplicates, none
+ * missing. A partial match would mean the two disagree about which
+ * photographs exist, and quietly writing half a mapping in that state is worse
+ * than leaving a stale one: at least a stale mapping is coherent, and the
+ * render job refuses a panel it cannot resolve rather than printing the wrong
+ * photograph. Returns null to mean "leave it alone".
+ */
+export function remapPhotoPanels(photos, recipePanels) {
+  if (!Array.isArray(photos) || !photos.length) return null;
+  if (!Array.isArray(recipePanels) || !recipePanels.length) return null;
+
+  const byRawKey = new Map();
+  for (const row of photos) {
+    if (!row || !row.rawKey) return null;          // nothing to match on
+    if (byRawKey.has(row.rawKey)) return null;     // ambiguous
+    byRawKey.set(row.rawKey, row);
+  }
+
+  const wanted = recipePanels.filter((p) => p && p.rawKey && !p.placeholder);
+  if (wanted.length !== byRawKey.size) return null;
+
+  const seen = new Set();
+  const out = [];
+  for (const p of wanted) {
+    const row = byRawKey.get(p.rawKey);
+    if (!row || seen.has(p.rawKey)) return null;   // unknown or duplicated
+    seen.add(p.rawKey);
+    if (!isPanelId(p.id)) return null;
+    out.push({ ...row, _key: `p-${p.id}`, panel: p.id });
+  }
+  return out;
+}
+
 /* ---------- the basket thumbnail ---------- */
 /* Stored beside the photos, under the same personalisation/<id>/ prefix, so the
    retention sweep collects it with everything else -- that job lists the prefix
@@ -371,7 +411,7 @@ async function finalise(form) {
     return json({ error: 'Recipe is missing its template' }, 400);
   }
 
-  const existing = await sanity.fetch('*[_id == $id][0]{ _id, photoKeys }', { id });
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id, photoKeys, photos }', { id });
   if (!existing) return json({ error: 'Unknown personalisation' }, 404);
   if (!(existing.photoKeys || []).length) {
     return json({ error: 'No photos have been uploaded yet' }, 400);
@@ -397,6 +437,23 @@ async function finalise(form) {
     // its cost for a difference the customer has already approved.
     styleSize: styleSizeForTemplate(recipe.template),
   };
+
+  /* Panels can be swapped in the builder after their photographs were
+     uploaded, so the panel a photograph sits in at Add to basket is not
+     necessarily the one it was uploaded under.
+     photos[] is rewritten to the customer's final arrangement rather than
+     leaving the render job to consult the recipe instead. photos[] is what the
+     status endpoint, the styled-photo endpoint, the Studio panel and the
+     render job all read; teaching only the renderer about the recipe would
+     leave every other reader describing an arrangement the customer never
+     approved, and two sources of truth to keep in step. One rewrite here and
+     everything downstream stays correct without knowing swapping exists. */
+  const remapped = remapPhotoPanels(existing.photos, recipe.panels);
+  if (remapped) {
+    set.photos = remapped;
+    const moved = remapped.filter((r, i) => r.panel !== (existing.photos || [])[i]?.panel).length;
+    if (moved) console.log(`personalise-save: ${id} remapped ${moved} panel(s) after a swap`);
+  }
   // omit rather than send null -- an absent field reads better in the Studio
   if (dpis.length) set.minEffectiveDpi = Math.min(...dpis);
 
