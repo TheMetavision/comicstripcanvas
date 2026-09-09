@@ -203,7 +203,18 @@ const builderData = JSON.stringify({
         <h3 class="b-h">Output</h3>
         <div class="b-stat"><span>Spec</span><span id="outSpec"></span></div>
         <div class="b-stat"><span>Images placed</span><span id="filled"></span></div>
-        <div class="b-flag" id="outWarn" hidden></div>
+        {mode === 'customer' && (
+          <div class="b-stat"><span>Uploaded</span><span id="uploaded"></span></div>
+        )}
+        {/*
+          Studio only. This banner is a production instruction -- "the artwork
+          has to be extended before this can be printed" -- addressed to whoever
+          prepares the file. It shipped visible in customer mode, where a
+          customer picking a canvas was told their own order could not be
+          printed. Not rendered at all outside studio mode, so no future change
+          to refresh() can put it back in front of a customer.
+        */}
+        {mode === 'studio' && <div class="b-flag" id="outWarn" hidden></div>}
         <p class="b-hint">
           On canvas the dashed line is the front face &mdash; anything outside it wraps around the
           frame edge and won&rsquo;t be seen head-on.
@@ -372,6 +383,11 @@ const builderData = JSON.stringify({
     @apply mb-2.5 mt-0 font-bangers text-xl uppercase tracking-wide text-comic-yellow;
   }
   .csc-builder .b-hint { @apply mb-0 mt-2 font-source text-[13px] text-gray-400; }
+  /* A failed upload has to read as a fault, not as another grey note. Matches
+     the red drawn over the slot itself, so the panel and the board agree. */
+  .csc-builder .b-hint-bad {
+    @apply border-l-4 border-comic-red pl-2 font-semibold text-comic-red;
+  }
   .csc-builder .b-row { @apply my-2 flex items-center gap-2.5; }
   .csc-builder .b-lab {
     @apply flex-none font-russo text-[11px] uppercase leading-tight tracking-wider text-off-white;

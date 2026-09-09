@@ -16,6 +16,14 @@ export interface CartItem {
   imageUrl?: string;
   /** pendingPersonalisation._id, when this line was built in the product builder. */
   personalisationId?: string;
+  /**
+   * Snapshot of the customer's own build: /api/personalisation-thumb/<id>.
+   * Shown instead of imageUrl so the basket line is their artwork rather than
+   * the generic product shot. A URL, never a data: URI -- this atom is
+   * persisted to localStorage, which a few hundred KB of base64 per line would
+   * fill. Absent when the snapshot failed, and imageUrl carries the line.
+   */
+  thumbUrl?: string;
   /** e.g. "Comic cover · 16 × 24 in · gallery wrap · 1 photo" */
   description?: string;
 }

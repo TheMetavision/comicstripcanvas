@@ -151,12 +151,23 @@ export default async (req, context) => {
       });
     }
 
+    const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
+
     // Build Stripe line items
     const lineItems = items.map((item) => ({
       price_data: {
         currency: 'gbp',
         product_data: {
           name: item.title,
+          // The basket's own thumbnail. Derived here from the id, never read
+          // off the request: this URL is handed to Stripe, which fetches it
+          // server-side, so a client-supplied one would be an open request
+          // relay. Deriving gives byte-for-byte the URL the basket shows.
+          // Stripe tolerates a 404 here (the snapshot is best-effort), so an
+          // absent thumbnail costs the line its picture and nothing more.
+          ...(item.personalisationId
+            ? { images: [`${siteUrl}/api/personalisation-thumb/${item.personalisationId}`] }
+            : {}),
           description: item.fee
             ? `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size} — includes £${item.fee.toFixed(2)} personalisation`
             : `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
@@ -175,8 +186,6 @@ export default async (req, context) => {
       },
       quantity: item.quantity,
     }));
-
-    const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card', 'klarna'],

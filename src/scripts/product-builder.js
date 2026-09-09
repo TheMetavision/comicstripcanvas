@@ -420,6 +420,10 @@ export function initProductBuilder() {
         if (n.num) n.num.setAttribute('opacity', 0);
         if (n.plate) n.plate.setAttribute('opacity', 0);
         n.hit.classList.add('filled'); layout(k);
+        // build() threw the old nodes away, so a failed slot needs its flag
+        // (and its dimmed artwork) put back on the new ones.
+        if (v.uploadState && v.uploadState !== UPLOADED) n.img.setAttribute('opacity', 0.45);
+        drawUploadFlag(k);
       }
     });
     seedDemo(); refresh();
@@ -858,7 +862,23 @@ export function initProductBuilder() {
   const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
   const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
   let saveId = null;                 // pendingPersonalisation._id, set by the first upload
-  let uploading = 0;
+
+  /* Per-slot upload lifecycle. Previously two loose flags (s.uploading and
+     s.uploadError) that could disagree; one field cannot. A slot showing the
+     seeded example has no state at all -- nothing of the customer's to send. */
+  const PENDING = 'pending';         // queued behind another upload
+  const UPLOADING = 'uploading';     // in flight
+  const UPLOADED = 'uploaded';       // stored, key held in s.key
+  const FAILED = 'failed';           // s.uploadError says why; tap to retry
+
+  const mine = () => [...state.values()].filter((s) => !s.demo);
+  const inState = (st) => mine().filter((s) => s.uploadState === st).length;
+  const inFlight = () => inState(PENDING) + inState(UPLOADING);
+  /** 0-based index of the first slot whose upload failed, or -1. */
+  const firstFailed = () => T.panels.findIndex((p) => {
+    const s = state.get(p.id);
+    return !!s && !s.demo && s.uploadState === FAILED;
+  });
 
   const loadImage = (file) => new Promise((res, rej) => {
     const url = URL.createObjectURL(file), im = new Image();
@@ -904,14 +924,118 @@ export function initProductBuilder() {
     }
   }
 
-  function setUploading(id, on) {
+  function setUploadState(id, st, reason) {
     const s = state.get(id), n = nodes[id];
-    if (s) s.uploading = on;
-    if (n && n.img) n.img.setAttribute("opacity", on ? 0.45 : 1);
-    uploading += on ? 1 : -1;
-    if (uploading < 0) uploading = 0;
+    if (!s) return;
+    s.uploadState = st;
+    s.uploadError = st === FAILED ? (reason || "Upload failed") : null;
+    // Dim while it is not yet safely stored, so "still working" is visible on
+    // the artwork itself rather than only in the side panel.
+    if (n && n.img) n.img.setAttribute("opacity", st === UPLOADED ? 1 : 0.45);
+    drawUploadFlag(id);
     if (selected === id) syncPanel();
     refresh();
+  }
+
+  /* A failed slot has to be findable without reading the side panel: on a phone
+     the panel is far below the board, which is exactly how this shipped looking
+     fine. The flag is drawn last so it sits above the artwork, and carries no
+     pointer events of its own so a tap still reaches the slot underneath.
+
+     data-role marks it as screen furniture: both exporters strip it, so it can
+     never reach a print file, a draft download or the basket snapshot. */
+  function drawUploadFlag(id) {
+    const n = nodes[id];
+    if (!n) return;
+    if (n.flag) { n.flag.remove(); n.flag = null; }
+    // the reason lives on the hit area, which is what a pointer actually meets
+    if (n.hit) {
+      const old = n.hit.querySelector("title");
+      if (old) old.remove();
+    }
+    const s = state.get(id);
+    if (!s || s.demo || s.uploadState !== FAILED) return;
+
+    const p = n.panel;
+    const g = mk("g", { "data-role": "upload-flag", "pointer-events": "none" });
+    g.appendChild(mk("rect", {
+      x: p.x, y: p.y, width: p.width, height: p.height, fill: "rgba(214,0,28,0.34)",
+    }));
+    const inset = Math.max(2, Math.min(p.width, p.height) * 0.02);
+    g.appendChild(mk("rect", {
+      x: p.x + inset, y: p.y + inset,
+      width: Math.max(1, p.width - 2 * inset), height: Math.max(1, p.height - 2 * inset),
+      fill: "none", stroke: "#D6001C", "stroke-width": inset,
+      "stroke-dasharray": `${inset * 3} ${inset * 2}`,
+    }));
+    // Two lines: a strip panel is far narrower than it is tall, and one line of
+    // this at a readable size runs straight out of it.
+    const size = Math.max(12, Math.min(p.height * 0.11, p.width * 0.085));
+    const t = mk("text", {
+      "text-anchor": "middle", "font-family": "ui-sans-serif,system-ui,sans-serif",
+      "font-size": size, "font-weight": 800, fill: "#FFFFFF",
+      stroke: "#000000", "stroke-width": size * 0.16, "paint-order": "stroke",
+    });
+    ["Upload failed", "Tap to retry"].forEach((line, i) => {
+      const ts = mk("tspan", { x: p.x + p.width / 2, y: p.y + p.height / 2 });
+      ts.setAttribute("dy", i === 0 ? -size * 0.15 : size * 1.15);
+      ts.textContent = line;
+      t.appendChild(ts);
+    });
+    g.appendChild(t);
+    svg.appendChild(g);
+    n.flag = g;
+
+    if (n.hit) {
+      const title = document.createElementNS(SVGNS, "title");
+      title.textContent = `Upload failed — tap to retry. ${s.uploadError || ""}`.trim();
+      n.hit.appendChild(title);
+    }
+  }
+
+  /* Re-send one photo, leaving every other slot alone. The original file is
+     still in s.file: adoptEncoded only swaps it in once a send has succeeded,
+     so a failed slot still holds what the customer chose. */
+  function retryUpload(id) {
+    const s = state.get(id);
+    if (!s || s.demo || !s.file) return false;
+    if (s.uploadState === PENDING || s.uploadState === UPLOADING) return false;
+    upload(id, s.file);
+    return true;
+  }
+
+  /* Put a slot in front of the customer -- used when Add to basket names one.
+
+     Deliberately not just scrollIntoView. That call is animated (this site sets
+     scroll-behavior: smooth), and an animated scroll is silently dropped in
+     more places than is comfortable: iOS Safari before 15.4 ignores the options
+     object outright, a background tab never runs the animation, and
+     prefers-reduced-motion can cancel it. Being shown the panel matters more
+     than the glide, so try the nice version, then check it actually happened
+     and place the page directly if it did not. */
+  function focusSlot(id) {
+    select(id);
+    const n = nodes[id];
+    if (!n || !n.hit || !n.hit.getBoundingClientRect) return;
+    const vh = () => window.innerHeight || document.documentElement.clientHeight || 0;
+    const inView = () => {
+      const r = n.hit.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= vh();
+    };
+    if (inView()) return;
+
+    try { n.hit.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    catch (e) { try { n.hit.scrollIntoView(); } catch (e2) { /* nothing more to try */ } }
+
+    setTimeout(() => {
+      if (inView()) return;
+      const r = n.hit.getBoundingClientRect();
+      const page = window.pageYOffset || document.documentElement.scrollTop || 0;
+      const top = Math.max(0, r.top + page - Math.max(0, (vh() - r.height) / 2));
+      // 'instant' is the only way past the page's own scroll-behavior: smooth
+      try { window.scrollTo({ top, behavior: 'instant' }); }
+      catch (e) { window.scrollTo(0, top); }
+    }, 700);
   }
 
   /* The panel must show, and be measured from, the file that was actually
@@ -950,8 +1074,12 @@ export function initProductBuilder() {
      create twelve documents. Queueing also keeps the "N to go" count honest. */
   let uploadChain = Promise.resolve();
   function upload(id, file) {
-    setUploading(id, true);        // counted as soon as it is queued
+    setUploadState(id, PENDING);   // counted as soon as it is queued
     const run = async () => {
+      // The slot may have been cleared or replaced while this waited its turn.
+      const before = state.get(id);
+      if (!before || before.demo || before.uploadState !== PENDING) return;
+      setUploadState(id, UPLOADING);
       try {
         const sending = await encodeForUpload(file);
         const fd = new FormData();
@@ -961,17 +1089,25 @@ export function initProductBuilder() {
         if (consentAt) fd.append("consentAt", consentAt);
         const res = await fetch("/api/personalise-save", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.id) throw new Error(data.error || "Upload failed");
+        // The function answers with a reason on every refusal. Carry it through
+        // verbatim rather than flattening everything to "Upload failed": "too
+        // large once encoded" and "unsupported file type" need different fixes
+        // from the customer, and only the reason tells them apart.
+        if (!res.ok || !data.id) {
+          throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
+        }
         saveId = data.id;
         const s = state.get(id);
-        if (s) { s.key = data.key; s.uploadError = null; }
+        if (s) s.key = data.key;
         // the stored file is the one the customer should be working with
         if (sending !== file) await adoptEncoded(id, sending);
+        setUploadState(id, UPLOADED);
       } catch (e) {
-        const s = state.get(id);
-        if (s) s.uploadError = e.message || "Upload failed";
-      } finally {
-        setUploading(id, false);
+        const reason = e.message || "Upload failed";
+        // The slot's tooltip carries the reason too, but a tooltip is no use on
+        // a phone -- which is where these failures actually happen.
+        console.warn(`[builder] upload failed for ${id}: ${reason}`);
+        setUploadState(id, FAILED, reason);
       }
     };
     uploadChain = uploadChain.then(run);   // run never rejects
@@ -985,7 +1121,11 @@ export function initProductBuilder() {
       state.set(id, {
         url, el: probe, name: file.name, file, natW: probe.naturalWidth, natH: probe.naturalHeight,
         zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
+        // Studio mode never uploads, so its slots stay stateless. A customer
+        // slot is uploaded the moment it is filled, so it starts queued.
+        uploadState: MODE === 'customer' ? PENDING : null, uploadError: null,
       });
+      drawUploadFlag(id);            // a replaced photo clears the old failure
       const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
@@ -1023,7 +1163,17 @@ export function initProductBuilder() {
     hit.addEventListener('pointerup', end); hit.addEventListener('pointercancel', end);
     // click fires after pointerup; only treat it as "choose a photo" if the
     // pointer didn't travel -- otherwise it was a reposition
-    hit.addEventListener('click', () => { if (!moveMode && !moved) ask(id); moved = false; });
+    hit.addEventListener('click', () => {
+      if (!moveMode && !moved) {
+        // A failed slot promises "tap to retry" on its face, so a tap has to
+        // mean that and not the file chooser -- re-picking the same photo
+        // would be a puzzling thing to have to do, and would lose the framing.
+        const s = state.get(id);
+        if (s && !s.demo && s.uploadState === FAILED) retryUpload(id);
+        else ask(id);
+      }
+      moved = false;
+    });
     hit.addEventListener('wheel', (e) => {
       const s = state.get(id); if (!s) return; e.preventDefault();
       s.zoom = Math.min(3, Math.max(1, s.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
@@ -1113,8 +1263,13 @@ export function initProductBuilder() {
     flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
       + `${surface} — try a larger file or zoom out.`;
     const up = $('uploadHint');
-    up.hidden = !(s.uploading || s.uploadError);
-    up.textContent = s.uploading ? 'Uploading this photo…' : (s.uploadError || '');
+    const st = s.uploadState;
+    up.classList.toggle('b-hint-bad', st === FAILED);
+    up.hidden = !st || st === UPLOADED;
+    up.textContent = st === PENDING ? 'Waiting to upload…'
+      : st === UPLOADING ? 'Uploading this photo…'
+        : st === FAILED ? `Upload failed — tap the panel to retry. ${s.uploadError || ''}`.trim()
+          : '';
   }
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
@@ -1244,6 +1399,7 @@ export function initProductBuilder() {
     n.img.setAttribute('opacity', 0); n.img.removeAttribute('href');
     if (n.num) n.num.setAttribute('opacity', 1);
     if (n.plate) n.plate.setAttribute('opacity', 1);
+    drawUploadFlag(selected);      // the slot is empty; any failure flag goes with it
     n.hit.classList.remove('filled'); syncPanel(); refresh();
   });
   $('resetTint').addEventListener('click', () => {
@@ -1299,28 +1455,47 @@ export function initProductBuilder() {
       $('outSpec').textContent = w
         ? `${sz.label} face · file ${outW} × ${outH} in incl. ${w}" wrap`
         : `${sz.label} · file ${sz.w} × ${sz.h} in`;
-      const short = w - aw;
-      $('outWarn').hidden = short <= 0.01;
-      $('outWarn').textContent = short > 0.01
-        ? `This template is drawn with ${aw}" of wrap. A ${w}" wrap needs ${short.toFixed(2)}" more on every edge — the artwork has to be extended before this can be printed.`
-        : '';
+      /* Studio-only. This says the artwork has to be extended before it can be
+         printed -- a production instruction, addressed to whoever prepares the
+         file, and nothing a customer can act on. It shipped visible in customer
+         mode and told people choosing a canvas that their order could not be
+         printed. The element is not even rendered outside studio mode now; this
+         guard keeps the maths from running when it is absent. */
+      const warn = $('outWarn');
+      if (warn) {
+        const short = w - aw;
+        const show = MODE === 'studio' && short > 0.01;
+        warn.hidden = !show;
+        warn.textContent = show
+          ? `This template is drawn with ${aw}" of wrap. A ${w}" wrap needs ${short.toFixed(2)}" more on every edge — the artwork has to be extended before this can be printed.`
+          : '';
+      }
     }
-    const real = [...state.values()].filter((s) => !s.demo).length;
+    const real = mine().length;
     $('filled').textContent = `${real} of ${T.panels.length}`;
     $('download').disabled = real === 0;
+
+    // Sits beside "Images placed": placing a photo and getting it safely stored
+    // are two different things, and only the second one lets you check out.
+    const uploadedEl = $('uploaded');
+    if (uploadedEl) uploadedEl.textContent = `${inState(UPLOADED)} of ${T.panels.length}`;
 
     // Every panel must hold a photo the customer actually chose. The example
     // graphic is seeded into empty panels and does not count.
     const total = T.panels.length;
     const btn = $('addBasket');
     if (btn) {
-      const failed = [...state.values()].filter((s) => !s.demo && s.uploadError).length;
-      btn.disabled = basketBusy || uploading > 0 || failed > 0
-        || !consented() || real !== total;
+      const busy = inFlight();
+      const failedIdx = firstFailed();
+      /* Deliberately still enabled with a failed slot. The button is how the
+         customer asks to check out, and its answer has to be the one thing they
+         can act on -- which photo, and what to do about it. Disabling it left
+         them with a dead button and a sentence they had to go looking for. */
+      btn.disabled = basketBusy || busy > 0 || !consented() || real !== total;
       $('basketHint').textContent = basketBusy ? ''
         : !consented() ? 'Tick the consent box to get started.'
-          : uploading > 0 ? `Uploading — ${uploading} photo${uploading === 1 ? '' : 's'} to go…`
-            : failed > 0 ? 'A photo did not upload. Drop it in again to retry.'
+          : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`
+            : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
               : real === total ? ''
                 : `Add your own photo to every panel — ${total - real} to go.`;
     }
@@ -1359,7 +1534,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="upload-flag"]').forEach((el) => el.remove());
     c.querySelectorAll('image').forEach((im) => {
       const role = im.getAttribute('data-role');
       const token = role === 'panel' ? `{{IMAGE:${im.getAttribute('data-panel')}}}`
@@ -1446,7 +1621,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="upload-flag"]').forEach((el) => el.remove());
     // the selection highlight is a screen affordance, not part of the artwork
     c.querySelectorAll('path[stroke]').forEach((p) => {
       if (p.getAttribute('stroke') !== '#000' && p.getAttribute('fill') === 'none'
@@ -1484,6 +1659,74 @@ export function initProductBuilder() {
     await Promise.all(pending);
     return new XMLSerializer().serializeToString(c);
   }
+
+  /* ---------- basket thumbnail ---------- */
+  /* The basket used to show the generic product shot for every personalised
+     line, so two builds of the same product were indistinguishable in the
+     drawer and again on the Stripe page. This snapshots what the customer is
+     actually looking at.
+
+     draftSVG() is what makes it possible: an SVG rasterised through an <img>
+     taints the canvas if it references anything cross-origin, and toBlob() on a
+     tainted canvas throws SecurityError. draftSVG() has already rewritten every
+     href -- the customer's blob: photos and the /builder/ assets alike -- to a
+     data: URI, so there is nothing left for the canvas to be tainted by. */
+  const THUMB_MAX_SIDE = 600;
+  const THUMB_QUALITY = 0.8;
+
+  async function snapshotThumb() {
+    const { c, dx, dy } = geom();
+    // the whole board, wrap included -- the thumbnail should be the thing they
+    // approved, not a crop of it
+    const extW = c.width + 2 * Math.max(0, dx), extH = c.height + 2 * Math.max(0, dy);
+    const k = THUMB_MAX_SIDE / Math.max(extW, extH);
+    const w = Math.max(1, Math.round(extW * k)), h = Math.max(1, Math.round(extH * k));
+
+    const text = await draftSVG();
+    const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    try {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = () => rej(new Error('the preview would not rasterise'));
+        im.src = url;
+      });
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const g = cv.getContext('2d');
+      if (!g) throw new Error('no 2D canvas context');
+      // JPEG carries no alpha, so anything transparent would come out black.
+      g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, w, h);
+      g.drawImage(img, 0, 0, w, h);
+      const blob = await new Promise((res) => cv.toBlob(res, 'image/jpeg', THUMB_QUALITY));
+      if (!blob) throw new Error('the canvas would not encode');
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  /* Best-effort, and called only after the brief has been saved: the basket line
+     is going in either way, so a snapshot that fails costs it its picture and
+     nothing else. Returns the URL to show, or null to fall back. */
+  async function saveThumb(id) {
+    try {
+      const blob = await snapshotThumb();
+      const fd = new FormData();
+      fd.append('id', id);
+      fd.append('thumb', blob, 'thumb.jpg');
+      const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // An absolute URL: the basket drawer renders it on any page, and checkout
+      // rebuilds the same one server-side to hand to Stripe.
+      return `${window.location.origin}/api/personalisation-thumb/${id}`;
+    } catch (e) {
+      console.warn(`[builder] basket thumbnail failed for ${id}: ${e.message || e}`);
+      return null;
+    }
+  }
+
   $('download').addEventListener('click', async () => {
     const s = await draftSVG();
     const blob = new Blob([s], { type: 'image/svg+xml' });
@@ -1525,9 +1768,20 @@ export function initProductBuilder() {
       .map((p) => [p.id, state.get(p.id)])
       .filter(([, s]) => s && !s.demo && s.file);
     if (filled.length !== T.panels.length || !consented()) return;
-    if (uploading > 0 || !saveId) return;      // nothing to attach the brief to yet
 
     const btn = $('addBasket'), hint = $('basketHint');
+
+    /* Name the photo and put it back in front of them. On a phone the board has
+       usually scrolled away by the time they reach this button, so a message on
+       its own leaves them hunting for which of twelve panels went wrong. */
+    const failedIdx = firstFailed();
+    if (failedIdx >= 0) {
+      hint.textContent = `Photo ${failedIdx + 1} didn't upload — tap it to retry`;
+      focusSlot(T.panels[failedIdx].id);
+      return;
+    }
+    if (inFlight() > 0 || !saveId) return;     // nothing to attach the brief to yet
+
     basketBusy = true; btn.disabled = true;
     const label = btn.textContent; btn.textContent = 'Saving…';
     hint.textContent = 'Saving your artwork…';
@@ -1541,6 +1795,11 @@ export function initProductBuilder() {
       const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.id) throw new Error(data.error || 'Could not save your artwork');
+
+      // After the brief is safely saved, so a snapshot failure can never cost
+      // the customer the build itself.
+      hint.textContent = 'Saving your preview…';
+      const thumbUrl = await saveThumb(data.id);
 
       const sizeIdx = Math.max(0, (T.sizes || []).indexOf(T.size));
       const cartFormat = CART_FORMAT[fmt] || 'poster';
@@ -1566,6 +1825,10 @@ export function initProductBuilder() {
         unitPrice: (PRICES[cartFormat] || {})[cartSize] + PERSONALISATION_FEE,
         accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
         imageUrl: ds.productImage || '',
+        // The customer's own build. Omitted when the snapshot failed, and the
+        // basket falls back to imageUrl. Never a data: URI -- the basket is
+        // persisted to localStorage.
+        ...(thumbUrl ? { thumbUrl } : {}),
         personalisationId: saveId,
         description,
       });

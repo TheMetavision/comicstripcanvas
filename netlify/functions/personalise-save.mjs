@@ -19,6 +19,12 @@ const sanity = createClient({
  *   finalise  id=<id> recipe=<json> [notes]               -> { id }
  *             Called once from Add to basket, when every panel is filled.
  *
+ *   thumb     id=<id> thumb=<file>                        -> { id, key }
+ *             The builder's own snapshot of the live preview, for the basket
+ *             line and the Stripe line-item image. Best-effort: Add to basket
+ *             has already succeeded by the time this is sent, and a failure
+ *             only costs the basket its picture.
+ *
  * Photos go to Netlify Blobs. Only their keys are ever written to Sanity.
  *
  * One request carries one photo on purpose. Functions run on Lambda with a
@@ -28,6 +34,10 @@ const sanity = createClient({
 const MAX_BYTES = 5.5 * 1024 * 1024;   // matches the builder's encode ceiling
 const MAX_PHOTOS = 12;                 // the strip is the widest template
 const STORE = 'personalisation';
+
+// A 600px JPEG at q0.8 lands well under 200 KB. The cap is generous enough to
+// absorb a busy strip without giving the endpoint a way to store real photos.
+const MAX_THUMB_BYTES = 512 * 1024;
 
 const EXT = {
   'image/jpeg': 'jpg',
@@ -75,6 +85,9 @@ export default async (req, context) => {
     } catch {
       return json({ error: 'Malformed form data' }, 400);
     }
+
+    const thumb = form.get('thumb');
+    if (thumb && typeof thumb !== 'string') return await saveThumb(form, thumb);
 
     const photo = form.get('photo');
     return photo && typeof photo !== 'string'
@@ -154,6 +167,38 @@ async function savePhoto(form, file) {
       .append('photoKeys', [key])
       .commit();
   }
+
+  return json({ id, key });
+}
+
+/* ---------- the basket thumbnail ---------- */
+/* Stored beside the photos, under the same personalisation/<id>/ prefix, so the
+   retention sweep collects it with everything else -- that job lists the prefix
+   rather than trusting photoKeys, so it needs no change to cover this.
+   Deliberately NOT appended to photoKeys: that array drives the render, where
+   every entry is matched to a panel, and a key that answers to no panel has no
+   business in it. */
+async function saveThumb(form, file) {
+  const id = form.get('id');
+  if (!isId(id)) return json({ error: 'Invalid id' }, 400);
+
+  const type = (file.type || '').toLowerCase();
+  if (type !== 'image/jpeg' && type !== 'image/jpg') {
+    return json({ error: `Thumbnail must be a JPEG (got ${file.type || 'unknown'})` }, 400);
+  }
+
+  const buf = await file.arrayBuffer();
+  if (buf.byteLength > MAX_THUMB_BYTES) {
+    return json({ error: 'Thumbnail is too large' }, 413);
+  }
+
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id }', { id });
+  if (!existing) return json({ error: 'Unknown personalisation' }, 404);
+
+  const key = `personalisation/${id}/thumb.jpg`;
+  await getStore(STORE).set(key, buf, {
+    metadata: { contentType: 'image/jpeg', role: 'basket-thumb' },
+  });
 
   return json({ id, key });
 }
