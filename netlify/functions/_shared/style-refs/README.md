@@ -19,13 +19,21 @@ They are read from the filesystem at runtime, so any function that imports
 `netlify.toml`:
 
 ```toml
-[functions]
+[functions."style-photo-background"]
   included_files = ["netlify/functions/_shared/style-refs/*.jpg"]
 ```
 
-Without it the files are absent in production and every call throws. This is
-the first `included_files` entry in the project — the fonts do **not** work this
-way, they are fetched over HTTP from `${origin}/builder/fonts/`.
+Without it the files are absent in production and every call throws.
+
+Two things this entry must NOT be:
+
+- **Top-level.** A `[functions]` entry applies to every function, so all
+  seventeen bundles carry the same 1.2 MB — and the parallel copies race each
+  other on Windows and fail the dev build with `EBUSY`. It belongs to the one
+  function that reads them. `loadStyleRefs()` is lazy, so importing
+  `_shared/style.mjs` for a constant does not need the files.
+- **Assumed from the fonts.** They do not work this way — `render.mjs` fetches
+  those over HTTP from `${origin}/builder/fonts/`.
 
 ## Measured
 

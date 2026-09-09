@@ -424,7 +424,7 @@ export function initProductBuilder() {
         // build() threw the old nodes away, so a failed slot needs its flag
         // (and its dimmed artwork) put back on the new ones.
         if (v.uploadState && v.uploadState !== UPLOADED) n.img.setAttribute('opacity', 0.45);
-        drawUploadFlag(k);
+        drawSlotFlag(k);
       }
     });
     seedDemo(); refresh();
@@ -899,6 +899,30 @@ export function initProductBuilder() {
   const UPLOADED = 'uploaded';       // stored, key held in s.key
   const FAILED = 'failed';           // s.uploadError says why; tap to retry
 
+  /* The styling lifecycle is a SECOND axis, not more values on the first: a
+     photo is uploaded and then styled, and both halves can be in flight or
+     have failed independently. Mirrors the server's photos[].styleStatus so a
+     poll response maps straight across with no translation. */
+  const STYLE_PENDING = 'pending';
+  const STYLE_STYLING = 'styling';
+  const STYLE_DONE = 'done';
+  const STYLE_FAILED = 'failed';
+
+  /* Polling. 3s is brisk enough that a 36s generation feels watched; after two
+     minutes something is wrong and there is no point asking twelve times a
+     minute about it. */
+  const STYLE_POLL_MS = 3000;
+  const STYLE_POLL_SLOW_MS = 10000;
+  const STYLE_POLL_SLOW_AFTER_MS = 120000;
+
+  /* Judged on the SHORTEST side, because that is what a face is measured
+     across. These replace the dpi warning at the raw stage: before styling
+     there is no styled image to measure, and the model's output size is fixed
+     by styleSize rather than by what went in -- so the only useful question
+     about the raw photo is whether there is enough of it to work from. */
+  const SOFT_MIN_SOURCE_PX = 800;    // warn, still allowed
+  const HARD_MIN_SOURCE_PX = 400;    // refuse the file outright
+
   const mine = () => [...state.values()].filter((s) => !s.demo);
   const inState = (st) => mine().filter((s) => s.uploadState === st).length;
   const inFlight = () => inState(PENDING) + inState(UPLOADING);
@@ -907,6 +931,28 @@ export function initProductBuilder() {
     const s = state.get(p.id);
     return !!s && !s.demo && s.uploadState === FAILED;
   });
+
+  /* Styling counts only slots that reached the server: an upload still in
+     flight is not "waiting for style", it is waiting for itself. */
+  const styleable = () => mine().filter((s) => s.uploadState === UPLOADED);
+  const styleReady = () => styleable().filter((s) => s.styleState === STYLE_DONE).length;
+  const styleWaiting = () => styleable().filter(
+    (s) => s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING
+  ).length;
+  /** 0-based index of the first slot whose STYLING failed, or -1. */
+  const firstStyleFailed = () => T.panels.findIndex((p) => {
+    const s = state.get(p.id);
+    return !!s && !s.demo && s.styleState === STYLE_FAILED;
+  });
+
+  /* The server writes a short reason: "safety: ...", "timeout", "http 404",
+     "other: ...", "cap". Two of those cannot be fixed by asking again -- a
+     photograph the model refuses will be refused identically, and the cap is
+     spent for the whole build -- so those get Replace instead of a retry that
+     would only fail the same way. */
+  const isSafetyReason = (r) => /^safety/i.test(r || '');
+  const isCapReason = (r) => /^cap$/i.test((r || '').trim());
+  const styleRetryable = (r) => !isSafetyReason(r) && !isCapReason(r);
 
   const loadImage = (file) => new Promise((res, rej) => {
     const url = URL.createObjectURL(file), im = new Image();
@@ -1031,7 +1077,7 @@ export function initProductBuilder() {
     // Dim while it is not yet safely stored, so "still working" is visible on
     // the artwork itself rather than only in the side panel.
     if (n && n.img) n.img.setAttribute("opacity", st === UPLOADED ? 1 : 0.45);
-    drawUploadFlag(id);
+    drawSlotFlag(id);
     if (selected === id) syncPanel();
     refresh();
   }
@@ -1043,7 +1089,7 @@ export function initProductBuilder() {
 
      data-role marks it as screen furniture: both exporters strip it, so it can
      never reach a print file, a draft download or the basket snapshot. */
-  function drawUploadFlag(id) {
+  function drawSlotFlag(id) {
     const n = nodes[id];
     if (!n) return;
     if (n.flag) { n.flag.remove(); n.flag = null; }
@@ -1053,31 +1099,83 @@ export function initProductBuilder() {
       if (old) old.remove();
     }
     const s = state.get(id);
-    if (!s || s.demo || s.uploadState !== FAILED) return;
+    if (!s || s.demo) return;            // the seeded example is exempt from all of this
 
+    /* Three things can be worth saying over a slot, and only one at a time.
+       Upload first: until the photo is stored there is nothing to style, so a
+       styling message would be describing work that has not been queued. */
+    let kind = null, lines = null, tip = null;
+    if (s.uploadState === FAILED) {
+      kind = 'bad';
+      lines = ['Upload failed', 'Tap to retry'];
+      tip = `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
+    } else if (s.uploadState === UPLOADED && s.styleState === STYLE_FAILED) {
+      kind = 'bad';
+      lines = isSafetyReason(s.styleError) ? ['Style not applied', 'Use a different photo']
+        : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
+          : ['Style not applied', 'Tap to try again'];
+      tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
+    } else if (s.uploadState === UPLOADED && !s.styled
+      && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING)) {
+      kind = 'busy';
+      lines = ['Applying', 'comic style…'];
+      tip = 'Applying the comic style to this photo…';
+    }
+    if (!kind) return;
+
+    const bad = kind === 'bad';
     const p = n.panel;
-    const g = mk("g", { "data-role": "upload-flag", "pointer-events": "none" });
+    const g = mk("g", { "data-role": "slot-flag", "pointer-events": "none" });
     g.appendChild(mk("rect", {
-      x: p.x, y: p.y, width: p.width, height: p.height, fill: "rgba(214,0,28,0.34)",
+      x: p.x, y: p.y, width: p.width, height: p.height,
+      fill: bad ? "rgba(214,0,28,0.34)" : "rgba(10,10,16,0.55)",
     }));
     const inset = Math.max(2, Math.min(p.width, p.height) * 0.02);
     g.appendChild(mk("rect", {
       x: p.x + inset, y: p.y + inset,
       width: Math.max(1, p.width - 2 * inset), height: Math.max(1, p.height - 2 * inset),
-      fill: "none", stroke: "#D6001C", "stroke-width": inset,
+      fill: "none", stroke: bad ? "#D6001C" : "#FFF200", "stroke-width": inset,
       "stroke-dasharray": `${inset * 3} ${inset * 2}`,
     }));
+
     // Two lines: a strip panel is far narrower than it is tall, and one line of
     // this at a readable size runs straight out of it.
     const size = Math.max(12, Math.min(p.height * 0.11, p.width * 0.085));
+
+    /* A spinner rather than a percentage. The model reports no progress, so any
+       bar would be a guess dressed as information -- and a stalled fake bar
+       reads as a broken page. SMIL because it animates without a paint loop,
+       which matters on the phone this runs on. */
+    if (!bad) {
+      const r = size * 0.9;
+      const cx = p.x + p.width / 2, cy = p.y + p.height / 2 - size * 1.5;
+      g.appendChild(mk('circle', {
+        cx, cy, r, fill: 'none', stroke: 'rgba(255,255,255,0.25)', 'stroke-width': size * 0.22,
+      }));
+      const arc = mk('circle', {
+        cx, cy, r, fill: 'none', stroke: '#FFF200', 'stroke-width': size * 0.22,
+        'stroke-linecap': 'round',
+        'stroke-dasharray': `${2 * Math.PI * r * 0.28} ${2 * Math.PI * r}`,
+      });
+      const spin = document.createElementNS(SVGNS, 'animateTransform');
+      spin.setAttribute('attributeName', 'transform');
+      spin.setAttribute('type', 'rotate');
+      spin.setAttribute('from', `0 ${cx} ${cy}`);
+      spin.setAttribute('to', `360 ${cx} ${cy}`);
+      spin.setAttribute('dur', '1.1s');
+      spin.setAttribute('repeatCount', 'indefinite');
+      arc.appendChild(spin);
+      g.appendChild(arc);
+    }
+
     const t = mk("text", {
       "text-anchor": "middle", "font-family": "ui-sans-serif,system-ui,sans-serif",
       "font-size": size, "font-weight": 800, fill: "#FFFFFF",
       stroke: "#000000", "stroke-width": size * 0.16, "paint-order": "stroke",
     });
-    ["Upload failed", "Tap to retry"].forEach((line, i) => {
+    lines.forEach((line, i) => {
       const ts = mk("tspan", { x: p.x + p.width / 2, y: p.y + p.height / 2 });
-      ts.setAttribute("dy", i === 0 ? -size * 0.15 : size * 1.15);
+      ts.setAttribute("dy", (bad ? -size * 0.15 : size * 0.9) + (i === 0 ? 0 : size * 1.3));
       ts.textContent = line;
       t.appendChild(ts);
     });
@@ -1085,10 +1183,179 @@ export function initProductBuilder() {
     svg.appendChild(g);
     n.flag = g;
 
-    if (n.hit) {
+    if (n.hit && tip) {
       const title = document.createElementNS(SVGNS, "title");
-      title.textContent = `Upload failed — tap to retry. ${s.uploadError || ""}`.trim();
+      title.textContent = tip;
       n.hit.appendChild(title);
+    }
+  }
+
+  /** The sentence a customer reads when styling did not work. */
+  function styleFailureText(s) {
+    if (isSafetyReason(s.styleError)) {
+      return "We couldn't apply the comic style to this photo — please try a different one";
+    }
+    if (isCapReason(s.styleError)) {
+      return 'This build has used all its style attempts — please start a new one';
+    }
+    return "The comic style didn't apply — tap to try again";
+  }
+
+  /* ---------- styling ---------- */
+  /* ONE poller for the whole personalisation, not one per slot. The status
+     endpoint answers for every panel at once, so a poller per slot would ask
+     the same question twelve times and still learn nothing extra. */
+  let pollTimer = null;
+  let pollStartedAt = 0;
+  let pollPausedHidden = false;
+
+  const pollDelay = () =>
+    (Date.now() - pollStartedAt > STYLE_POLL_SLOW_AFTER_MS ? STYLE_POLL_SLOW_MS : STYLE_POLL_MS);
+
+  function ensureStylePoll() {
+    if (MODE !== 'customer' || !saveId) return;
+    if (pollTimer !== null || pollPausedHidden) return;   // already running, or waiting on the tab
+    if (!pollStartedAt) pollStartedAt = Date.now();
+    pollTimer = setTimeout(runStylePoll, 0);
+  }
+
+  function stopStylePoll() {
+    if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+    pollStartedAt = 0;
+  }
+
+  async function runStylePoll() {
+    pollTimer = null;
+    /* A hidden tab is throttled to roughly one timer a minute anyway, and
+       polling it burns the customer's data for answers nobody is looking at.
+       Genuinely paused rather than slowed: the visibilitychange listener below
+       is what starts it again. */
+    if (document.hidden) { pollPausedHidden = true; return; }
+
+    let payload = null;
+    try {
+      const res = await fetch(`/api/personalisation-status/${saveId}`, { cache: 'no-store' });
+      if (res.ok) payload = await res.json();
+      else console.warn(`[builder] style status returned ${res.status}`);
+    } catch (e) {
+      // A dropped poll is not a failure -- the next one asks again.
+      console.warn(`[builder] style status poll failed: ${e.message}`);
+    }
+
+    if (payload) await applyStyleStatus(payload);
+
+    // Keep going only while something is actually outstanding.
+    if (styleWaiting() > 0) pollTimer = setTimeout(runStylePoll, pollDelay());
+    else stopStylePoll();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !pollPausedHidden) return;
+    pollPausedHidden = false;
+    if (styleWaiting() > 0) ensureStylePoll();
+  });
+
+  /** Fold one status response into the slots. */
+  async function applyStyleStatus(payload) {
+    const rows = Array.isArray(payload.photos) ? payload.photos : [];
+    let touched = false;
+    for (const row of rows) {
+      const s = state.get(row.panel);
+      if (!s || s.demo) continue;              // the seeded example is not ours to style
+      const was = s.styleState;
+      s.styleState = row.styleStatus || STYLE_PENDING;
+      s.styleError = row.styleError || null;
+      if (row.styledWidth) s.styledW = row.styledWidth;
+      if (row.styledHeight) s.styledH = row.styledHeight;
+      if (row.styledKey) s.styledKey = row.styledKey;
+
+      if (s.styleState === STYLE_DONE) {
+        // A dedupe hit lands here on the very first poll, already done, with no
+        // 'styling' in between. Nothing special to do -- the swap is the same.
+        await applyStyled(row.panel);
+      } else if (was !== s.styleState) {
+        drawSlotFlag(row.panel);
+        touched = true;
+      }
+    }
+    if (touched) { if (selected) syncPanel(); refresh(); }
+  }
+
+  /* Swap the styled photograph into the slot.
+     The model reframes slightly, so any crop the customer set was chosen
+     against a picture that no longer exists -- start centred and unzoomed and
+     invite them to re-crop, rather than keeping a framing that now cuts
+     somewhere they did not choose. */
+  async function applyStyled(id) {
+    const s = state.get(id);
+    if (!s || s.demo || s.styled || s.styledLoading) return;
+    s.styledLoading = true;
+    try {
+      const res = await fetch(`/api/personalisation-photo/${saveId}/${id}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const probe = new Image();
+      await new Promise((ok, fail) => {
+        probe.onload = ok;
+        probe.onerror = () => fail(new Error('the styled image would not decode'));
+        probe.src = url;
+      });
+
+      const old = s.url;
+      s.rawUrl = s.rawUrl || old;      // kept: the raw is what a re-style works from
+      s.url = url; s.el = probe;
+      s.natW = probe.naturalWidth || s.natW;
+      s.natH = probe.naturalHeight || s.natH;
+      s.styled = true;
+      s.zoom = 1; s.ox = 0; s.oy = 0;  // fit to panel, centred
+
+      const n = nodes[id];
+      if (n && n.img) { n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1); }
+      if (s.cut) { s.cutKey = null; applyCut(id); }
+      if (old && old !== url && old !== s.rawUrl) {
+        try { URL.revokeObjectURL(old); } catch (e) { /* already gone */ }
+      }
+      layout(id);                      // recomputes s.dpi from the styled pixels
+      drawSlotFlag(id);
+      if (selected === id) syncPanel();
+      refresh();
+      console.log(`[builder] ${id} styled ${s.natW}x${s.natH}`);
+    } catch (e) {
+      // Leave it as done-but-unswapped and let the next poll try again; the
+      // gate keeps the basket shut either way.
+      s.styledLoading = false;
+      console.warn(`[builder] could not load the styled photo for ${id}: ${e.message}`);
+      return;
+    }
+    s.styledLoading = false;
+  }
+
+  /* Ask for one panel to be styled again. Only reached for reasons that could
+     plausibly come out differently -- see styleRetryable. */
+  async function retryStyle(id) {
+    const s = state.get(id);
+    if (!s || s.demo || !saveId) return false;
+    if (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING) return false;
+    s.styleState = STYLE_PENDING; s.styleError = null;
+    drawSlotFlag(id);
+    if (selected === id) syncPanel();
+    refresh();
+    try {
+      const res = await fetch(`/api/personalisation-style/${saveId}/${id}?retry=1`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      // A dedupe hit answers 200 with deduped:true and the panel already done;
+      // the poll picks that up on its next pass like any other 'done'.
+      if (!res.ok && !data.deduped) throw new Error(data.reason || `HTTP ${res.status}`);
+      ensureStylePoll();
+      return true;
+    } catch (e) {
+      s.styleState = STYLE_FAILED;
+      s.styleError = e.message || 'retry failed';
+      console.warn(`[builder] re-style of ${id} failed: ${s.styleError}`);
+      drawSlotFlag(id);
+      if (selected === id) syncPanel();
+      refresh();
+      return false;
     }
   }
 
@@ -1225,6 +1492,13 @@ export function initProductBuilder() {
           fd.append("photo", sending, sending.name || (id + ".jpg"));
           if (saveId) fd.append("id", saveId);
           if (consentAt) fd.append("consentAt", consentAt);
+          /* The template decides styleSize, and the server cannot know it from
+             the first photo alone -- the recipe does not arrive until Add to
+             basket. Sent on every upload, not just the first: it costs nothing,
+             and the first upload is the one that creates the document, so a
+             cover has to be marked 4K before any styling starts. finalise()
+             sets the field authoritatively later either way. */
+          fd.append("templateId", TK);
           return fd;
         };
 
@@ -1253,10 +1527,18 @@ export function initProductBuilder() {
 
         saveId = data.id;
         const s = state.get(id);
-        if (s) s.key = data.key;
+        if (s) {
+          s.key = data.key;
+          /* The server starts styling the moment it has the photo, so the slot
+             is already waiting by the time this returns. A dedupe hit is
+             reported as done on the very first poll. */
+          s.styleState = STYLE_PENDING;
+          s.styleError = null;
+        }
         // the stored file is the one the customer should be working with
         if (sending !== file) await adoptEncoded(id, sending);
         setUploadState(id, UPLOADED);
+        ensureStylePoll();
       } catch (e) {
         const reason = e.message || "Upload failed";
         // The slot's tooltip carries the reason too, but a tooltip is no use on
@@ -1269,18 +1551,42 @@ export function initProductBuilder() {
     return uploadChain;
   }
 
+  /* A photo the styling stage cannot work from, refused before it is placed.
+
+     Judged here rather than at Add to basket on purpose: uploading it, styling
+     it and only then saying no would spend a model call and a minute of the
+     customer's time to reach the same answer. Customer mode only -- studio
+     work is prepared artwork, not a phone snap, and is never styled. */
+  let rejected = null;   // { id, text } -- surfaced by syncPanel for that slot
+
+  function tooSmall(w, h) {
+    return Math.min(w || 0, h || 0) < HARD_MIN_SOURCE_PX;
+  }
+
   function place(id, file) {
     if (!hasConsent()) return;          // belt and braces: picker, panel drop, board drop
     const url = URL.createObjectURL(file), probe = new Image();
     probe.onload = () => {
+      if (MODE === 'customer' && tooSmall(probe.naturalWidth, probe.naturalHeight)) {
+        rejected = {
+          id,
+          text: `This photo is too small to use — it is ${probe.naturalWidth} × ${probe.naturalHeight} `
+            + `and we need at least ${HARD_MIN_SOURCE_PX} pixels on the shortest side.`,
+        };
+        try { URL.revokeObjectURL(url); } catch (e) { /* already gone */ }
+        select(id); syncPanel(); refresh();
+        return;
+      }
+      if (rejected && rejected.id === id) rejected = null;
       state.set(id, {
         url, el: probe, name: file.name, file, natW: probe.naturalWidth, natH: probe.naturalHeight,
         zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
         // Studio mode never uploads, so its slots stay stateless. A customer
         // slot is uploaded the moment it is filled, so it starts queued.
         uploadState: MODE === 'customer' ? PENDING : null, uploadError: null,
+        styleState: null, styleError: null, styled: false,
       });
-      drawUploadFlag(id);            // a replaced photo clears the old failure
+      drawSlotFlag(id);            // a replaced photo clears the old failure
       const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
@@ -1320,12 +1626,20 @@ export function initProductBuilder() {
     // pointer didn't travel -- otherwise it was a reposition
     hit.addEventListener('click', () => {
       if (!moveMode && !moved) {
-        // A failed slot promises "tap to retry" on its face, so a tap has to
-        // mean that and not the file chooser -- re-picking the same photo
-        // would be a puzzling thing to have to do, and would lose the framing.
+        /* A failed slot promises "tap to retry" on its face, so a tap has to
+           mean that and not the file chooser -- re-picking the same photo
+           would be a puzzling thing to have to do, and would lose the framing.
+
+           Which retry depends on which half failed: the upload, or the styling
+           of a photo that uploaded fine. A refusal the model will repeat -- a
+           safety block, or a spent cap -- promises no such thing on its face,
+           so a tap there opens the chooser, which is the only thing that can
+           actually help. */
         const s = state.get(id);
         if (s && !s.demo && s.uploadState === FAILED) retryUpload(id);
-        else ask(id);
+        else if (s && !s.demo && s.styleState === STYLE_FAILED && styleRetryable(s.styleError)) {
+          retryStyle(id);
+        } else ask(id);
       }
       moved = false;
     });
@@ -1403,28 +1717,96 @@ export function initProductBuilder() {
   }
   function syncPanel() {
     const n = nodes[selected], s = state.get(selected), flag = $('dpiFlag');
+    const up = $('uploadHint');
     $('panelTitle').textContent = T.panels.length > 1 ? `Panel ${String(n.index + 1).padStart(2, '0')}` : 'Image';
     $('panelEmpty').hidden = !!s; $('panelControls').hidden = !s;
-    if (!s) { flag.hidden = true; return; }
+
+    /* A file refused for being too small leaves no state behind, so its reason
+       has to survive here or it vanishes the moment anything re-renders.
+
+       Checked against "no photo of theirs in this slot" rather than "no state":
+       an empty slot is not empty, it holds the seeded example, so testing for
+       absent state missed every slot the customer could actually drop onto. */
+    const note = rejected && rejected.id === selected && (!s || s.demo) ? rejected.text : '';
+    if (note) {
+      flag.hidden = true;
+      $('panelEmpty').hidden = false;
+      $('panelControls').hidden = true;
+      up.classList.add('b-hint-bad');
+      up.hidden = false;
+      up.textContent = note;
+      return;
+    }
+    if (!s) {
+      flag.hidden = true;
+      up.classList.remove('b-hint-bad');
+      up.hidden = true;
+      up.textContent = '';
+      return;
+    }
+
     $('pSize').textContent = `${n.panel.width} × ${n.panel.height}`;
-    $('pImg').textContent = s.demo ? 'example artwork' : `${s.natW} × ${s.natH}`;
-    $('pDpi').textContent = s.demo ? '—' : `${s.dpi} dpi`;
+    $('pImg').textContent = s.demo ? 'example artwork'
+      : `${s.natW} × ${s.natH}${s.styled ? ' (styled)' : ''}`;
     $('zoom').value = s.zoom;
     $('cutBox').hidden = !(T.bg && T.bg.type === 'image');
     $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
-    const minDpi = MIN_DPI_BY_FORMAT[fmt] || 150;
-    const surface = DPI_SURFACE[fmt] || 'as a poster';
-    flag.hidden = s.demo || s.dpi >= minDpi;   // the example is not the customer's file
-    flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
-      + `${surface} — try a larger file or zoom out.`;
-    const up = $('uploadHint');
+
+    /* Two different questions before and after styling.
+
+       Once styled, s.natW/natH ARE the styled pixels -- applyStyled swapped
+       them in -- so s.dpi is already the resolution of the thing that will
+       actually be printed, measured against the size-dependent ppi. That is
+       the only reading worth showing a customer.
+
+       Before that, the dpi of the raw photo answers a question nobody asked:
+       the model outputs a fixed size set by styleSize, so a bigger upload does
+       not print bigger. What matters is whether there is enough detail to work
+       FROM, which is a question about the shortest side. */
+    if (s.demo) {
+      $('pDpi').textContent = '—';
+      flag.hidden = true;
+    } else if (MODE !== 'customer') {
+      /* Studio mode is unchanged. Nothing here is ever styled -- these are
+         prepared files being turned into products -- so the dpi of the file in
+         hand is exactly the right question, and the styling vocabulary would
+         be describing a stage that does not exist. */
+      const minDpi = MIN_DPI_BY_FORMAT[fmt] || 150;
+      const surface = DPI_SURFACE[fmt] || 'as a poster';
+      $('pDpi').textContent = `${s.dpi} dpi`;
+      flag.hidden = s.dpi >= minDpi;
+      flag.textContent = `This photo prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
+        + `${surface} — try a larger file or zoom out.`;
+    } else if (s.styled) {
+      const minDpi = MIN_DPI_BY_FORMAT[fmt] || 150;
+      const surface = DPI_SURFACE[fmt] || 'as a poster';
+      $('pDpi').textContent = `${s.dpi} dpi`;
+      flag.hidden = s.dpi >= minDpi;
+      flag.textContent = `This prints at ${s.dpi} dpi here. Below ${minDpi} it will look soft `
+        + `${surface} — try zooming out.`;
+    } else {
+      const shortest = Math.min(s.natW || 0, s.natH || 0);
+      $('pDpi').textContent = 'after styling';
+      flag.hidden = shortest >= SOFT_MIN_SOURCE_PX;
+      flag.textContent = `This photo is small — faces may come out soft. `
+        + `It is ${s.natW} × ${s.natH}; ${SOFT_MIN_SOURCE_PX} pixels or more on the shortest side works best.`;
+    }
+
+    /* One line, and only one. Upload first for the same reason the slot overlay
+       does it: until the photo is stored, styling has not been asked for. */
     const st = s.uploadState;
-    up.classList.toggle('b-hint-bad', st === FAILED);
-    up.hidden = !st || st === UPLOADED;
+    const styleFailed = st === UPLOADED && s.styleState === STYLE_FAILED;
+    const styling = st === UPLOADED && !s.styled
+      && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING);
+    up.classList.toggle('b-hint-bad', st === FAILED || styleFailed);
+    up.hidden = !(st === PENDING || st === UPLOADING || st === FAILED || styling || styleFailed || s.styled);
     up.textContent = st === PENDING ? 'Waiting to upload…'
       : st === UPLOADING ? 'Uploading this photo…'
         : st === FAILED ? `Upload failed — tap the panel to retry. ${s.uploadError || ''}`.trim()
-          : '';
+          : styleFailed ? styleFailureText(s)
+            : styling ? 'Applying comic style…'
+              : s.styled ? 'Style applied — adjust the crop if you like'
+                : '';
   }
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
@@ -1554,7 +1936,7 @@ export function initProductBuilder() {
     n.img.setAttribute('opacity', 0); n.img.removeAttribute('href');
     if (n.num) n.num.setAttribute('opacity', 1);
     if (n.plate) n.plate.setAttribute('opacity', 1);
-    drawUploadFlag(selected);      // the slot is empty; any failure flag goes with it
+    drawSlotFlag(selected);      // the slot is empty; any failure flag goes with it
     n.hit.classList.remove('filled'); syncPanel(); refresh();
   });
   $('resetTint').addEventListener('click', () => {
@@ -1626,17 +2008,29 @@ export function initProductBuilder() {
     if (btn) {
       const busy = inFlight();
       const failedIdx = firstFailed();
+      const styleFailedIdx = firstStyleFailed();
+      const waiting = styleWaiting();
+      const ready = styleReady();
       /* Deliberately still enabled with a failed slot. The button is how the
          customer asks to check out, and its answer has to be the one thing they
          can act on -- which photo, and what to do about it. Disabling it left
-         them with a dead button and a sentence they had to go looking for. */
-      btn.disabled = basketBusy || busy > 0 || !consented() || real !== total;
+         them with a dead button and a sentence they had to go looking for.
+
+         Styling is different: while it is running there is nothing to act on
+         and nothing to say beyond "not yet", so the button stays shut until
+         every photo is through. That is also what makes the basket thumbnail
+         correct without any special handling -- the snapshot is taken from the
+         live scene at Add to basket, and by then every slot holds its styled
+         image, so it captures the styled artwork by construction. */
+      btn.disabled = basketBusy || busy > 0 || waiting > 0 || !consented() || real !== total;
       $('basketHint').textContent = basketBusy ? ''
         : !consented() ? 'Tick the consent box to get started.'
           : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`
             : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
-              : real === total ? ''
-                : `Add your own photo to every panel — ${total - real} to go.`;
+              : styleFailedIdx >= 0 ? styleFailureText(state.get(T.panels[styleFailedIdx].id))
+                : waiting > 0 ? `Applying your comic style — ${ready} of ${ready + waiting} ready`
+                  : real === total ? ''
+                    : `Add your own photo to every panel — ${total - real} to go.`;
     }
 
     const save = $('saveProduct');
@@ -1673,7 +2067,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"],[data-role="upload-flag"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"]').forEach((el) => el.remove());
     c.querySelectorAll('image').forEach((im) => {
       const role = im.getAttribute('data-role');
       const token = role === 'panel' ? `{{IMAGE:${im.getAttribute('data-panel')}}}`
@@ -1706,8 +2100,17 @@ export function initProductBuilder() {
           placeholder: !!(s && s.demo),
           placeholder: !!(s && s.demo),
           transform: s ? { zoom: +s.zoom.toFixed(4), offsetX: Math.round(s.ox), offsetY: Math.round(s.oy) } : null,
+          /* sourcePx and effectiveDpi describe the STYLED image, because that
+             is what gets printed -- once applyStyled has run, s.natW/natH and
+             s.dpi are all measurements of it. The raw key is kept beside them
+             so a panel can be re-styled from the original without hunting for
+             it, and the styled key so this record says exactly which blob the
+             numbers came from. */
           sourcePx: s && !s.demo ? [s.natW, s.natH] : null,
           effectiveDpi: s && !s.demo ? s.dpi : null,
+          rawKey: s && !s.demo ? (s.key || null) : null,
+          styledKey: s && !s.demo ? (s.styledKey || null) : null,
+          styledPx: s && !s.demo && s.styledW ? [s.styledW, s.styledH] : null,
           removeBackground: s ? { on: s.cut, spread: s.tol, soften: s.feather } : null,
         };
       }),
@@ -1760,7 +2163,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"],[data-role="upload-flag"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"]').forEach((el) => el.remove());
     // the selection highlight is a screen affordance, not part of the artwork
     c.querySelectorAll('path[stroke]').forEach((p) => {
       if (p.getAttribute('stroke') !== '#000' && p.getAttribute('fill') === 'none'
@@ -1919,7 +2322,16 @@ export function initProductBuilder() {
       focusSlot(T.panels[failedIdx].id);
       return;
     }
-    if (inFlight() > 0 || !saveId) return;     // nothing to attach the brief to yet
+    // Same treatment for a photo the styling stage could not finish: name it
+    // and put it back on screen rather than leaving a dead button.
+    const styleFailedIdx = firstStyleFailed();
+    if (styleFailedIdx >= 0) {
+      const id = T.panels[styleFailedIdx].id;
+      hint.textContent = `Photo ${styleFailedIdx + 1}: ${styleFailureText(state.get(id))}`;
+      focusSlot(id);
+      return;
+    }
+    if (inFlight() > 0 || styleWaiting() > 0 || !saveId) return;   // not ready to brief yet
 
     basketBusy = true; btn.disabled = true;
     const label = btn.textContent; btn.textContent = 'Saving…';

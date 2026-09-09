@@ -28,15 +28,14 @@
 
 [functions]
   directory = "netlify/functions"
-  # The comic style references, read from disk at runtime by
-  # netlify/functions/_shared/style.mjs. esbuild only bundles what is imported,
-  # so binary assets read through fs have to be listed or they are simply absent
-  # in production and every styling call throws.
+  # NOTE: the style references are deliberately NOT included here.
   #
-  # Note this is the first included_files entry in the project: the brand fonts
-  # do NOT work this way -- render.mjs fetches those over HTTP from
-  # ${origin}/builder/fonts/, so there was no existing entry to follow.
-  included_files = ["netlify/functions/_shared/style-refs/*.jpg"]
+  # They were, and a top-level included_files applies to EVERY function, so all
+  # seventeen bundles carried the same 1.2 MB of JPEGs -- and the parallel
+  # copies raced each other on Windows, failing the local dev build outright
+  # with EBUSY on the shared source file. Only style-photo-background ever
+  # reads them (loadStyleRefs is lazy, so merely importing _shared/style.mjs
+  # does not), so the entry belongs in that function's block and nowhere else.
 
 # A 24 x 16 in file at 300dpi is a 7200 x 4800 raster. Give the render job the
 # most memory Netlify allows, and keep resvg out of the bundle -- it ships a
@@ -60,7 +59,7 @@
 # ~52s at 4K, well past the 10s a synchronous function gets, and background
 # functions have a 15-minute budget which is ample even for a slow 4K call.
 #
-# included_files is REPEATED here on purpose. A per-function block does not
+# included_files lives HERE and only here. A per-function block does not
 # inherit the top-level [functions] one, so without this line the style
 # references are absent from this function's bundle -- and it is the only
 # function that reads them, so it would be the only one that breaks.

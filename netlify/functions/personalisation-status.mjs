@@ -58,6 +58,13 @@ export default async (req) => {
       styleError: p.styleError || null,
       styledWidth: p.styledWidth ?? null,
       styledHeight: p.styledHeight ?? null,
+      /* The builder records this in the recipe, so the brief says exactly which
+         blob its measurements came from. Given out rather than derived from the
+         panel name: a key the client guesses by convention is a key that goes
+         quietly wrong the day the convention changes. It discloses nothing --
+         the bytes still come from /api/personalisation-photo, which checks the
+         id and the panel's status before it reads anything. */
+      styledKey: p.styledKey || null,
     }));
 
     /* allDone is false for a document with no photos yet. "Nothing to do" and
