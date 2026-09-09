@@ -1357,6 +1357,10 @@ export function initProductBuilder() {
 
   /** Fold one status response into the slots. */
   async function applyStyleStatus(payload) {
+    /* A deployment with no cutout service configured never sends one, so the
+       gate must not wait for one. Only an explicit false counts -- an older
+       function that does not send the field at all leaves this alone. */
+    if (payload.cutoutEnabled === false) cutoutEnabled = false;
     const rows = Array.isArray(payload.photos) ? payload.photos : [];
     let touched = false;
     for (const row of rows) {
@@ -1445,7 +1449,12 @@ export function initProductBuilder() {
   /* ---------- cutout (standard cover only) ---------- */
   /** Is the cutout question settled for this slot -- arrived, refused, or N/A? */
   const CUTOUT_TEMPLATE = 'cover';
-  const wantsCutout = () => MODE === 'customer' && TK === CUTOUT_TEMPLATE;
+  /* Assume the service is on until the server says otherwise, and let the first
+     status poll correct it. The other way round -- assume off, switch on when
+     told -- opens Add to basket for the moment before the first poll lands,
+     which is exactly long enough for someone to click it. */
+  let cutoutEnabled = true;
+  const wantsCutout = () => MODE === 'customer' && TK === CUTOUT_TEMPLATE && cutoutEnabled;
   const cutoutSettled = (s) =>
     !wantsCutout() || !!s.cutoutKey || !!s.cutoutError || s.styleState !== STYLE_DONE;
 

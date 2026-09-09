@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { styleImage, imageSize, nearestRatio, loadStyleRefs, StyleError, MAX_STYLE_CALLS } from './_shared/style.mjs';
+import { cutoutConfigured } from './_shared/cutout.mjs';
 
 /**
  * Style one photograph.
@@ -280,7 +281,14 @@ export default async (req) => {
     /* The cutout runs AFTER the panel is already 'done' and committed, which
        is what makes it non-fatal by construction: whatever happens next, the
        customer has their styled photograph and can check out. */
-    if (CUTOUT_TEMPLATES.has(doc.templateId)) {
+    /* cutoutConfigured(), not "did makeCutout succeed": a service that was
+       never switched on is the feature being off, not this order going wrong.
+       Writing a cutoutError for it would put "no cutout" on every cover in the
+       Studio and warn on every panel, which is noise that teaches people to
+       ignore the field that matters. The builder learns the same thing from
+       cutoutEnabled on the status endpoint, so its gate does not sit waiting
+       for something nobody is going to send. */
+    if (CUTOUT_TEMPLATES.has(doc.templateId) && cutoutConfigured()) {
       const cut = await makeCutout(jpeg);
       if (cut.ok) {
         const cutoutKey = `personalisation/${id}/cutout-${panel}.png`;

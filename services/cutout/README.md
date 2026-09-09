@@ -1,8 +1,8 @@
 # Cutout service
 
-Background removal for the **standard comic book cover** only. Runs on Google
-Cloud Run, not on Netlify, and deliberately lives outside `netlify/` and `src/`
-so the Netlify build never sees it.
+Background removal for the **standard comic book cover** only. Runs on Fly.io,
+not on Netlify, and deliberately lives outside `netlify/` and `src/` so the
+Netlify build never sees it.
 
 ## Why it is not a Netlify function
 
@@ -21,7 +21,7 @@ reaches nobody new.
 
 | | |
 | --- | --- |
-| `GET /healthz` | unauthenticated; `{ ok, modelReady, modelError, node }` |
+| `GET /healthz` | unauthenticated; `{ ok, modelReady, modelError, node }`. `modelReady` is false until the first cutout finishes, including the warm-up. |
 | `POST /cutout` | `Authorization: Bearer $CUTOUT_TOKEN`, body = raw JPEG or PNG bytes, max 12 MB |
 
 `POST /cutout` returns an RGBA PNG at the input's full resolution, plus:
@@ -53,88 +53,64 @@ a packaging change fails the build rather than every request.
 
 ## Deploy
 
-```sh
-gcloud run deploy cutout \
-  --source . \
-  --project gen-lang-client-0145364883 \
-  --region europe-west2 \
-  --memory 2Gi \
-  --cpu 2 \
-  --concurrency 2 \
-  --timeout 120 \
-  --min-instances 0 \
-  --max-instances 3 \
-  --ingress all \
-  --allow-unauthenticated
-```
-
-### Deployed
-
-`https://cutout-634842895189.europe-west2.run.app` (alias
-`https://cutout-cdyki42vka-nw.a.run.app`), revision `cutout-00001-qnm`, deployed
-2026-09-09. The container starts clean — the build passes the model assertion
-below, and the first log line is
-`{"event":"listening","port":"8080","modelPath":"file:///app/node_modules/…/dist/"}`.
-
-**Public access needed an organization-policy exception.** The project sits under
-org `901013979338`, whose `constraints/iam.allowedPolicyMemberDomains` allowed
-only customer `C038wqnn6`, so the first deploy's `--allow-unauthenticated` failed
-with `FAILED_PRECONDITION: One or more users named in the policy do not belong to
-a permitted customer`. With a project-scoped override in place the redeploy sets
-the policy cleanly (`Setting IAM Policy...done`).
-
-**The service is nevertheless unreachable, and the fault is not in this repo.**
-Every path on both hostnames returns a Google front-end 404 in ~130 ms, from
-inside and outside the network and through `gcloud run services proxy`, and no
-request reaches Cloud Run — nothing appears in its logs. Everything Google
-reports about the service says otherwise:
-
-| | |
-| --- | --- |
-| `terminalCondition` | `Ready / CONDITION_SUCCEEDED` |
-| `ingress` | `INGRESS_TRAFFIC_ALL` |
-| `defaultUriDisabled` | unset |
-| `urls` | both hostnames listed |
-| IAM policy | one binding, `allUsers` → `roles/run.invoker` |
-| `constraints/run.allowedIngress` | `allValues: ALLOW` |
-| DNS | resolves to Cloud Run front-end IPs |
-
-Deleting the service and redeploying from source changed none of it. That leaves
-a Google-side routing fault for this project's `run.app` domain, which is a
-support case, not a configuration change. Worth trying a second region to see
-whether it is region-specific before opening one — note that europe-west2 is
-London and was chosen deliberately.
-
-One thing learned on the way, worth keeping: Cloud Run reads the `Authorization`
-header itself whenever a service requires authentication — our own bearer token
-was logged as `401 — The access token could not be verified`. Public, the header
-passes through and the scheme below works. **If this service ever has to stay
-private, the token must move out of `Authorization` into its own header**
-(`X-Cutout-Token`) in both `server.mjs` and `makeCutout`, or Cloud Run will eat
-it before the container sees it.
-
-`--allow-unauthenticated` with `--ingress all` is deliberate: Netlify functions
-have no fixed egress address to allow-list, so IAM cannot express "only our
-site". The bearer token is the access control, and the service does nothing but
-return a cut-out version of whatever it is given.
-
-APIs needed once per project:
+Hosted on **Fly.io**, in London (`lhr`), as app `csc-cutout` —
+`https://csc-cutout.fly.dev`. Configuration is in `fly.toml`; Fly builds the
+same Dockerfile on its own remote builder, so no local Docker is needed.
 
 ```sh
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com \n  --project gen-lang-client-0145364883
+cd services/cutout
+fly deploy                     # build remotely and roll out
+fly logs --app csc-cutout      # startup, model-warm, one line per cutout
+fly machine list --app csc-cutout
 ```
+
+Machines scale to zero when idle and start on the first request. A cover is cut
+out once, minutes apart at best, and the work happens inside a background
+function where nobody is watching a spinner — so a cold start is the right thing
+to pay for, and an idle machine all day is not.
+
+### Cloud Run: tried, abandoned
+
+The first host was Google Cloud Run in europe-west2. The container built and ran
+there, but **the run.app hostnames never routed**: every path on both the
+project-number and the alias hostname returned a Google front-end 404 in ~130 ms,
+from inside and outside the network and through `gcloud run services proxy`, with
+no request ever reaching the container and nothing in its logs. Everything Google
+reported said the service was fine — `Ready / CONDITION_SUCCEEDED`, ingress
+`INGRESS_TRAFFIC_ALL`, default URL enabled, `allUsers` bound to
+`roles/run.invoker`, DNS resolving to Cloud Run front ends. Deleting the service
+and redeploying from source changed nothing. Not worth further debugging when the
+same container runs elsewhere in minutes.
+
+Two things it taught us, kept because they cost an evening:
+
+- Public access needed an organization-policy exception. The project sits under
+  an org whose `constraints/iam.allowedPolicyMemberDomains` forbade `allUsers`
+  outright, so `--allow-unauthenticated` failed with `FAILED_PRECONDITION`.
+- **Cloud Run reads the `Authorization` header itself** whenever a service
+  requires authentication — our own bearer token came back as
+  `401 — The access token could not be verified`. Any host that authenticates in
+  that header needs the service token moved to one of its own
+  (`X-Cutout-Token`). Fly does not, so `Authorization: Bearer` stands.
 
 ## The token
 
 Generate and set it — never commit it, and never write it into a file here:
 
 ```sh
-gcloud run services update cutout --region europe-west2 \
-  --set-env-vars "CUTOUT_TOKEN=$(openssl rand -hex 32)"
+fly secrets set CUTOUT_TOKEN=$(openssl rand -hex 32) --app csc-cutout
 ```
 
+Setting a secret restarts the machines, so it takes effect on its own.
+
 The same value goes into Netlify as `CUTOUT_TOKEN`, alongside
-`CUTOUT_SERVICE_URL` (the service URL, no trailing slash). Both are secret.
+`CUTOUT_SERVICE_URL` (`https://csc-cutout.fly.dev`, no trailing slash). Both are
+secret.
+
+With either unset the cutout step is skipped rather than failed: no `cutoutError`
+is written, nothing is logged, the cover keeps its styled image, and the status
+endpoint reports `cutoutEnabled: false` so the builder's Add to basket gate does
+not sit waiting for a cutout nobody is going to send.
 
 ## Testing it
 
@@ -152,14 +128,18 @@ to be looked at.
 
 ## Measured
 
-Local, Node 24 on Windows, model already warm — Cloud Run figures will differ,
-and the first request after a cold start also pays the model load:
+On Fly, `shared-cpu-2x` with 2 GB, warm:
 
 | input | in | out | coverage | model |
 | --- | --- | --- | --- | --- |
-| Dilked cover, PNG | 5504×3072, 8.99 MB | 4.32 MB RGBA | 0.5636 | 9,271 ms |
-| Dilked cover, JPEG q92 | 5504×3072, 3.17 MB | 4.45 MB RGBA | 0.5639 | 8,342 ms |
-| Martin, PNG | 2048×2048, 3.21 MB | 1.47 MB RGBA | 0.6114 | 6,293 ms |
+| Dilked cover, PNG | 5504×3072, 8.99 MB | 4.30 MB RGBA | 0.5632 | 15,015 ms |
+| Dilked cover, JPEG q92 | 5504×3072, 3.17 MB | 4.33 MB RGBA | 0.5630 | 16,523 ms |
+| Martin, PNG | 2048×2048, 3.21 MB | 1.47 MB RGBA | 0.6111 | 10,606 ms |
+
+Cold, on a stopped machine: **34.7 s wall** for the 2048×2048 (machine start,
+17.6 s model load, then inference), against **11.6 s warm**. Comfortably inside
+the 90 s the pipeline allows. Shared vCPUs are roughly 1.7× slower than the same
+work on this laptop, which is the price of scaling to zero.
 
 Both cut cleanly — five separate figures on the Dilked cover, hair edges intact
 on the portrait. Note the coverage: a person photographed close up legitimately

@@ -1,4 +1,5 @@
 import { createClient } from '@sanity/client';
+import { cutoutConfigured } from './_shared/cutout.mjs';
 
 /**
  * Styling progress: GET /api/personalisation-status/<id>
@@ -84,6 +85,10 @@ export default async (req) => {
       styleSize: doc.styleSize || null,
       styleCalls: doc.styleCalls || 0,
       templateId: doc.templateId || null,
+      /* Whether a cutout is coming at all. Without this the builder cannot tell
+         "not ready yet" from "this deployment has no cutout service", and its
+         Add to basket gate would wait for ever on the second one. */
+      cutoutEnabled: cutoutConfigured(),
     };
     return new Response(req.method === 'HEAD' ? null : JSON.stringify(body), { status: 200, headers: PRIVATE });
   } catch (err) {
