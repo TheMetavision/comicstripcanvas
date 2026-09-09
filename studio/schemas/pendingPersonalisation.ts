@@ -288,6 +288,25 @@ export default defineType({
             { name: 'styledWidth', title: 'Styled Width', type: 'number' },
             { name: 'styledHeight', title: 'Styled Height', type: 'number' },
             { name: 'styledAt', title: 'Styled At', type: 'datetime' },
+            {
+              name: 'cutoutKey',
+              title: 'Cutout Blob Key',
+              type: 'string',
+              description:
+                'RGBA PNG with the background removed, for the standard comic book cover only. ' +
+                'Absent everywhere else, and absent on a cover whose cutout failed — which is ' +
+                'not an error: the cover still prints from the styled image.',
+            },
+            { name: 'cutoutWidth', title: 'Cutout Width', type: 'number' },
+            { name: 'cutoutHeight', title: 'Cutout Height', type: 'number' },
+            {
+              name: 'cutoutError',
+              title: 'Cutout Error',
+              type: 'string',
+              description:
+                'Why no cutout. Never blocks the order — the panel stays "done" on the styled ' +
+                'image and the customer can still check out.',
+            },
           ],
           preview: {
             select: { panel: 'panel', status: 'styleStatus', err: 'styleError', w: 'styledWidth', h: 'styledHeight' },

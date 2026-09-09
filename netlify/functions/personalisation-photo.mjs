@@ -77,16 +77,24 @@ export default async (req) => {
       return notFound();
     }
 
-    const blob = await getStore(PHOTO_STORE).get(row.styledKey, { type: 'arrayBuffer' });
+    /* ?variant=cutout asks for the background-removed PNG. 404 until it exists,
+       which is the normal answer on every template except the standard cover
+       and on a cover whose cutout was refused by the quality gate -- the caller
+       falls back to the styled image, which is always there. */
+    const wantCutout = searchParams.get('variant') === 'cutout';
+    const key = wantCutout ? row.cutoutKey : row.styledKey;
+    if (!key) return notFound();
+
+    const blob = await getStore(PHOTO_STORE).get(key, { type: 'arrayBuffer' });
     if (!blob) {
-      console.error(`personalisation-photo: ${id} ${panel} is done but its blob is gone (${row.styledKey})`);
+      console.error(`personalisation-photo: ${id} ${panel} is done but its blob is gone (${key})`);
       return notFound();
     }
 
     return new Response(req.method === 'HEAD' ? null : blob, {
       status: 200,
       headers: {
-        'Content-Type': 'image/jpeg',
+        'Content-Type': wantCutout ? 'image/png' : 'image/jpeg',
         'Content-Length': String(blob.byteLength),
         // a customer's photograph: never held by a shared cache, never indexed
         'Cache-Control': 'private, no-store',

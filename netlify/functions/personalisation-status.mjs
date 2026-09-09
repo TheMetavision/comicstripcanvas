@@ -48,7 +48,7 @@ export default async (req) => {
 
   try {
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls }', { id }
+      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId }', { id }
     );
     if (!doc) return notFound();
 
@@ -65,6 +65,13 @@ export default async (req) => {
          the bytes still come from /api/personalisation-photo, which checks the
          id and the panel's status before it reads anything. */
       styledKey: p.styledKey || null,
+      /* Cover-only, and absent is normal everywhere else. cutoutError present
+         with no cutoutKey means the cover prints from the styled image -- the
+         builder treats that as settled, not as something to wait for. */
+      cutoutKey: p.cutoutKey || null,
+      cutoutWidth: p.cutoutWidth ?? null,
+      cutoutHeight: p.cutoutHeight ?? null,
+      cutoutError: p.cutoutError || null,
     }));
 
     /* allDone is false for a document with no photos yet. "Nothing to do" and
@@ -76,6 +83,7 @@ export default async (req) => {
       anyFailed: photos.some((p) => p.styleStatus === 'failed'),
       styleSize: doc.styleSize || null,
       styleCalls: doc.styleCalls || 0,
+      templateId: doc.templateId || null,
     };
     return new Response(req.method === 'HEAD' ? null : JSON.stringify(body), { status: 200, headers: PRIVATE });
   } catch (err) {

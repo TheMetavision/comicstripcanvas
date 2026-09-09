@@ -115,14 +115,26 @@ async function render(id, doc, req) {
      panel that finished or one still in flight. */
   const photos = getStore(PHOTO_STORE);
   const rowFor = (panelId) => (doc.photos || []).find((p) => p.panel === panelId) || null;
+  const recipePanel = (panelId) => (recipe.panels || []).find((p) => p.id === panelId) || null;
+
   const imageFor = async (panelId) => {
     const row = rowFor(panelId);
     if (!row || row.styleStatus !== 'done' || !row.styledKey) {
       throw new UnstyledPanel(panelId, row?.styleStatus || 'missing', row?.styleError || null);
     }
-    const buf = await photos.get(row.styledKey, { type: 'arrayBuffer' });
-    if (!buf) throw new Error(`Styled blob missing for panel ${panelId} (${row.styledKey})`);
-    return dataUri(buf, row.styledKey);
+    /* Which of the two images the customer chose, from the recipe -- the only
+       record of a decision they made and approved. Falling back to the styled
+       image rather than trusting a stale cutoutKey: if the recipe says "full
+       picture", or says nothing because the build predates the toggle, the
+       styled image is what they saw. */
+    const wantsCutout = recipePanel(panelId)?.imageVariant === 'cutout';
+    const key = wantsCutout && row.cutoutKey ? row.cutoutKey : row.styledKey;
+    if (wantsCutout && !row.cutoutKey) {
+      console.warn(`render-personalisation: ${panelId} asked for the cutout but none is stored — using the styled image`);
+    }
+    const buf = await photos.get(key, { type: 'arrayBuffer' });
+    if (!buf) throw new Error(`Image blob missing for panel ${panelId} (${key})`);
+    return dataUri(buf, key);
   };
 
   const scene = await prepareScene({ sceneSvg: doc.sceneSvg, recipe, origin, imageFor });

@@ -1,0 +1,17 @@
+{
+  "name": "csc-cutout",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Background removal for Comic Strip Canvas comic book covers. Runs on Cloud Run, not on Netlify \u2014 see README.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@imgly/background-removal-node": "1.4.5",
+    "pngjs": "^7.0.0"
+  }
+}

@@ -180,6 +180,12 @@ const builderData = JSON.stringify({
             <button id="swap" class="b-btn">Swap</button>
             <button id="clear" class="b-btn">Remove</button>
           </div>
+          {/* Standard comic book cover only — hidden until a cutout exists. */}
+          <div class="b-row" id="variantRow" hidden>
+            <span class="b-lab">Show</span>
+            <button id="variantCutout" class="b-btn" aria-pressed="true">Cutout</button>
+            <button id="variantStyled" class="b-btn" aria-pressed="false">Full picture</button>
+          </div>
           <div id="cutBox" hidden>
             <div class="b-row">
               <label for="cutOn" class="b-lab">Cut out subject</label>

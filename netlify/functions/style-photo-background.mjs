@@ -36,6 +36,29 @@ const sanity = createClient({
 const PHOTO_STORE = 'personalisation';
 const JPEG_QUALITY = 90;
 
+/* ---------------------------------------------------------------- cutout */
+/* Only the standard comic book cover. The strip, the icons and the full-bleed
+   cover use the styled image whole -- their artwork has no burst for a cut-out
+   subject to sit on, so removing the background would just leave a hole. */
+const CUTOUT_TEMPLATES = new Set(['cover']);
+const CUTOUT_TIMEOUT_MS = 90000;
+
+/* The gate. A matting model fails in two directions and both look like a
+   success from the outside: it keeps nearly everything, so the cover shows the
+   whole photograph with a ragged edge where the burst should be, or it keeps
+   nearly nothing and the cover shows an empty burst. Neither throws, so the
+   only defence is to measure the alpha and refuse the result.
+
+   Coverage alone does the work. An earlier rule also refused a subject whose
+   bounding box spanned both axes, on the theory that it meant nothing had been
+   removed -- but a real styled portrait (Martin, 2048 x 2048) cuts out cleanly
+   at 61% coverage with a box of 2048 x 2015, because a person photographed
+   close up touches all four edges and is still a person, not a background.
+   That rule rejected a good cutout, so it is gone; the box is still measured
+   and logged, because it is worth seeing when one of these goes wrong. */
+const CUTOUT_MIN_COVERAGE = 0.05;
+const CUTOUT_MAX_COVERAGE = 0.90;
+
 const isId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 const isPanel = (s) => typeof s === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(s);
 
@@ -76,6 +99,67 @@ const shouldRefund = (err) =>
   typeof err?.status === 'number' &&
   (NEVER_REACHED_MODEL.has(err.status) || (err.status >= 500 && err.status < 600));
 
+/**
+ * Cut the background out of a styled cover.
+ *
+ * Best-effort throughout: every failure path returns a reason rather than
+ * throwing, because a cover without a cutout is a cover that still prints. The
+ * only thing that must not happen is a cutout failure costing the customer
+ * their styled photograph, so nothing here touches styleStatus or styleCalls.
+ *
+ * @returns {{ ok: true, png: Buffer, width, height, coverage, bbox, ms }
+ *          | { ok: false, reason: string }}
+ */
+async function makeCutout(jpeg) {
+  const base = (process.env.CUTOUT_SERVICE_URL || '').replace(/\/+$/, '');
+  const token = process.env.CUTOUT_TOKEN || '';
+  if (!base || !token) return { ok: false, reason: 'cutout service not configured' };
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CUTOUT_TIMEOUT_MS);
+  const started = Date.now();
+  try {
+    const res = await fetch(`${base}/cutout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' },
+      body: jpeg,
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      return { ok: false, reason: `service returned ${res.status}${detail ? `: ${detail.slice(0, 120)}` : ''}` };
+    }
+    const png = Buffer.from(await res.arrayBuffer());
+    const ms = Date.now() - started;
+
+    const coverage = Number(res.headers.get('x-alpha-coverage'));
+    const bbox = (res.headers.get('x-bbox') || '').split(',').map(Number);
+    if (!Number.isFinite(coverage) || bbox.length !== 4 || bbox.some((n) => !Number.isFinite(n))) {
+      return { ok: false, reason: 'service gave no coverage or bbox' };
+    }
+
+    /* Dimensions come from the service rather than from decoding the PNG here
+       again -- it already had the pixels open to count them. */
+    const [w, h] = (res.headers.get('x-cutout-px') || '').split('x').map(Number);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
+      return { ok: false, reason: 'service gave no size' };
+    }
+
+    if (coverage < CUTOUT_MIN_COVERAGE) {
+      return { ok: false, reason: `too little kept (coverage ${coverage.toFixed(3)})` };
+    }
+    if (coverage > CUTOUT_MAX_COVERAGE) {
+      return { ok: false, reason: `too little removed (coverage ${coverage.toFixed(3)})` };
+    }
+    return { ok: true, png, width: w, height: h, coverage, bbox, ms };
+  } catch (err) {
+    const aborted = ac.signal.aborted;
+    return { ok: false, reason: aborted ? 'timeout' : `request failed: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function markFailed(id, panel, reason) {
   try {
     await sanity.patch(id).set(setPanel(panel, { styleStatus: 'failed', styleError: reason })).commit();
@@ -96,7 +180,7 @@ export default async (req) => {
     }
 
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls }', { id }
+      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId }', { id }
     );
     if (!doc) {
       console.error(`style-photo: ${id} does not exist`);
@@ -192,6 +276,41 @@ export default async (req) => {
         styledAt: new Date().toISOString(),
       }))
       .commit();
+
+    /* The cutout runs AFTER the panel is already 'done' and committed, which
+       is what makes it non-fatal by construction: whatever happens next, the
+       customer has their styled photograph and can check out. */
+    if (CUTOUT_TEMPLATES.has(doc.templateId)) {
+      const cut = await makeCutout(jpeg);
+      if (cut.ok) {
+        const cutoutKey = `personalisation/${id}/cutout-${panel}.png`;
+        await photos.set(cutoutKey, cut.png, {
+          metadata: {
+            panel, kind: 'cutout', contentType: 'image/png',
+            coverage: String(cut.coverage), bbox: cut.bbox.join(','),
+            uploadedAt: new Date().toISOString(),
+          },
+        });
+        await sanity
+          .patch(id)
+          .unset([`photos[panel == "${panel}"].cutoutError`])
+          .set(setPanel(panel, {
+            cutoutKey, cutoutWidth: cut.width ?? null, cutoutHeight: cut.height ?? null,
+          }))
+          .commit();
+        console.log(
+          `style-photo: ${id} ${panel} cutout in ${cut.ms} ms — ${cut.width}x${cut.height}, ` +
+          `coverage ${cut.coverage.toFixed(3)}, bbox ${cut.bbox.join(',')}, ` +
+          `${(cut.png.length / 1024).toFixed(0)} KB -> ${cutoutKey}`
+        );
+      } else {
+        await sanity
+          .patch(id)
+          .set(setPanel(panel, { cutoutError: String(cut.reason).slice(0, 200) }))
+          .commit();
+        console.warn(`style-photo: ${id} ${panel} no cutout — ${cut.reason} (the cover still prints styled)`);
+      }
+    }
 
     console.log(
       `style-photo: ${id} ${panel} done in ${styled.ms} ms model, ${Date.now() - started} ms total — ` +

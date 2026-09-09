@@ -826,13 +826,22 @@ export function initProductBuilder() {
     g.putImageData(d, 0, 0);
     return cv.toDataURL('image/png');
   }
+  /* One place decides which bitmap a panel shows, because three did and they
+     disagreed. The server cutout outranks the manual chroma cut -- they are two
+     answers to the same question, and the manual sliders are hidden wherever
+     the server cutout is on offer, so in practice only one is ever set. */
+  const srcFor = (s) =>
+    (s.variant === 'cutout' && s.cutoutUrl) ? s.cutoutUrl
+      : (s.cut && s.cutUrl) ? s.cutUrl
+        : s.url;
+
   function applyCut(id) {
     const s = state.get(id); if (!s) return;
     const n = nodes[id];
-    if (!s.cut) { n.img.setAttribute('href', s.url); return; }
+    if (!s.cut) { n.img.setAttribute('href', srcFor(s)); return; }
     const key = s.tol + '/' + s.feather;
     if (s.cutKey !== key) { s.cutUrl = cutout(s.el, s.tol, s.feather); s.cutKey = key; }
-    n.img.setAttribute('href', s.cutUrl);
+    n.img.setAttribute('href', srcFor(s));
   }
 
   /* ---------- images ---------- */
@@ -1286,7 +1295,7 @@ export function initProductBuilder() {
        wide one. Both sides start fit-centred and the customer re-crops if they
        want to, which is the same reasoning as the styled swap. */
     s.zoom = 1; s.ox = 0; s.oy = 0;
-    n.img.setAttribute('href', s.cut && s.cutUrl ? s.cutUrl : s.url);
+    n.img.setAttribute('href', srcFor(s));
     n.img.setAttribute('opacity', s.demo ? 1 : (s.uploadState && s.uploadState !== UPLOADED ? 0.45 : 1));
     if (n.num) n.num.setAttribute('opacity', s.demo ? 1 : 0);
     if (n.plate) n.plate.setAttribute('opacity', s.demo ? 1 : 0);
@@ -1363,11 +1372,19 @@ export function initProductBuilder() {
       if (row.styledWidth) s.styledW = row.styledWidth;
       if (row.styledHeight) s.styledH = row.styledHeight;
       if (row.styledKey) s.styledKey = row.styledKey;
+      /* Cover only, and arriving a little after the styled image because the
+         cutout runs once the panel is already done. cutoutError with no key is
+         a settled answer, not a wait: the cover prints from the styled image. */
+      if (row.cutoutKey) s.cutoutKey = row.cutoutKey;
+      if (row.cutoutWidth) s.cutoutW = row.cutoutWidth;
+      if (row.cutoutHeight) s.cutoutH = row.cutoutHeight;
+      s.cutoutError = row.cutoutError || null;
 
       if (s.styleState === STYLE_DONE) {
         // A dedupe hit lands here on the very first poll, already done, with no
         // 'styling' in between. Nothing special to do -- the swap is the same.
         await applyStyled(slot);
+        if (s.cutoutKey && !s.cutoutUrl) { await applyCutout(slot); touched = true; }
       } else if (was !== s.styleState) {
         drawSlotFlag(slot);
         touched = true;
@@ -1423,6 +1440,70 @@ export function initProductBuilder() {
       return;
     }
     s.styledLoading = false;
+  }
+
+  /* ---------- cutout (standard cover only) ---------- */
+  /** Is the cutout question settled for this slot -- arrived, refused, or N/A? */
+  const CUTOUT_TEMPLATE = 'cover';
+  const wantsCutout = () => MODE === 'customer' && TK === CUTOUT_TEMPLATE;
+  const cutoutSettled = (s) =>
+    !wantsCutout() || !!s.cutoutKey || !!s.cutoutError || s.styleState !== STYLE_DONE;
+
+  /** Which image a slot is currently showing. */
+  const variantOf = (s) => (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled');
+
+  /* Fetch the background-removed PNG and hold it alongside the styled JPEG.
+     Both are kept: the toggle switches between them without another request,
+     and the recipe records which one the customer settled on. */
+  async function applyCutout(id) {
+    const s = state.get(id);
+    if (!s || s.demo || !s.cutoutKey || s.cutoutUrl || s.cutoutLoading) return;
+    s.cutoutLoading = true;
+    try {
+      const res = await fetch(
+        `/api/personalisation-photo/${saveId}/${s.serverPanel || id}?variant=cutout`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const probe = new Image();
+      await new Promise((ok, fail) => {
+        probe.onload = ok;
+        probe.onerror = () => fail(new Error('the cutout would not decode'));
+        probe.src = url;
+      });
+      s.cutoutUrl = url; s.cutoutEl = probe;
+      if (s.variant !== 'styled') showVariant(id, 'cutout');   // default to the cutout
+      console.log(`[builder] ${id} cutout ${probe.naturalWidth}x${probe.naturalHeight}`);
+    } catch (e) {
+      // Not fatal, and not recorded as a cutoutError -- the server's verdict is
+      // the one that matters; this is just a fetch that can be retried by the
+      // next poll.
+      console.warn(`[builder] could not load the cutout for ${id}: ${e.message}`);
+    }
+    s.cutoutLoading = false;
+  }
+
+  /* Swap the panel between the cut-out subject and the whole styled picture.
+     The cutout sits over the template's burst, which is the entire point of it
+     on a cover; the full picture covers the burst completely. */
+  function showVariant(id, variant) {
+    const s = state.get(id), n = nodes[id];
+    if (!s || !n) return;
+    const useCutout = variant === 'cutout' && s.cutoutUrl;
+    s.variant = useCutout ? 'cutout' : 'styled';
+    const el = useCutout ? s.cutoutEl : s.el;
+    const url = srcFor(s);
+    if (!el || !url) return;
+    // layout() measures from natW/natH, so they have to describe what is shown
+    s.natW = el.naturalWidth || s.natW;
+    s.natH = el.naturalHeight || s.natH;
+    s.zoom = 1; s.ox = 0; s.oy = 0;
+    n.img.setAttribute('href', url);
+    n.img.setAttribute('opacity', 1);
+    layout(id);
+    if (selected === id) syncPanel();
+    refresh();
   }
 
   /* Ask for one panel to be styled again. Only reached for reasons that could
@@ -1864,13 +1945,31 @@ export function initProductBuilder() {
     /* Swap is only meaningful from a panel holding one of the customer's
        photographs -- the seeded example is not theirs to move. While a swap is
        armed the button is the way out of it, from any panel. */
+    /* The toggle only exists once there is something to toggle between. A
+       cover whose cutout was refused shows nothing rather than a dead control
+       offering a choice of one. */
+    const vRow = $('variantRow');
+    if (vRow) {
+      const have = !!s.cutoutUrl;
+      vRow.hidden = !(wantsCutout() && have && !s.demo);
+      if (have) {
+        const v = variantOf(s);
+        $('variantCutout').setAttribute('aria-pressed', String(v === 'cutout'));
+        $('variantStyled').setAttribute('aria-pressed', String(v === 'styled'));
+        $('variantCutout').disabled = v === 'cutout';
+        $('variantStyled').disabled = v === 'styled';
+      }
+    }
+
     const swapBtn = $('swap');
     if (swapBtn) {
       swapBtn.textContent = swapFrom ? 'Cancel swap' : 'Swap';
       swapBtn.disabled = !swapFrom && (s.demo || T.panels.length < 2);
       swapBtn.setAttribute('aria-pressed', String(!!swapFrom));
     }
-    $('cutBox').hidden = !(T.bg && T.bg.type === 'image');
+    /* Not on a customer's cover: the server does this properly there, and two
+       controls that both claim to cut out the background is one too many. */
+    $('cutBox').hidden = !(T.bg && T.bg.type === 'image') || wantsCutout();
     $('cutOn').checked = s.cut; $('tol').value = s.tol; $('feather').value = s.feather;
 
     /* Two different questions before and after styling.
@@ -2049,6 +2148,8 @@ export function initProductBuilder() {
   $('zoom').addEventListener('input', (e) => { const s = state.get(selected); if (!s) return; s.zoom = +e.target.value; layout(selected); syncPanel(); });
   $('reset').addEventListener('click', () => { const s = state.get(selected); s.ox = s.oy = 0; s.zoom = 1; layout(selected); syncPanel(); });
   $('replace').addEventListener('click', () => ask(selected));
+  on('variantCutout', 'click', () => showVariant(selected, 'cutout'));
+  on('variantStyled', 'click', () => showVariant(selected, 'styled'));
   $('swap').addEventListener('click', () => {
     if (swapFrom) cancelSwap();          // the button doubles as Cancel
     else beginSwap(selected);
@@ -2159,13 +2260,20 @@ export function initProductBuilder() {
          correct without any special handling -- the snapshot is taken from the
          live scene at Add to basket, and by then every slot holds its styled
          image, so it captures the styled artwork by construction. */
-      btn.disabled = basketBusy || busy > 0 || waiting > 0 || !consented() || real !== total;
+      /* On a cover the cutout is part of "ready": the customer is choosing
+         between two images, and offering checkout before the second one exists
+         would settle that choice for them. Settled means arrived OR refused. */
+      const cutoutWaiting = wantsCutout()
+        ? styleable().filter((x) => !cutoutSettled(x)).length : 0;
+      btn.disabled = basketBusy || busy > 0 || waiting > 0 || cutoutWaiting > 0
+        || !consented() || real !== total;
       $('basketHint').textContent = basketBusy ? ''
         : !consented() ? 'Tick the consent box to get started.'
           : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`
             : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
               : styleFailedIdx >= 0 ? styleFailureText(state.get(T.panels[styleFailedIdx].id))
                 : waiting > 0 ? `Applying your comic style — ${ready} of ${ready + waiting} ready`
+                  : cutoutWaiting > 0 ? 'Cutting out the background…'
                   : real === total ? ''
                     : `Add your own photo to every panel — ${total - real} to go.`;
     }
@@ -2248,6 +2356,12 @@ export function initProductBuilder() {
           rawKey: s && !s.demo ? (s.key || null) : null,
           styledKey: s && !s.demo ? (s.styledKey || null) : null,
           styledPx: s && !s.demo && s.styledW ? [s.styledW, s.styledH] : null,
+          /* Which image the customer settled on, and the key it came from.
+             The render job reads imageVariant -- it is the record of a choice
+             they made and approved, so it decides, not the presence of a key. */
+          imageVariant: s && !s.demo ? variantOf(s) : null,
+          cutoutKey: s && !s.demo ? (s.cutoutKey || null) : null,
+          cutoutPx: s && !s.demo && s.cutoutW ? [s.cutoutW, s.cutoutH] : null,
           removeBackground: s ? { on: s.cut, spread: s.tol, soften: s.feather } : null,
         };
       }),
@@ -2523,6 +2637,7 @@ export function initProductBuilder() {
       return;
     }
     if (inFlight() > 0 || styleWaiting() > 0 || !saveId) return;   // not ready to brief yet
+    if (wantsCutout() && styleable().some((x) => !cutoutSettled(x))) return;
 
     basketBusy = true; btn.disabled = true;
     const label = btn.textContent; btn.textContent = 'Saving…';
