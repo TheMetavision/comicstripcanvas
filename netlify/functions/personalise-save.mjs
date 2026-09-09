@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { styleSizeForTemplate, MAX_STYLE_CALLS } from './_shared/style.mjs';
+import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -270,28 +271,11 @@ async function triggerStyle({ id, panelId, sha256, req }) {
     const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
     const photos = doc?.photos || [];
 
-    /* Dedupe. The same bytes styled once, and the result pointed at from every
-       panel holding them. Only a row that is actually 'done' counts -- copying
-       a styledKey from a row still in flight would point at a blob that does
-       not exist yet. */
-    const twin = photos.find(
-      (p) => p.sha256 === sha256 && p.panel !== panelId && p.styleStatus === 'done' && p.styledKey
-    );
+    // Dedupe before anything is spent -- see _shared/style-dedupe.mjs.
+    const twin = findStyledTwin(photos, { panel: panelId, sha256 });
     if (twin) {
-      await sanity
-        .patch(id)
-        .set({
-          [`photos[panel == "${panelId}"].styledKey`]: twin.styledKey,
-          [`photos[panel == "${panelId}"].styleStatus`]: 'done',
-          [`photos[panel == "${panelId}"].styledWidth`]: twin.styledWidth ?? null,
-          [`photos[panel == "${panelId}"].styledHeight`]: twin.styledHeight ?? null,
-          [`photos[panel == "${panelId}"].styledAt`]: new Date().toISOString(),
-        })
-        .setIfMissing({ styledKeys: [] })
-        .unset([`photos[panel == "${panelId}"].styleError`, `styledKeys[@ == "${twin.styledKey}"]`])
-        .append('styledKeys', [twin.styledKey])
-        .commit();
-      console.log(`personalise-save: ${id} ${panelId} reused the styled photo from ${twin.panel} (same sha256)`);
+      await adoptStyledTwin(sanity, id, panelId, twin);
+      console.log(`personalise-save: dedupe hit — ${id} ${panelId} reused the styled photo from ${twin.panel} (same sha256)`);
       return { deduped: true, from: twin.panel };
     }
 

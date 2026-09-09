@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { MAX_STYLE_CALLS } from './_shared/style.mjs';
+import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
 
 /**
  * Re-style one panel:
@@ -11,9 +12,11 @@ import { MAX_STYLE_CALLS } from './_shared/style.mjs';
  *
  * Same guards as personalisation-proof: the unguessable id is the access
  * control, and anything not shaped like a pp- id is refused before Sanity is
- * touched. Note this endpoint SPENDS MONEY, so it also refuses a panel that is
- * already styling (a double tap must not buy two generations) and one that is
- * already done unless retry=1 is explicit.
+ * touched. Note this endpoint SPENDS MONEY, so it refuses a panel that is
+ * already styling (a double tap must not buy two generations), refuses one
+ * that is already done unless retry=1 is explicit, and takes the sha256
+ * dedupe first -- a retry of a photograph already styled elsewhere in the
+ * document costs nothing at all.
  */
 
 const sanity = createClient({
@@ -66,16 +69,50 @@ export default async (req) => {
     if (row.styleStatus === 'done' && !retry) {
       return reply({ id, panel, triggered: false, reason: 'already styled; pass retry=1 to redo' }, 409);
     }
+
+    /* Dedupe, exactly as the upload path does it -- retrying a panel whose
+       photograph is already styled on another panel should cost nothing.
+       Checked BEFORE the cap so a personalisation that has spent its budget can
+       still finish any panel sharing a photo with one that succeeded.
+
+       Skipped when this panel is already done, which can only be reached with
+       retry=1: that is someone deliberately asking for a fresh generation
+       because they did not like this one, and handing back the twin's copy --
+       almost certainly the very image they are rejecting, since a shared
+       photograph already shares one styledKey -- would silently refuse them. */
+    if (row.styleStatus !== 'done') {
+      const twin = findStyledTwin(doc.photos, { panel, sha256: row.sha256 });
+      if (twin) {
+        await adoptStyledTwin(sanity, id, panel, twin);
+        console.log(`personalisation-style: dedupe hit — ${id} ${panel} reused the styled photo from ${twin.panel} (same sha256), no model call`);
+        return reply({ id, panel, triggered: false, deduped: true, from: twin.panel });
+      }
+    }
+
     if ((doc.styleCalls || 0) >= MAX_STYLE_CALLS) {
-      await sanity
-        .patch(id)
-        .set({
-          [`photos[panel == "${panel}"].styleStatus`]: 'failed',
-          [`photos[panel == "${panel}"].styleError`]: 'cap',
-        })
-        .commit();
-      console.warn(`personalisation-style: ${id} ${panel} refused — ${MAX_STYLE_CALLS} calls already used`);
-      return reply({ id, panel, triggered: false, reason: 'cap', styleCalls: doc.styleCalls }, 429);
+      /* Refusing must not destroy a good result. This used to mark the panel
+         failed unconditionally, so asking to redo an ALREADY-DONE panel once
+         the budget was spent downgraded it to failed while its styledKey sat
+         there intact -- and the render job then refused the whole build for a
+         panel whose styled photograph existed all along. Only a panel that had
+         nothing to lose is marked. */
+      if (row.styleStatus !== 'done') {
+        await sanity
+          .patch(id)
+          .set({
+            [`photos[panel == "${panel}"].styleStatus`]: 'failed',
+            [`photos[panel == "${panel}"].styleError`]: 'cap',
+          })
+          .commit();
+      }
+      console.warn(
+        `personalisation-style: ${id} ${panel} refused — ${MAX_STYLE_CALLS} calls already used` +
+        (row.styleStatus === 'done' ? ' (left as done; the existing result stands)' : '')
+      );
+      return reply({
+        id, panel, triggered: false, reason: 'cap',
+        styleCalls: doc.styleCalls, keptExisting: row.styleStatus === 'done',
+      }, 429);
     }
 
     // Put it back to pending before firing, so a poll between the two sees an
