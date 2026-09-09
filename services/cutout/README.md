@@ -145,6 +145,18 @@ Both cut cleanly — five separate figures on the Dilked cover, hair edges intac
 on the portrait. Note the coverage: a person photographed close up legitimately
 keeps ~60% of the frame, which is why the gate's ceiling is 0.90 and not lower.
 
+## Known issues
+
+Post-launch, not now.
+
+- **A Google 400 counts against the style cap.** `style-photo-background`
+  deliberately does not increment `styleCalls` on 401/403/429/5xx, because those
+  fail before any generation happens and must not burn a customer's 16 calls.
+  A 400 does increment, and a malformed or rejected API key returns one — seen
+  while testing the unconfigured-cutout path with a dummy key, where a call that
+  reached no model still cost a call. Not in this service, but adjacent to it and
+  worth fixing with the rest of the retry accounting.
+
 ## Retention
 
 The service stores nothing. Images arrive in a request body, are held in memory
