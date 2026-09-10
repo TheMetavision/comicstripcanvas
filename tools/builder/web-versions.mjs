@@ -26,11 +26,20 @@ const require = createRequire(path.join(process.cwd(), 'package.json'));
  * a print master carries a print profile and a browser handed one without
  * conversion renders it wrong.
  *
- * --upload attaches the 2000px JPEG to the product whose slug matches, as an
- * entry in `images[]` keyed "web-master". The key is what makes it idempotent:
- * re-running replaces that entry rather than appending a second copy. Nothing
- * else in images[] is touched, so the listing image studio-save created stays
- * where it is.
+ * --upload attaches the 2000px JPEG to the product as an entry in `images[]`
+ * keyed "web-master". The key is what makes it idempotent: re-running replaces
+ * that entry rather than appending a second copy. Nothing else in images[] is
+ * touched, so the listing image studio-save created stays where it is.
+ *
+ * Designs are matched to products BY ID, not by name. studio-save uses one
+ * value for both halves -- the blob goes to studio/<id>/print.png and the
+ * product is created as `drafts.<id>` -- so the folder a print master sits in
+ * already names its product, and nothing has to be titled to match.
+ *
+ * A design from a --in folder has no id, so those fall back to matching the
+ * filename against the product slug. Designs saved before this convention, or
+ * whose product was recreated by hand, need the same treatment: copy the print
+ * master into a folder, name it <product-slug>.png, and pass --in.
  */
 
 const args = process.argv.slice(2);
@@ -71,7 +80,9 @@ function findDesigns(dir) {
       const metaFile = path.join(metaRoot, idFolder, path.basename(file));
       try { title = JSON.parse(fs.readFileSync(metaFile, 'utf8')).title || null; } catch { /* no metadata */ }
     }
-    const base = title || path.basename(file, path.extname(file));
+    /* Without a title, the id names it -- every print master is called
+       print.png, so the filename would name them all the same thing. */
+    const base = title || idFolder || path.basename(file, path.extname(file));
     out.push({ file, slug: slugify(base), title: base, id: idFolder || null });
   };
 
@@ -154,11 +165,31 @@ function sanityClient() {
   });
 }
 
-async function findProduct(sanity, slug) {
-  return sanity.fetch(
+/* Resolve a design to its product.
+
+   By id first, because the link already exists and is exact: studio-save uses
+   ONE value for both halves -- the blob goes to studio/<id>/print.png and the
+   document is created as `drafts.<id>`. So the folder name a print master sits
+   in IS the product id, give or take the draft prefix, and no title or slug has
+   to agree with anything. Both forms are tried because publishing a draft drops
+   the prefix and keeps the rest.
+
+   Titles are a fallback, not the plan. Two designs can share one, a product can
+   be renamed after it is saved, and a folder passed with --in has no id at all
+   -- that is the case slug matching is for. */
+async function findProduct(sanity, design) {
+  if (design.id) {
+    const byId = await sanity.fetch(
+      '*[_id == $id || _id == $draft][0]{ _id, title, "slug": slug.current, images }',
+      { id: design.id, draft: `drafts.${design.id}` }
+    );
+    if (byId) return { ...byId, matchedBy: 'id' };
+  }
+  const bySlug = await sanity.fetch(
     '*[_type == "product" && slug.current == $slug][0]{ _id, title, "slug": slug.current, images }',
-    { slug }
+    { slug: design.slug }
   );
+  return bySlug ? { ...bySlug, matchedBy: 'slug' } : null;
 }
 
 /**
@@ -222,18 +253,18 @@ async function main() {
     if (UPLOAD) {
       const master = built.results.find((r) => r.name === '2000.jpg');
       try {
-        const doc = await findProduct(sanity, design.slug);
+        const doc = await findProduct(sanity, design);
         if (!doc) {
-          uploaded = 'no product';
+          uploaded = design.id ? 'no product (id or slug)' : 'no product';
           failures++;
         } else if (DRY_RUN) {
           const at = (doc.images || []).findIndex((i) => i && i._key === WEB_MASTER_KEY);
-          uploaded = `would ${at >= 0 ? 'replace' : 'add'} images[_key=${WEB_MASTER_KEY}] on ${doc._id}`;
+          uploaded = `would ${at >= 0 ? 'replace' : 'add'} on ${doc.slug || doc._id} (by ${doc.matchedBy})`;
         } else {
           const asset = await sanity.assets.upload('image', fs.createReadStream(master.dest), {
             filename: `${design.slug}-2000.jpg`, contentType: 'image/jpeg',
           });
-          uploaded = await attach(sanity, doc, asset._id, `${design.title} — Comic Strip Canvas`);
+          uploaded = `${await attach(sanity, doc, asset._id, `${design.title} — Comic Strip Canvas`)} (by ${doc.matchedBy})`;
         }
       } catch (err) {
         failures++;
