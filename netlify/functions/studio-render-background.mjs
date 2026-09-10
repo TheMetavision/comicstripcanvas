@@ -1,7 +1,7 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import sharp from 'sharp';
-import { DPI, dataUri, prepareScene, rasterise } from './_shared/render.mjs';
+import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_shared/derivatives.mjs';
 
@@ -60,8 +60,12 @@ export default async (req) => {
     const title = body.title || '(untitled)';
     /* First line, before anything can fail. "Was it even invoked?" was the
        question that took two hours to answer when the trigger was silently
-       never sent, and an empty log is the same shape as a crashed one. */
-    console.log(`studio-render: invoked for ${id || '(no id)'} ("${title}")`);
+       never sent, and an empty log is the same shape as a crashed one.
+       The memory goes with it because the second failure was the container
+       being killed for allocating -- there is no exception to catch when that
+       happens, so the size it had has to be written down before the work
+       starts or it cannot be read afterwards. */
+    console.log(`studio-render: invoked for ${id || '(no id)'} ("${title}") — ${memoryNote()}`);
     if (!isId(id)) {
       console.error('studio-render: bad or missing id', JSON.stringify(body).slice(0, 200));
       return new Response('Bad id', { status: 400 });
@@ -128,6 +132,29 @@ export default async (req) => {
     });
 
     /* ---- the pictures the shop actually shows ---- */
+    /* Rasterised, NOT downscaled from the print -- and that is a measured
+       choice, not an oversight.
+
+       Deriving these from the print master with sharp is the obvious tidy-up:
+       one Resvg pass instead of three, no re-parsing the same multi-megabyte
+       SVG or re-decoding the 4200 x 5800 overlay and background each time. It
+       is faster. It is also worse HERE, because it trades the one resource
+       this function died of for the one it has to spare. Measured on the real
+       production scene, peak RSS over three runs each:
+
+         three Resvg passes (this)      544 MB   <- leanest
+         web master from the listing    629 MB
+         both from the print PNG        611 MB
+         both from the raw pixmap       801 MB
+
+       A small rasterise allocates a small surface; any sharp downscale has to
+       materialise a large decoded source first. Rendering at 1600 costs less
+       than decoding 4800 x 7199 to shrink it. The time it saves is free
+       anyway: this is a background function with fifteen minutes and a job
+       that takes about twenty seconds.
+
+       Revisit if the print ever gets big enough that a third pass costs real
+       money -- but not before `m` on this function is confirmed above 1024. */
     const listing = rasterise(svg, fontFiles, LISTING_WIDTH);
     const listingPng = listing.asPng();
     await store.set(`studio/${id}/listing.png`, listingPng, {
@@ -216,7 +243,21 @@ export default async (req) => {
   }
 };
 
-// NOTE: deliberately NO `export const config = { path }` here.
+/* Memory, and ONLY memory. THIS is the declaration that works.
+   netlify.toml asks for the same 3gb and is ignored: a real build emits
+   memory: 3072 into the manifest for this function, which has both, and no
+   memory field at all for style-photo-background, which has only the toml
+   entry. The previous attempt lived solely in netlify.toml, was silently
+   dropped, and this function ran at the 1024 MB default until a render was
+   killed mid-rasterise with an empty log and no print file.
+
+   NOTE THE ABSENCE OF `path`. A config.path here collides with the forced
+   /api/* rewrite in netlify.toml and 404s the function; that rule is why this
+   file carried no config block at all until now. memory does not touch
+   routing, so it is safe where path is not. */
+export const config = { memory: '3gb' };
+
+// NOTE: deliberately NO `path` in the config above.
 // studio-save posts to /api/studio-render, which netlify.toml rewrites to this
 // function by name -- the same arrangement as render-personalisation.
 //

@@ -48,18 +48,44 @@
   # reads them (loadStyleRefs is lazy, so merely importing _shared/style.mjs
   # does not), so the entry belongs in that function's block and nowhere else.
 
-# A 24 x 16 in file at 300dpi is a 7200 x 4800 raster. Give the render job the
-# most memory Netlify allows, and keep resvg out of the bundle -- it ships a
-# native .node binary that esbuild cannot inline.
+# A 24 x 16 in file at 300dpi is a 7200 x 4800 raster: a 132 MB output surface
+# on its own, before the template artwork it composites is decoded. Give the
+# render job real memory, and keep resvg out of the bundle -- it ships a native
+# .node binary that esbuild cannot inline.
+#
+# READ THIS BEFORE TRUSTING THE LINE BELOW.
+#
+# This key does not work. It said memory = 3008, the deployed function came back
+# reporting m:1024 -- the default -- and a studio render was killed mid-rasterise
+# with an empty log and no print file. 3008 was not an invalid value;
+# zip-it-and-ship-it accepts any integer from 1024 to 4096 and 3008 parses fine.
+# The key itself is simply not being applied from this file.
+#
+# Proved with a real `netlify build`, reading .netlify/functions/manifest.json:
+#
+#   studio-render-background          toml + in-source  ->  memory: 3072
+#   render-personalisation-background toml + in-source  ->  memory: 3072
+#   style-photo-background            toml only         ->  NO memory field
+#
+# style-photo-background asks for 1536 right here in this file and the bundler
+# emits nothing for it. So the value that actually reaches the platform is the
+# one declared in the function source, and these lines are documentation plus
+# insurance against the day the toml path starts working.
+#
+# ALWAYS CHECK AFTER DEPLOYING. A memory setting that does not take is invisible
+# until a render dies:
+#   netlify api searchSiteFunctions --data '{"site_id":"<id>"}'
+# and read "m" for the function. 1024 means it was dropped again.
 [functions."render-personalisation-background"]
-  memory = 3008
+  memory = "3gb"
   external_node_modules = ["@resvg/resvg-js"]
 
 # The studio print master is the same size job, for the same reason -- and it
-# now makes every other picture too, so sharp joins resvg here. Both ship a
-# native .node binary that esbuild cannot inline.
+# makes every other picture too, so sharp joins resvg here. Both ship a native
+# .node binary that esbuild cannot inline. Same "3gb", same reason, and this is
+# the function that actually died of it.
 [functions."studio-render-background"]
-  memory = 3008
+  memory = "3gb"
   external_node_modules = ["@resvg/resvg-js", "sharp"]
 
 # studio-save has no native modules and no picture in memory any more. It

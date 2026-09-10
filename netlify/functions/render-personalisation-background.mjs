@@ -1,6 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
-import { DPI, dataUri, prepareScene, rasterise } from './_shared/render.mjs';
+import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 
 /**
  * Render a paid personalisation to a print file and a proof.
@@ -60,6 +60,14 @@ export default async (req, context) => {
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id;
+    /* First line, before anything can fail, and it carries the memory this
+       container actually got. A 7200 x 4800 print is a 132 MB surface before
+       the template artwork it composites is decoded, and the studio renderer
+       was killed mid-rasterise running at the 1024 MB default while
+       netlify.toml believed it had asked for more. There is no exception to
+       catch when a container is killed for allocating, so the size has to be
+       in the log BEFORE the work starts or it cannot be read afterwards. */
+    console.log(`render-personalisation: invoked for ${id || '(no id)'} — ${memoryNote()}`);
     if (!isId(id)) {
       console.error('render-personalisation: bad or missing id', JSON.stringify(body).slice(0, 200));
       return new Response('Bad id', { status: 400 });
@@ -169,7 +177,19 @@ async function render(id, doc, req) {
   );
 }
 
-// NOTE: deliberately NO `export const config = { path }` here.
+/* Memory, and ONLY memory. THIS is the declaration that works -- netlify.toml
+   asks for the same 3gb and is ignored by the bundler; see the note there. The
+   studio renderer's setting lived only in netlify.toml, was silently dropped,
+   and it ran at the 1024 MB default with no symptom but an empty log and a
+   missing file. This
+   function renders the same size print for a PAYING customer and has never
+   completed one in production, so it gets the same fix before it gets the
+   chance to fail the same way.
+
+   NOTE THE ABSENCE OF `path` -- see below. memory does not touch routing. */
+export const config = { memory: '3gb' };
+
+// NOTE: deliberately NO `path` in the config above.
 // The webhook posts to /api/render-personalisation, which netlify.toml rewrites
 // to this function by name. An inline config.path collides with that forced
 // rewrite and 404s, exactly as it does for the other functions here.
