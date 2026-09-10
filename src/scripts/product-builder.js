@@ -2779,6 +2779,31 @@ export function initProductBuilder() {
      Since the template assets moved out to /builder/ they are ordinary URLs and
      are sandboxed out too, so those are inlined byte-for-byte as well. */
   const assetDataCache = new Map();
+  /* The two faces the artwork is set in. An SVG handed to an <img> renders in
+     "secure static mode": it fetches nothing at all, so the @font-face rules on
+     the page do not reach it and every string falls back to a serif. Base64'd
+     into the document they are not a fetch, so they load.
+
+     The family names have to match what the text elements ask for exactly --
+     and what the server-side renderer matches on -- so they are spelt here the
+     same way as in the page's own @font-face block. */
+  const EXPORT_FONTS = [
+    { family: 'Chewy', url: '/builder/fonts/Chewy-Regular.ttf' },
+    { family: 'Luckiest Guy', url: '/builder/fonts/LuckiestGuy-Regular.ttf' },
+  ];
+  let exportFontCss = null;
+  /** Both faces as one <style> body. Fetched and base64'd once per session. */
+  function embeddedFontCss() {
+    if (!exportFontCss) {
+      exportFontCss = Promise.all(EXPORT_FONTS.map((f) =>
+        assetAsDataURI(f.url).then((d) => (d
+          ? `@font-face{font-family:'${f.family}';src:url(${d}) format('truetype');font-display:block;}`
+          : ''))
+      )).then((parts) => parts.filter(Boolean).join(String.fromCharCode(10)));
+    }
+    return exportFontCss;
+  }
+
   async function assetAsDataURI(url) {
     if (assetDataCache.has(url)) return assetDataCache.get(url);
     const p = fetch(url)
@@ -2835,6 +2860,23 @@ export function initProductBuilder() {
       pending.push(assetAsDataURI(href).then((d) => { if (d) im.setAttribute('href', d); }));
     });
     await Promise.all(pending);
+
+    const css = await embeddedFontCss();
+    if (css) {
+      const style = c.ownerDocument.createElementNS(SVGNS, 'style');
+      style.textContent = css;
+      c.insertBefore(style, c.firstChild);
+    }
+
+    /* An intrinsic size, or there is not one. Without width and height the
+       browser rasterises this at its default -- 100 x 150 here -- and the
+       download then scales that postage stamp up to 1400px, which is why a
+       draft came back smeared. exportSVG() has always set them; this path
+       never did. The viewBox is the whole board including the wrap, so the
+       aspect is unchanged. */
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    c.setAttribute('width', Math.round(vb[2]));
+    c.setAttribute('height', Math.round(vb[3]));
     return new XMLSerializer().serializeToString(c);
   }
 
