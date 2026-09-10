@@ -35,3 +35,6 @@ tools/builder/style-out/
 
 # Netlify CLI writes this when it bundles edge functions
 deno.lock
+
+# Generated web derivatives (tools/builder/web-versions.mjs)
+tools/builder/web-out/
