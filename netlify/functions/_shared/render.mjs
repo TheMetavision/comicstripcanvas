@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
+import { DPI, MIME, dataUri, printGeometry } from './scene.mjs';
 
 /**
  * Scene rendering, shared by the two things that rasterise a builder scene:
@@ -25,7 +26,9 @@ import { Resvg } from '@resvg/resvg-js';
  *   {{LOGO}}            publisher logo
  */
 
-export const DPI = 300;
+/* Re-exported so callers that import these from here keep working; they are
+   defined in the leaf module, which costs no native binary to import. */
+export { DPI, MIME, dataUri, printGeometry };
 
 /* Template artwork lives on the deployed site. These are the full-resolution
    files, kept beside the smaller ones the builder loads in the browser -- the
@@ -38,15 +41,6 @@ export const ASSET_PATH = {
   LOGO: () => '/builder/csc-logo-print.png',
 };
 export const FONT_FILES = ['Chewy-Regular.ttf', 'LuckiestGuy-Regular.ttf'];
-
-export const MIME = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif',
-  '.heic': 'image/heic', '.heif': 'image/heif',
-};
-
-export const dataUri = (buf, name) =>
-  `data:${MIME[path.extname(name).toLowerCase()] || 'image/png'};base64,${Buffer.from(buf).toString('base64')}`;
 
 /* A renderer matches fonts on the family name inside the file, not on whatever
    name a stylesheet gave it. Get that wrong and the print silently comes out in
@@ -164,18 +158,14 @@ export async function prepareScene({ sceneSvg, recipe, origin, imageFor }) {
   assertFontsPresent(svg, fonts.available);
   const { fontFiles, cleanup: cleanupFonts } = fonts;
 
-  const out = recipe.output || {};
-  const canvas = recipe.canvas || {};
-  const face = out.faceInches || [(canvas.width || 3000) / DPI, (canvas.height || 3000) / DPI];
-  const wrap = out.wrapInches || 0;
-  const fileInches = out.fileInches || [face[0] + 2 * wrap, face[1] + 2 * wrap];
+  const { fileInches, printWidth } = printGeometry(recipe);
 
   return {
     svg,
     fontFiles,
     template,
     fileInches,
-    printWidth: Math.round(fileInches[0] * DPI),
+    printWidth,
     cleanup: cleanupFonts,
   };
 }

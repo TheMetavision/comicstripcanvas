@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { STUDIO_STORE, isUploadId } from './_shared/studio-uploads.mjs';
 
 /**
  * Photo retention. Runs daily (schedule lives in netlify.toml).
@@ -9,6 +10,10 @@ import { getStore } from '@netlify/blobs';
  *   dispatched  90 days after the linked order was dispatched
  *   abandoned   30 days after creation, if still draft or awaiting_payment
  *   orphaned     7 days after upload, if no document references the blob
+ *
+ * And one rule that is not about customers at all: a studio upload is swept
+ * 24 hours after it was made unless a save is still waiting to render it. See
+ * sweepStudioUploads.
  *
  * The first two walk documents and delete the blobs underneath them. The third
  * walks the blob store instead, because a blob whose document was never
@@ -42,6 +47,13 @@ const ABANDONED_RETENTION_DAYS = 30;
    racing an upload whose document has not been written yet -- a window of
    milliseconds, so seven days is generous by any measure. */
 const ORPHAN_RETENTION_DAYS = 7;
+/* Studio uploads are a transport buffer, not a record. Once studio-render has
+   made the print master the upload is a duplicate of artwork already stored at
+   full resolution, and the renderer deletes it itself -- so anything still
+   sitting under an upload prefix is a save that never happened, or a delete
+   that did not complete. A day is long enough to retry a failed save and short
+   enough that a 20 MB PNG nobody wants is not kept for a week. */
+const STUDIO_UPLOAD_RETENTION_HOURS = 24;
 
 /** Live work, or work a human is holding. Never collected, at any age. */
 const PROTECTED = new Set([
@@ -211,6 +223,122 @@ export async function sweepOrphanBlobs({ dryRun = false, now = new Date(), deps 
 }
 
 /**
+ * Studio uploads left behind.
+ *
+ * studio-upload writes artwork to studio/<uploadId>/art.<ext> in <= 4 MB
+ * chunks, and studio-render deletes it once the print master exists. So an
+ * upload still in the store is one of three things: a save in flight, a save
+ * that was never made -- the shop dropped a photo and closed the tab -- or a
+ * delete that failed after a successful render. Only the first is worth
+ * keeping, and only until it is rendered.
+ *
+ * "Referenced" therefore means: some studio/<id>/scene.json still names this
+ * key, i.e. a save is queued or rendering. That is the same posture as the
+ * photo sweep -- live work is never collected at any age -- and it is the only
+ * reference whose loss would break anything, because once the render has run
+ * the print master IS the artwork and the upload is a duplicate of it.
+ *
+ * Parts are swept with the rest of the prefix. A half-finished upload has parts
+ * and no art blob, which is precisely the case nothing will ever come back for.
+ */
+export async function sweepStudioUploads({ dryRun = false, now = new Date(), deps = {} } = {}) {
+  const store = (deps.stores || {})[STUDIO_STORE] || getStore(STUDIO_STORE);
+  const label = dryRun ? 'studio sweep (DRY RUN)' : 'studio sweep';
+  const nowMs = now.getTime();
+  const report = { examined: 0, swept: [], blobsDeleted: 0, errors: [] };
+
+  let blobs;
+  try {
+    ({ blobs } = await store.list({ prefix: 'studio/' }));
+  } catch (err) {
+    console.error(`${label}: could not list the studio store, skipping:`, err.message);
+    report.errors.push({ stage: 'list', error: err.message });
+    return report;
+  }
+
+  /* Group the upload prefixes, and collect the scenes separately. Anything else
+     under studio/ -- print.png, print-prev.png, listing.png -- is a design's
+     own artwork and is never touched here. */
+  const byId = new Map();
+  const scenes = [];
+  for (const b of blobs) {
+    const m = /^studio\/(up-[0-9a-f]{32})\//.exec(b.key);
+    if (m && isUploadId(m[1])) {
+      if (!byId.has(m[1])) byId.set(m[1], []);
+      byId.get(m[1]).push(b.key);
+    } else if (/^studio\/[^/]+\/scene\.json$/.test(b.key)) {
+      scenes.push(b.key);
+    }
+  }
+  report.examined = byId.size;
+  if (!byId.size) {
+    console.log(`${label}: no studio uploads to examine.`);
+    return report;
+  }
+
+  /* Read the pending saves FIRST, so a save written while this was listing is
+     still seen. The reverse order could sweep an upload out from under a scene
+     that arrived a moment later. */
+  const referenced = new Set();
+  for (const key of scenes) {
+    try {
+      const job = JSON.parse(await store.get(key, { type: 'text' }) || '{}');
+      for (const k of Object.values(job.images || {})) {
+        const m = /^studio\/(up-[0-9a-f]{32})\//.exec(String(k));
+        if (m) referenced.add(m[1]);
+      }
+    } catch (err) {
+      /* A scene we cannot read might reference anything, so the safe reading is
+         that it references everything: skip the whole sweep rather than delete
+         an upload something may still be waiting for. */
+      console.error(`${label}: could not read ${key}, skipping the sweep entirely:`, err.message);
+      report.errors.push({ stage: 'scenes', key, error: err.message });
+      return report;
+    }
+  }
+
+  const maxAgeMs = STUDIO_UPLOAD_RETENTION_HOURS * 60 * 60 * 1000;
+  for (const [id, keys] of byId) {
+    if (referenced.has(id)) continue;      // a save is waiting on it
+    try {
+      // Newest blob in the prefix decides the age of the whole prefix.
+      let newest = 0, undated = 0;
+      for (const key of keys) {
+        const meta = await store.getMetadata(key);
+        const stamp = meta && meta.metadata ? Date.parse(meta.metadata.uploadedAt) : NaN;
+        if (Number.isFinite(stamp)) newest = Math.max(newest, stamp);
+        else undated++;
+      }
+      /* Undated means it predates uploadedAt, so older than any threshold --
+         the same reading the photo sweep takes, and safe for the same reason:
+         nothing is waiting on it. */
+      const ageMs = newest ? nowMs - newest : Infinity;
+      if (ageMs < maxAgeMs) continue;
+
+      const age = newest ? `${Math.floor(ageMs / (60 * 60 * 1000))}h old` : 'undated';
+      const entry = { id, blobs: keys, age, undated };
+      if (dryRun) {
+        console.log(`${label}: would delete ${keys.length} blob(s) for ${id} ` +
+          `(${age}, no save waiting on it) -- ${keys.join(', ')}`);
+      } else {
+        for (const key of keys) await store.delete(key);
+        console.log(`studio sweep: deleted ${keys.length} blob(s) for ${id} ` +
+          `(${age}, no save waiting on it) -- ${keys.join(', ')}`);
+      }
+      report.swept.push(entry);
+      report.blobsDeleted += keys.length;
+    } catch (err) {
+      console.error(`${label}: ${id} failed, left intact for the next run:`, err.message);
+      report.errors.push({ id, error: err.message });
+    }
+  }
+
+  console.log(`${label}: ${byId.size} upload(s) examined, ${report.swept.length} swept, ` +
+    `${report.blobsDeleted} blob(s) ${dryRun ? 'would be ' : ''}deleted.`);
+  return report;
+}
+
+/**
  * @param {object}  opts
  * @param {boolean} opts.dryRun  report what would go, delete nothing
  * @param {Date}    opts.now     injectable for testing
@@ -240,6 +368,7 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
   const stores = deps.stores || {
     [PHOTO_STORE]: getStore(PHOTO_STORE),
     [RENDER_STORE]: getStore(RENDER_STORE),
+    [STUDIO_STORE]: getStore(STUDIO_STORE),
   };
 
   for (const { doc, reason, rule } of doomed) {
@@ -283,6 +412,11 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
      unreferenced is either a genuine orphan or a blob whose delete failed a
      moment ago -- and the age guard keeps the second case for the next run. */
   report.orphans = await sweepOrphanBlobs({ dryRun, now, deps: { sanity, stores } });
+
+  /* And the studio's own leavings. Nothing to do with customer photographs --
+     these are the shop's prepared artwork, uploaded in chunks and consumed by
+     the renderer -- but the same job is the right place for it. */
+  report.studioUploads = await sweepStudioUploads({ dryRun, now, deps: { stores } });
 
   return report;
 }

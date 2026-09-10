@@ -62,14 +62,14 @@
   memory = 3008
   external_node_modules = ["@resvg/resvg-js", "sharp"]
 
-# studio-save renders the listing image itself, so it needs resvg too -- but it
-# stays a synchronous function because it answers with the new product's URL.
-# studio-save rasterises nothing any more -- it validates, writes the scene and
-# the draft, and hands off. The memory is still worth having: prepareScene holds
-# the composed SVG with every photograph inlined.
-[functions."studio-save"]
-  memory = 3008
-  external_node_modules = ["@resvg/resvg-js"]
+# studio-save has no native modules and no picture in memory any more. It
+# validates, writes a few kilobytes of scene JSON and the draft, and hands off;
+# the artwork reaches the store through studio-upload and is composed by the
+# renderer. So no resvg, and the default memory is ample -- which is also the
+# fastest this function can cold-start, and it is the one a human waits on.
+#
+# studio-upload is deliberately absent from this file too: it moves bytes
+# between the request and the blob store and needs nothing special to do it.
 
 # The comic styling job. A background function: the model takes ~36s at 2K and
 # ~52s at 4K, well past the 10s a synchronous function gets, and background

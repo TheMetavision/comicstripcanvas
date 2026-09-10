@@ -1,18 +1,26 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
-import { DPI, dataUri, prepareScene } from './_shared/render.mjs';
+import { DPI, printGeometry } from './_shared/scene.mjs';
+import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 
 /**
  * Turn a design built in the Studio-mode builder into a draft catalogue product.
  *
  * The shop builds a piece at /admin/studio exactly as a customer would, then
  * saves it here. This function is deliberately light: it validates the request,
- * composes the scene through the same code path as a paid customer build (see
- * _shared/render.mjs), writes that one composed SVG to Blobs, makes the document
+ * writes the tokenised scene and its blob keys to Blobs, makes the document
  * write, and hands off.
  *
- * It rasterises NOTHING. The print master, the listing image, the web master,
- * the rollback copy and every Sanity asset upload belong to
+ * IT NEVER CARRIES THE ARTWORK. The request holds the scene SVG, the recipe and
+ * one blob key per panel -- a few kilobytes whatever the design weighs. The
+ * images went up ahead of it, in chunks, to studio-upload, because Netlify's
+ * edge rejects a function request over 6 MB before the function runs and a
+ * full-resolution transparent PNG cutout is 20 MB on its own. That failure is a
+ * 413 with no body, which is why it used to fail saying nothing at all. Any
+ * data: href in the scene is refused here with a reason.
+ *
+ * It rasterises NOTHING either. The print master, the listing image, the web
+ * master, the rollback copy and every Sanity asset upload belong to
  * studio-render-background, which has fifteen minutes rather than ten seconds.
  * They used to happen here and a 4800 x 7200 raster alone measured ~20s, over
  * the synchronous budget in production; the split is what keeps both the create
@@ -39,11 +47,11 @@ import { DPI, dataUri, prepareScene } from './_shared/render.mjs';
  * NOTE ON SANITY ASSETS: the standing rule is that customer photographs never
  * enter Sanity's asset library. That is not what the renderer uploads. The
  * listing and web images are rendered catalogue artwork for a product the shop
- * is selling, which is precisely what the asset library is for. The source
- * photographs stay in the browser in studio mode and are not persisted anywhere.
+ * is selling, which is precisely what the asset library is for. Studio sources
+ * are the shop's own prepared artwork, not a customer's photograph, and they go
+ * no further than the blob store -- where retention sweeps them after a day.
  */
 
-const STUDIO_STORE = 'studio';
 const STUDIO_HOST = 'https://comicstripcanvas.sanity.studio';
 
 /** Which catalogue a template belongs in. */
@@ -161,16 +169,51 @@ export default async (req) => {
     return json({ error: `No catalogue category for template "${recipe.template}"` }, 400);
   }
 
-  // The photos arrive with the request and are never written anywhere: they are
-  // read into the scene and dropped when this handler returns.
-  const images = new Map();
+  /* The artwork is NOT in this request. It went up ahead of it, in chunks, to
+     studio-upload -- a full-resolution transparent PNG is 20 MB and Netlify's
+     edge rejects a function request over 6 MB before the function ever runs.
+     What arrives here is a blob key per panel, a few dozen bytes each. */
+  const uploads = new Map();
   for (const [field, value] of form.entries()) {
-    if (!field.startsWith('image:') || typeof value === 'string') continue;
-    const panelId = field.slice('image:'.length);
-    const buf = Buffer.from(await value.arrayBuffer());
-    images.set(panelId, dataUri(buf, value.name || 'photo.jpg'));
+    if (!field.startsWith('upload:') || typeof value !== 'string') continue;
+    const panelId = field.slice('upload:'.length);
+    const key = value.trim();
+    if (!uploadIdFromKey(key)) {
+      return json({ error: `The upload key for panel ${panelId} is not one of ours` }, 400);
+    }
+    uploads.set(panelId, key);
   }
-  if (!images.size) return json({ error: 'No images were supplied' }, 400);
+  if (!uploads.size) return json({ error: 'No artwork was supplied' }, 400);
+
+  /* Inlined artwork is what this endpoint exists to stop. The builder tokenises
+     every image it exports, so a data: href means something upstream regressed
+     -- and the failure it causes is a 413 from the platform with no body, which
+     tells whoever hits it nothing at all. Refuse it here, where there is room
+     to say why. */
+  if (/href\s*=\s*["']?\s*data:/i.test(sceneSvg)) {
+    return json({
+      error: 'The scene has an image inlined as data: — artwork must be uploaded to ' +
+        '/api/studio-upload first and referenced by its {{IMAGE:...}} token.',
+    }, 400);
+  }
+
+  /* Every token needs an upload and every upload needs a token. A missing key
+     would fail in the renderer, minutes later, with nobody watching. */
+  const tokens = [...new Set([...sceneSvg.matchAll(/\{\{IMAGE:([^}]+)\}\}/g)].map((m) => m[1]))];
+  if (!tokens.length) return json({ error: 'The scene has no {{IMAGE:...}} token to fill' }, 400);
+  const unfilled = tokens.filter((t) => !uploads.has(t));
+  if (unfilled.length) {
+    return json({ error: `No artwork was uploaded for panel${unfilled.length > 1 ? 's' : ''} ${unfilled.join(', ')}` }, 400);
+  }
+
+  /* And the placeholder check, which the renderer repeats. Doing it here too is
+     the difference between the shop being told now and finding out from a print
+     file with the example graphic in it. */
+  const stillExample = (recipe.panels || []).filter((p) => p && p.placeholder).map((p) => p.id);
+  if (stillExample.length) {
+    return json({ error: `Panel${stillExample.length > 1 ? 's' : ''} ${stillExample.join(', ')} ` +
+      'still hold the example graphic, not real artwork' }, 400);
+  }
 
   /* Where the artwork is going. Blobs are keyed on the PUBLISHED id so they
      stay put when a draft is published, and the document write always targets
@@ -198,31 +241,44 @@ export default async (req) => {
 
   const id = replacing ? target.base : newId();
   const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
-
-  let scene;
-  try {
-    scene = await prepareScene({
-      sceneSvg,
-      recipe,
-      origin,
-      imageFor: async (panelId) => images.get(panelId),
-    });
-  } catch (err) {
-    console.error('studio-save: could not prepare the scene:', err.message);
-    return json({ error: err.message }, 400);
-  }
+  const { printWidth } = printGeometry(recipe);
+  if (!printWidth) return json({ error: 'The recipe does not say how big the print is' }, 400);
 
   try {
     const name = replacing ? (target.doc.title || 'artwork') : title;
     const store = getStore(STUDIO_STORE);
 
-    /* The composed scene, with its artwork already inlined, is the whole handoff.
-       Everything that turns it into pictures -- the print master, the listing,
-       the web master, and every Sanity asset upload -- happens in
-       studio-render-background, which has minutes rather than seconds. This
-       function does not rasterise anything. */
-    await store.set(`studio/${id}/scene.svg`, scene.svg, {
-      metadata: { id, kind: 'scene', title: name, printWidth: scene.printWidth, dpi: DPI },
+    /* Every upload must actually be in the store before a document is written
+       against it. Checking metadata is a cheap read and turns "the renderer
+       failed two minutes later" into "that upload did not finish, try again". */
+    const absent = [];
+    await Promise.all([...uploads].map(async ([panelId, key]) => {
+      const meta = await store.getMetadata(key).catch(() => null);
+      if (!meta) absent.push(panelId);
+    }));
+    if (absent.length) {
+      return json({
+        error: `The artwork for panel${absent.length > 1 ? 's' : ''} ${absent.sort().join(', ')} ` +
+          'is not in the store — the upload did not finish. Drop the image again.',
+      }, 409);
+    }
+
+    /* The handoff is the TOKENISED scene plus the keys to fill it with, not a
+       composed document. Composing means base64-ing every photograph into the
+       SVG, which for one 20 MB cutout is a 28 MB string this function would
+       hold in memory and write to the store -- to be read straight back out
+       again by the renderer. So the renderer composes instead, from the same
+       {{IMAGE:...}} tokens the customer pipeline already resolves.
+       Everything visual -- the print master, the listing, the web master, the
+       Sanity uploads -- happens there, where there are minutes rather than
+       seconds. This function rasterises nothing. */
+    await store.set(`studio/${id}/scene.json`, JSON.stringify({
+      id, title: name, svg: sceneSvg, recipe,
+      images: Object.fromEntries(uploads),
+      printWidth, dpi: DPI,
+      savedAt: new Date().toISOString(),
+    }), {
+      metadata: { id, kind: 'scene', title: name, printWidth, dpi: DPI },
     });
 
     /* Whatever printFile pointed at BEFORE this redraw, recorded now while it is
@@ -277,12 +333,9 @@ export default async (req) => {
       wrote = 'created a new draft product';
     }
 
-    scene.cleanup();
-
     /* The renderer does the rest, and is told which document to attach the
        pictures to -- it cannot work that out from the blob id alone once a
        product can be redrawn. */
-    const printWidth = scene.printWidth;
     fetch(`${origin}/api/studio-render`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -305,7 +358,6 @@ export default async (req) => {
       rollback: `studio/${id}/print-prev.png`,
     });
   } catch (err) {
-    scene.cleanup();
     console.error('studio-save: failed:', err.message);
     return json({ error: err.message }, 500);
   }

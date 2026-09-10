@@ -942,6 +942,17 @@ export function initProductBuilder() {
   // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
   // still misses that after the ladder surfaces as a per-panel upload error.
   const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
+  /* Studio artwork has no request to fit inside -- it goes up in chunks, see
+     putChunks -- so its ceiling is the file itself. 4000px is a transport
+     limit, and applying it to the shop's own prepared artwork would quietly
+     throw away resolution nobody asked it to lose: the studio's source IS the
+     print. The rest of the ladder still applies underneath, unchanged, for a
+     file so large it genuinely has to come down. */
+  const STUDIO_MAX_BYTES = 60 * 1024 * 1024;
+  /* Already in a format the renderer reads, so there is nothing a canvas
+     round-trip could add -- only a re-compression the shop did not ask for and
+     a 138 MB backing store for a 4800 x 7200 PNG. */
+  const SENDS_AS_IS = /^image\/(png|jpeg)$/;
   const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
   const QUALITY_STEP = 0.06;
   // Rungs to fall back to when a draw comes back blank, longest side in px.
@@ -1064,6 +1075,9 @@ export function initProductBuilder() {
   }
 
   async function encodeForUpload(file) {
+    // Studio artwork that is already a PNG or a JPEG goes up exactly as it is:
+    // byte for byte what the shop prepared, at whatever size it prepared it.
+    if (MODE === 'studio' && SENDS_AS_IS.test(file.type || '') && file.size <= STUDIO_MAX_BYTES) return file;
     // ONE canvas for the whole ladder. Resizing it reuses the same element and
     // lets the previous backing store go, instead of holding four at once.
     const cv = document.createElement("canvas");
@@ -1094,8 +1108,15 @@ export function initProductBuilder() {
         return canvasDrewSomething(g, cv.width, cv.height);
       };
 
+      /* Studio starts at the source's own size; customer mode starts at the
+         transport ceiling. Both fall through the same rungs below it. */
+      const ladder = MODE === 'studio'
+        ? [[Math.max(w0, h0), 0.95], ...ENCODE_LADDER]
+        : ENCODE_LADDER;
+      const targetBytes = MODE === 'studio' ? STUDIO_MAX_BYTES : UPLOAD_TARGET_BYTES;
+
       let blob = null, q = 0, drew = false, blankAt = null;
-      for (const [side, quality] of ENCODE_LADDER) {
+      for (const [side, quality] of ladder) {
         q = quality;
         // Two rungs share 4000px (same pixels, lower quality). If that size has
         // already come back blank, re-allocating it only to fail again costs
@@ -1106,7 +1127,7 @@ export function initProductBuilder() {
         drew = true;
         blob = await toBlob(cv, q, MIME);
         if (!blob) return file;
-        if (blob.size <= UPLOAD_TARGET_BYTES) break;
+        if (blob.size <= targetBytes) break;
       }
 
       /* Every rung came back blank, so the cap is below even the smallest of
@@ -1135,7 +1156,7 @@ export function initProductBuilder() {
          lands on 0.60, so the old loop ran one step BELOW the floor it names.
          Clamping makes 0.60 the last quality actually used. */
       // Quality is a JPEG idea; there is nothing left to trade on a PNG.
-      while (!keepAlpha && blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
+      while (!keepAlpha && blob.size > targetBytes && q > QUALITY_FLOOR) {
         q = Math.max(QUALITY_FLOOR, Math.round((q - QUALITY_STEP) * 100) / 100);
         const encoded = await toBlob(cv, q, MIME);
         if (!encoded) break;
@@ -1193,6 +1214,13 @@ export function initProductBuilder() {
         kind = 'bad';
         lines = ['Upload failed', 'Tap to retry'];
         tip = `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
+      } else if (MODE === 'studio' && (s.uploadState === PENDING || s.uploadState === UPLOADING)) {
+        /* A real percentage, not a spinner: this upload is a known number of
+           chunks and the count is honest, which is exactly the thing the
+           styling overlay cannot say and so does not. */
+        kind = 'busy';
+        lines = ['Uploading', s.uploadPct == null ? 'artwork…' : `${s.uploadPct}%`];
+        tip = `Uploading the artwork… ${s.uploadPct == null ? '' : s.uploadPct + '%'}`.trim();
       } else if (s.uploadState === UPLOADED && s.styleState === STYLE_FAILED) {
         kind = 'bad';
         lines = isSafetyReason(s.styleError) ? ['Style not applied', 'Use a different photo']
@@ -1775,7 +1803,7 @@ export function initProductBuilder() {
     const s = state.get(id);
     if (!s || s.demo || !s.file) return false;
     if (s.uploadState === PENDING || s.uploadState === UPLOADING) return false;
-    upload(id, s.file);
+    (MODE === 'studio' ? uploadStudio : upload)(id, s.file);
     return true;
   }
 
@@ -1856,6 +1884,24 @@ export function initProductBuilder() {
   // Doubles as the retry sentinel and as the words the customer reads.
   const TIMED_OUT = 'The upload timed out — the connection may be slow.';
 
+  /* The reason a request failed, in the words the server used -- and failing
+     that, the status. A 413 from Netlify's edge carries no body at all, which
+     is how "Could not save the product" came to be the entire explanation for
+     a payload problem. */
+  async function readReply(res) {
+    const text = await res.text().catch(() => '');
+    try { return { data: JSON.parse(text), text }; } catch (e) { return { data: {}, text }; }
+  }
+  function reasonFrom(res, data, text, fallback) {
+    if (data && data.error) return data.error;
+    if (res.status === 413) {
+      return 'The request was too large for the server to accept (HTTP 413) — ' +
+        'this should not happen now the artwork is uploaded separately.';
+    }
+    const body = (text || '').trim().replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').slice(0, 140);
+    return `${fallback} (HTTP ${res.status}${body ? ': ' + body : ''})`;
+  }
+
   /** POST once, aborting at the timeout. Throws Error(TIMED_OUT) on abort. */
   async function postPhoto(fd) {
     const ac = typeof AbortController === 'function' ? new AbortController() : null;
@@ -1882,6 +1928,107 @@ export function initProductBuilder() {
      the customer's data allowance to arrive at the same answer. */
   const worthRetrying = (status, message) =>
     message === TIMED_OUT || status === 502 || status === 503 || status === 504;
+
+  /* ---------- studio uploads ---------- */
+  /* Studio artwork cannot travel in the save request. Netlify's edge caps a
+     function request at 6 MB and enforces it BEFORE the function runs, so the
+     reply is a 413 with no body -- and a full-resolution transparent PNG cutout
+     is 20 MB on its own. So the artwork goes up ahead of the save, in pieces,
+     and the save carries a blob key per panel instead of the bytes.
+
+     Chunks go one at a time, in order. The first is what issues the upload id
+     and every later one quotes it back, so they cannot be in flight together --
+     and sequential chunks are what makes the progress figure a real count
+     rather than a guess. */
+  const STUDIO_CHUNK_BYTES = 4 * 1024 * 1024;
+
+  /** Hex sha256 of a Blob, or null where SubtleCrypto is unavailable. */
+  async function sha256Hex(blob) {
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+      // http:// on a LAN address, or an old browser. The server still checks
+      // the byte count, which catches a lost chunk; this catches a corrupt one.
+      return null;
+    }
+  }
+
+  /** Send one file as chunks. Resolves with the final reply (key, bytes, sha256). */
+  async function putChunks(file, onProgress) {
+    const total = Math.max(1, Math.ceil(file.size / STUDIO_CHUNK_BYTES));
+    let uploadId = '', last = null;
+    for (let i = 0; i < total; i++) {
+      const headers = {
+        'Content-Type': 'application/octet-stream',
+        'X-CSC-Action-Secret': studioSecret(false),
+        'X-Upload-Index': String(i),
+        'X-Upload-Total': String(total),
+        'X-Upload-Bytes': String(file.size),
+        'X-Upload-Name': file.name || 'art.png',
+      };
+      if (uploadId) headers['X-Upload-Id'] = uploadId;
+      const res = await fetch('/api/studio-upload', {
+        method: 'POST', headers,
+        body: file.slice(i * STUDIO_CHUNK_BYTES, (i + 1) * STUDIO_CHUNK_BYTES),
+      });
+      const { data, text } = await readReply(res);
+      if (res.status === 401) {
+        try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
+        throw new Error('That secret was not accepted — drop the image again to re-enter it.');
+      }
+      if (!res.ok || !data.ok) throw new Error(reasonFrom(res, data, text, 'Upload failed'));
+      uploadId = data.uploadId;
+      last = data;
+      if (onProgress) onProgress(Math.round(((i + 1) / total) * 100));
+    }
+    return last;
+  }
+
+  let studioChain = Promise.resolve();
+  function uploadStudio(id, file) {
+    setUploadState(id, PENDING);
+    const run = async () => {
+      /* The slot may have been refilled while this waited its turn. Identity is
+         the file itself rather than the state's flags: a replacement sets the
+         slot back to PENDING, so a flag check would let the older upload write
+         its key over the newer one's. */
+      if (state.get(id) !== undefined && state.get(id).file !== file) return;
+      const before = state.get(id);
+      if (!before || before.demo) return;
+      setUploadState(id, UPLOADING);
+      try {
+        const sending = await encodeForUpload(file);
+        if (sending.size > STUDIO_MAX_BYTES) {
+          throw new Error(`That image is ${Math.round(sending.size / 1048576)} MB, and the limit is `
+            + `${STUDIO_MAX_BYTES / 1048576} MB.`);
+        }
+        const mine = await sha256Hex(sending);
+        const done = await putChunks(sending, (pct) => {
+          const s = state.get(id);
+          if (s && s.file === file) { s.uploadPct = pct; if (drawSlotFlag(id)) refresh(); }
+        });
+        /* What landed has to be what was sent. The function assembles the file
+           from separate blobs, and a chunk lost between them would otherwise be
+           a print master with a band missing, found by whoever opens it. */
+        if (mine && done.sha256 && mine !== done.sha256) {
+          throw new Error('The artwork arrived corrupted — drop the image again.');
+        }
+        const s = state.get(id);
+        if (!s || s.file !== file) return;      // replaced while in flight
+        s.key = done.key;
+        s.uploadPct = 100;
+        setUploadState(id, UPLOADED);
+      } catch (e) {
+        if (state.get(id) && state.get(id).file !== file) return;
+        const reason = e.message || 'Upload failed';
+        console.warn(`[studio] upload failed for ${id}: ${reason}`);
+        setUploadState(id, FAILED, reason);
+      }
+    };
+    studioChain = studioChain.then(run);   // run never rejects
+    return studioChain;
+  }
 
   let uploadChain = Promise.resolve();
   function upload(id, file) {
@@ -1996,7 +2143,8 @@ export function initProductBuilder() {
         zoom: 1, ox: 0, oy: 0, cut: false, tol: 34, feather: 2,
         // Studio mode never uploads, so its slots stay stateless. A customer
         // slot is uploaded the moment it is filled, so it starts queued.
-        uploadState: MODE === 'customer' ? PENDING : null, uploadError: null,
+        // Both modes upload the moment a slot is filled, so both start queued.
+        uploadState: PENDING, uploadError: null, uploadPct: null,
         styleState: null, styleError: null, styled: false,
         /* The panel this photograph was UPLOADED under, which stops being the
            panel it sits in the moment anything is swapped. Every conversation
@@ -2018,9 +2166,11 @@ export function initProductBuilder() {
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
       layout(id); select(id); refresh(); palette(probe);
-      // Customer mode uploads as photos are dropped. Studio mode keeps the
-      // file in state and never sends it anywhere until Save as product.
-      if (MODE === 'customer') upload(id, file);
+      /* Both modes upload as photos are dropped -- studio mode through the
+         chunked endpoint, because its artwork is far too big for one request
+         and waiting until Save as product is what produced a 413 with no
+         explanation attached to it. */
+      (MODE === 'studio' ? uploadStudio : upload)(id, file);
     };
     probe.src = url;
   }
@@ -2782,10 +2932,13 @@ export function initProductBuilder() {
     // Every panel must hold a photo the customer actually chose. The example
     // graphic is seeded into empty panels and does not count.
     const total = T.panels.length;
+    /* Out here because both gates read them: Add to basket in customer mode and
+       Save as product in studio mode, and only one of those buttons exists on
+       any given page. */
+    const busy = inFlight();
+    const failedIdx = firstFailed();
     const btn = $('addBasket');
     if (btn) {
-      const busy = inFlight();
-      const failedIdx = firstFailed();
       const styleFailedIdx = firstStyleFailed();
       const waiting = styleWaiting();
       const ready = styleReady();
@@ -2840,12 +2993,17 @@ export function initProductBuilder() {
     const save = $('saveProduct');
     if (save) {
       const titled = ($('studioTitle').value || '').trim().length > 0;
-      save.disabled = studioBusy || real !== total || !titled;
+      /* Saving before the artwork has landed would post keys to blobs that do
+         not exist yet, and studio-save refuses those -- correctly, but the
+         button should not offer the mistake in the first place. */
+      save.disabled = studioBusy || real !== total || !titled || busy > 0 || failedIdx >= 0;
       if (studioMsg) { showStudioMsg(); return; }
       $('studioHint').textContent = studioBusy ? ''
         : real !== total ? `Fill every panel — ${total - real} to go.`
-          : !titled ? 'Give the product a title before saving.'
-            : 'Renders the print master and creates a draft product in the Studio.';
+          : busy > 0 ? `Uploading artwork — ${busy} to go…`
+            : failedIdx >= 0 ? `Panel ${failedIdx + 1} didn't upload — tap it to retry`
+              : !titled ? 'Give the product a title before saving.'
+                : 'Renders the print master and creates a draft product in the Studio.';
     }
   }
   /* Both exporters work on a copy of the live scene, and that copy is built in
@@ -3421,9 +3579,11 @@ export function initProductBuilder() {
     if (replaceBusy || !replaceTarget) return;
     const filled = T.panels
       .map((p) => [p.id, state.get(p.id)])
-      .filter(([, st]) => st && !st.demo && st.file);
+      .filter(([, st]) => st && !st.demo && st.file && st.key);
     if (filled.length !== T.panels.length) {
-      $('replaceHint').textContent = 'Every panel needs a photo before this can be saved.';
+      $('replaceHint').textContent = inFlight() > 0
+        ? 'The artwork is still uploading — one moment.'
+        : 'Every panel needs a photo that has finished uploading before this can be saved.';
       return;
     }
     const btn = $('replaceConfirm'), hint = $('replaceHint');
@@ -3437,21 +3597,19 @@ export function initProductBuilder() {
       fd.append('sceneSvg', r.svg || '');
       const rest = Object.assign({}, r); delete rest.svg;
       fd.append('recipe', JSON.stringify(rest));
-      for (const [id, st] of filled) {
-        const sending = await encodeForUpload(st.file);
-        fd.append('image:' + id, sending, sending.name || (id + '.jpg'));
-      }
+      // Keys, not bytes: the artwork went up on drop. See putChunks.
+      for (const [id, st] of filled) fd.append('upload:' + id, st.key);
       const res = await fetch('/api/studio-save', {
         method: 'POST',
         headers: { 'X-CSC-Action-Secret': studioSecret(false) },
         body: fd,
       });
-      const data = await res.json().catch(() => ({}));
+      const { data, text } = await readReply(res);
       if (res.status === 401) {
         try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
         throw new Error('That secret was not accepted — press Replace again to re-enter it.');
       }
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not replace the artwork');
+      if (!res.ok || !data.ok) throw new Error(reasonFrom(res, data, text, 'Could not replace the artwork'));
       studioMsg = {
         text: `Artwork replaced — ${data.wrote}. The print master, listing and web ` +
               `master are rendering now and will attach themselves in a minute or two. `,
@@ -3485,7 +3643,7 @@ export function initProductBuilder() {
     const title = ($('studioTitle').value || '').trim();
     const filled = T.panels
       .map((p) => [p.id, state.get(p.id)])
-      .filter(([, s]) => s && !s.demo && s.file);
+      .filter(([, s]) => s && !s.demo && s.file && s.key);
     if (!title || filled.length !== T.panels.length) return;
 
     const btn = $('saveProduct'), hint = $('studioHint');
@@ -3499,21 +3657,19 @@ export function initProductBuilder() {
       fd.append('sceneSvg', r.svg || '');
       const rest = Object.assign({}, r); delete rest.svg;
       fd.append('recipe', JSON.stringify(rest));
-      for (const [id, st] of filled) {
-        const sending = await encodeForUpload(st.file);
-        fd.append('image:' + id, sending, sending.name || (id + '.jpg'));
-      }
+      // Keys, not bytes: the artwork went up on drop. See putChunks.
+      for (const [id, st] of filled) fd.append('upload:' + id, st.key);
       const res = await fetch('/api/studio-save', {
         method: 'POST',
         headers: { 'X-CSC-Action-Secret': studioSecret(false) },
         body: fd,
       });
-      const data = await res.json().catch(() => ({}));
+      const { data, text } = await readReply(res);
       if (res.status === 401) {
         try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
         throw new Error('That secret was not accepted — click Save again to re-enter it.');
       }
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not save the product');
+      if (!res.ok || !data.ok) throw new Error(reasonFrom(res, data, text, 'Could not save the product'));
 
       studioMsg = {
         text: `Saved as a draft — the print master (${data.print.width}px wide), listing and ` +

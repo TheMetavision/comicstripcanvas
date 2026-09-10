@@ -1,28 +1,33 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import sharp from 'sharp';
-import { DPI, loadFonts, assertFontsPresent, rasterise } from './_shared/render.mjs';
+import { DPI, dataUri, prepareScene, rasterise } from './_shared/render.mjs';
+import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_shared/derivatives.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
  *
- * studio-save validates, composes the scene, writes the draft and its history
- * entry, and stops. EVERY picture is made here: the print master, the listing
- * image, the web master, the Sanity asset uploads and the images[] writes.
+ * studio-save validates, writes the draft and its history entry, and stops.
+ * EVERYTHING visual is made here: the scene is composed, then the print master,
+ * the listing image, the web master, the Sanity asset uploads and the images[]
+ * writes.
  *
  * That split is not tidiness. A synchronous function has ten seconds in
  * production; composing and rasterising this took ~37s measured locally and
  * returned a 500, so anything that rasterises has to be somewhere with minutes.
  * Here there are fifteen of them.
  *
- * The scene arrives via the blob store rather than the request body, because
- * it carries its artwork inline and is far too big to post around. It is
- * deleted once the print exists: it was only ever a handoff, and keeping a
- * second copy of the same artwork serves no purpose.
+ * What arrives from studio-save is studio/<id>/scene.json: the TOKENISED scene,
+ * the recipe, and one blob key per panel pointing at what studio-upload
+ * assembled. Composing it means resolving those keys, which is the same
+ * {{IMAGE:...}} mechanism the customer pipeline uses -- prepareScene does not
+ * care whether a panel's bytes came from a customer's photograph or the shop's
+ * own artwork. The scene and the uploads are both deleted once the print
+ * exists; they were only ever a handoff, and the print master is the durable
+ * copy.
  */
 
-const STUDIO_STORE = 'studio';
 const LISTING_WIDTH = 1600;
 
 /* A blob id is either a fresh studio id or, when a product is being redrawn,
@@ -46,6 +51,9 @@ function putImage(images, key, assetId, alt) {
 
 export default async (req) => {
   let id = null;
+  /* Held out here so a failure anywhere below still removes the font directory
+     rather than leaving a temp dir behind on a warm container. */
+  let cleanupFonts = null;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id;
@@ -56,28 +64,47 @@ export default async (req) => {
     }
 
     const store = getStore(STUDIO_STORE);
-    const svg = await store.get(`studio/${id}/scene.svg`, { type: 'text' });
-    if (!svg) {
+    const raw = await store.get(`studio/${id}/scene.json`, { type: 'text' });
+    if (!raw) {
       console.error(`studio-render: no scene stored for ${id} — nothing to render`);
       return new Response('No scene', { status: 404 });
     }
+    const job = JSON.parse(raw);
 
-    const meta = await store.getMetadata(`studio/${id}/scene.svg`).catch(() => null);
-    const printWidth = Number(body.printWidth || meta?.metadata?.printWidth) || 0;
+    const printWidth = Number(body.printWidth || job.printWidth) || 0;
     if (!printWidth) {
       console.error(`studio-render: no print width for ${id}`);
       return new Response('No print width', { status: 400 });
     }
 
-    /* Fonts are not inlined into the scene -- only images are -- so they have to
-       be loaded here too, or resvg silently renders the text in something else. */
+    /* Compose it here, from the same {{IMAGE:...}} tokens the customer pipeline
+       resolves. studio-save hands over the tokenised scene and a blob key per
+       panel rather than a document with the artwork base64'd into it: one
+       20 MB cutout inlines to a 28 MB string, and there is no reason for a
+       synchronous function to build that, store it, and have it read straight
+       back out again. prepareScene also fetches the full-resolution template
+       artwork and checks the fonts, so the print cannot come out in a typeface
+       nobody chose. */
     const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
-    const fonts = await loadFonts(origin);
-    assertFontsPresent(svg, fonts.available);
+    const keys = job.images || {};
+    const scene = await prepareScene({
+      sceneSvg: job.svg,
+      recipe: job.recipe || {},
+      origin,
+      imageFor: async (panelId) => {
+        const key = keys[panelId];
+        if (!uploadIdFromKey(key)) throw new Error(`Panel ${panelId} has no upload key`);
+        const buf = await store.get(key, { type: 'arrayBuffer' });
+        if (!buf) throw new Error(`The upload for panel ${panelId} is gone from the store (${key})`);
+        return dataUri(Buffer.from(buf), key);
+      },
+    });
+    const svg = scene.svg;
+    const fontFiles = scene.fontFiles;
+    cleanupFonts = scene.cleanup;
 
-    const print = rasterise(svg, fonts.fontFiles, printWidth);
+    const print = rasterise(svg, fontFiles, printWidth);
     const printPng = print.asPng();
-    fonts.cleanup();
 
     /* One rollback. Replacing the artwork on an existing product overwrites the
        only full-resolution copy of what the shop sells, and a redraw that turns
@@ -97,7 +124,7 @@ export default async (req) => {
     });
 
     /* ---- the pictures the shop actually shows ---- */
-    const listing = rasterise(svg, fonts.fontFiles, LISTING_WIDTH);
+    const listing = rasterise(svg, fontFiles, LISTING_WIDTH);
     const listingPng = listing.asPng();
     await store.set(`studio/${id}/listing.png`, listingPng, {
       metadata: { id, kind: 'listing', title, width: listing.width, height: listing.height },
@@ -110,10 +137,14 @@ export default async (req) => {
     const webRasterWidth = Math.ceil(portrait
       ? WEB_MASTER.side * (listing.width / listing.height)
       : WEB_MASTER.side);
-    const webSource = rasterise(svg, fonts.fontFiles, webRasterWidth).asPng();
+    const webSource = rasterise(svg, fontFiles, webRasterWidth).asPng();
     const { data: webJpeg, info: webInfo } = await renderDerivative(sharp, webSource, WEB_MASTER);
 
-    await store.delete(`studio/${id}/scene.svg`);
+    /* Only now. cleanup() deletes the directory the font files are IN, and
+       resvg reads them off disk on every rasterise -- calling it after the
+       print, as this once did, left the listing and the web master to render
+       their text in whatever resvg fell back to. */
+    cleanupFonts(); cleanupFonts = null;
 
     /* ---- attach them ---- */
     const sanity = sanityClient();
@@ -143,6 +174,20 @@ export default async (req) => {
       console.error('studio-render: SANITY_WRITE_TOKEN is not set — the pictures exist but nothing was attached');
     }
 
+    /* LAST, and deliberately so. The handoff is what makes this job re-runnable
+       -- re-post the same id and it renders and attaches again -- so it must
+       outlive every step that can fail, the Sanity uploads included. Deleting
+       it before them, as this did, meant a Sanity outage cost the design.
+       The uploads go with it: the print master is the durable artefact, and a
+       second full-resolution copy under an upload id serves nothing. A delete
+       that fails is not worth failing a finished render over; retention sweeps
+       the prefix. */
+    await store.delete(`studio/${id}/scene.json`)
+      .catch((err) => console.warn(`studio-render: could not delete the scene for ${id}: ${err.message}`));
+    await Promise.all(Object.values(keys).map(
+      (key) => store.delete(key).catch((err) => console.warn(`studio-render: could not delete ${key}: ${err.message}`))
+    ));
+
     console.log(
       `studio-render: "${title}" ${id} -> print ${print.width} x ${print.height} px ` +
       `(${printPng.length} B) @ ${DPI}dpi, listing ${listing.width}x${listing.height}, ` +
@@ -150,6 +195,7 @@ export default async (req) => {
     );
     return new Response('Rendered', { status: 200 });
   } catch (err) {
+    if (cleanupFonts) cleanupFonts();
     console.error(`studio-render: ${id} failed:`, err.message);
     /* The draft exists with its history entry, so a failure here costs the
        pictures and nothing else -- and on a redraw the product keeps the
