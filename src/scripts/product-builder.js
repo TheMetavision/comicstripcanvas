@@ -1029,7 +1029,8 @@ export function initProductBuilder() {
     im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file is not an image we can read")); };
     im.src = url;
   });
-  const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+  const toBlob = (cv, q, mime = "image/jpeg") =>
+    new Promise((res) => cv.toBlob(res, mime, mime === "image/jpeg" ? q : undefined));
 
   /* Did the draw actually put anything on the canvas? Past iOS Safari's canvas
      area cap drawImage is a silent no-op, leaving transparent black. Sampling a
@@ -1071,6 +1072,18 @@ export function initProductBuilder() {
     const { im, url } = await loadImage(file);
     try {
       const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height;
+
+      /* A cut-out photograph must not become a JPEG. JPEG has no alpha, so
+         every transparent pixel encodes as BLACK -- and on a cover, where the
+         cutout is allowed to bleed across the whole page, that paints the
+         burst out entirely. It only bit images over the ladder's first rung,
+         because a smaller one still went through here and came back flattened
+         just the same; the difference is only how obvious it was.
+
+         PNG ignores the quality half of the ladder, so a transparent source
+         gives up resolution and nothing else. */
+      const keepAlpha = looksCutOut(im);
+      const MIME = keepAlpha ? "image/png" : "image/jpeg";
       /** Draw at this longest side; false if the canvas came back blank. */
       const drawAt = (maxSide) => {
         const k = Math.min(1, maxSide / Math.max(w0, h0));   // never upscale
@@ -1091,7 +1104,7 @@ export function initProductBuilder() {
         if (blankAt === side) continue;
         if (!drawAt(side)) { blankAt = side; continue; }   // past the cap
         drew = true;
-        blob = await toBlob(cv, q);
+        blob = await toBlob(cv, q, MIME);
         if (!blob) return file;
         if (blob.size <= UPLOAD_TARGET_BYTES) break;
       }
@@ -1106,7 +1119,7 @@ export function initProductBuilder() {
           if (!drawAt(side)) continue;
           drew = true;
           q = 0.82;
-          blob = await toBlob(cv, q);
+          blob = await toBlob(cv, q, MIME);
           break;
         }
       }
@@ -1121,14 +1134,17 @@ export function initProductBuilder() {
          it. From 0.82 a plain 0.06 step goes 0.76, 0.70, 0.64, 0.58 -- it never
          lands on 0.60, so the old loop ran one step BELOW the floor it names.
          Clamping makes 0.60 the last quality actually used. */
-      while (blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
+      // Quality is a JPEG idea; there is nothing left to trade on a PNG.
+      while (!keepAlpha && blob.size > UPLOAD_TARGET_BYTES && q > QUALITY_FLOOR) {
         q = Math.max(QUALITY_FLOOR, Math.round((q - QUALITY_STEP) * 100) / 100);
-        const encoded = await toBlob(cv, q);
+        const encoded = await toBlob(cv, q, MIME);
         if (!encoded) break;
         blob = encoded;
       }
       const base = (file.name || "photo").replace(/\.[^.]+$/, "");
-      return new File([blob], base + ".jpg", { type: "image/jpeg" });
+      return keepAlpha
+        ? new File([blob], base + ".png", { type: "image/png" })
+        : new File([blob], base + ".jpg", { type: "image/jpeg" });
     } finally {
       // Release the decoded source and the canvas backing store before the next
       // photo in the queue starts: on a phone these are the whole budget.
@@ -3009,9 +3025,14 @@ export function initProductBuilder() {
              variantOf() is what the live panel, the recipe and the print all
              ask, so it is what the draft asks too. */
           if (s) {
+            /* Whichever element the panel is drawing, and PNG whenever that
+               element has transparency to lose. Keying this on s.cutoutEl was
+               only ever right for a customer, where the cutout is a second
+               file; in the studio the cut-out PNG IS s.el, so it fell through
+               to the JPEG default and the transparency became black. */
+            const el = (variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el;
             if (s.cut && s.cutUrl) src = s.cutUrl;          // studio's own chroma cut
-            else if (variantOf(s) === 'cutout' && s.cutoutEl) src = toData(s.cutoutEl, 1600, 'image/png');
-            else if (s.el) src = toData(s.el);
+            else if (el) src = toData(el, 1600, looksCutOut(el) ? 'image/png' : 'image/jpeg');
           }
         } else if (role === 'logo' && nodes.logo) {
           const probe = new Image(); probe.src = href;
