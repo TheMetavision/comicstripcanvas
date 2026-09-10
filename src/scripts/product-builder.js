@@ -2661,15 +2661,19 @@ export function initProductBuilder() {
   });
   $('sampleArt').addEventListener('click', () => {
     const s = state.get(T.panels[0].id); if (!s || !artMap) return;
-    const c = document.createElement('canvas'); c.width = 32; c.height = 22;
-    const g = c.getContext('2d'); g.drawImage(s.el, 0, 0, 32, 22);
-    const px = g.getImageData(0, 0, 32, 22).data, bins = {};
-    for (let i = 0; i < px.length; i += 4) {
-      const k = [px[i], px[i + 1], px[i + 2]].map((v) => Math.round(v / 32) * 32).join(','); bins[k] = (bins[k] || 0) + 1;
+    /* Sample what is actually shown, which on a cover set to Cutout is the
+       cut-out PNG rather than the photograph behind it. */
+    const el = (variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el;
+    const top = sampleColours(el, artColours.length - 1);
+    const hint = $('tintHint');
+    if (!top) {
+      if (hint) {
+        hint.textContent = 'That picture is almost entirely transparent, so its colours were left alone.';
+      }
+      return;                    // keep the colours we have rather than paint it black
     }
-    const top = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, artColours.length - 1)
-      .map(([k]) => '#' + k.split(',').map((v) => (+v).toString(16).padStart(2, '0')).join(''));
     top.forEach((hx, i) => { if (artColours[i + 1]) artColours[i + 1] = hx; });
+    if (hint) hint.textContent = 'Colours taken from your photo.';
     repaintArt(); buildArtPickers();
   });
 
@@ -2685,15 +2689,49 @@ export function initProductBuilder() {
   }
   function setBg(hex) { bg = hex; if (nodes.bgRect) nodes.bgRect.setAttribute('fill', hex); $('custom').value = hex; drawSwatches(); }
   $('custom').addEventListener('input', (e) => setBg(e.target.value));
+  /* Reading a photograph's colours, ignoring anything see-through.
+
+     A cut-out photograph is mostly transparent, and a transparent pixel is
+     (0, 0, 0, 0) -- so a sampler that reads the bytes without looking at alpha
+     concludes that black is overwhelmingly the commonest colour in the picture
+     and paints the artwork with it. Half opacity is the line: less than that
+     and a pixel is more background than subject, with no colour worth taking.
+
+     If almost nothing is left, the honest answer is to take nothing. Returning
+     null rather than a guess lets each caller keep what it has and say so. */
+  const SAMPLE_MIN_ALPHA = 128;
+  const SAMPLE_MIN_OPAQUE = 0.01;      // of the sampled area
+  const SAMPLE_W = 32, SAMPLE_H = 22;
+
+  function sampleColours(el, want) {
+    const c = document.createElement('canvas');
+    c.width = SAMPLE_W; c.height = SAMPLE_H;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) return null;
+    g.clearRect(0, 0, SAMPLE_W, SAMPLE_H);      // or the last frame's pixels linger
+    g.drawImage(el, 0, 0, SAMPLE_W, SAMPLE_H);
+    let px;
+    try { px = g.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data; } catch (e) { return null; }
+    const bins = {};
+    let opaque = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < SAMPLE_MIN_ALPHA) continue;
+      opaque++;
+      const k = [px[i], px[i + 1], px[i + 2]].map((v) => Math.round(v / 32) * 32).join(',');
+      bins[k] = (bins[k] || 0) + 1;
+    }
+    if (opaque / (SAMPLE_W * SAMPLE_H) < SAMPLE_MIN_OPAQUE) return null;
+    return Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, want)
+      .map(([k]) => '#' + k.split(',').map((v) => (+v).toString(16).padStart(2, '0')).join(''));
+  }
+
   function palette(imgEl) {
     if (!(T.bg && T.bg.type === 'colour')) return;
-    const c = document.createElement('canvas'); c.width = 32; c.height = 22;
-    const g = c.getContext('2d'); if (!g) return;
-    g.drawImage(imgEl, 0, 0, 32, 22);
-    const px = g.getImageData(0, 0, 32, 22).data, bins = {};
-    for (let i = 0; i < px.length; i += 4) { const k = [px[i], px[i + 1], px[i + 2]].map((v) => Math.round(v / 32) * 32).join(','); bins[k] = (bins[k] || 0) + 1; }
-    const top = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, 3)
-      .map(([k]) => '#' + k.split(',').map((v) => (+v).toString(16).padStart(2, '0')).join(''));
+    const top = sampleColours(imgEl, 3);
+    if (!top) {
+      $('paletteHint').textContent = 'That picture is mostly transparent, so there are no colours to pull from it.';
+      return;
+    }
     swatchList = [...new Set([...top, ...swatchList])];
     $('paletteHint').textContent = 'The first colours are pulled from your photo.';
     drawSwatches();
@@ -2896,15 +2934,26 @@ export function initProductBuilder() {
 
   async function assetAsDataURI(url) {
     if (assetDataCache.has(url)) return assetDataCache.get(url);
+    /* A failure is not cached. This held the rejected promise for the life of
+       the page, so a single hiccup fetching the burst meant every later export
+       silently left it out -- masthead and line art intact, a hole where the
+       artwork should be, and a hole is black once the PNG is flattened. */
     const p = fetch(url)
-      .then((r) => r.blob())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
       .then((b) => new Promise((res, rej) => {
         const fr = new FileReader();
         fr.onload = () => res(fr.result);
         fr.onerror = rej;
         fr.readAsDataURL(b);
       }))
-      .catch(() => null);
+      .catch((e) => {
+        console.warn(`[builder] could not inline ${url} for export: ${e.message}`);
+        assetDataCache.delete(url);        // let the next export try again
+        return null;
+      });
     assetDataCache.set(url, p);
     return p;
   }
@@ -3122,7 +3171,16 @@ export function initProductBuilder() {
       const full = MODE === 'studio';
       const c = T.canvas, k = full ? 1 : 1400 / Math.max(c.width, c.height);
       const cv = document.createElement('canvas'); cv.width = Math.round(c.width * k); cv.height = Math.round(c.height * k);
-      const g = cv.getContext('2d'); g.drawImage(img, 0, 0, cv.width, cv.height);
+      const g = cv.getContext('2d');
+      /* Opaque white first. Anything see-through in the scene -- a cut-out
+         photograph on a template with no background behind it, most of all --
+         otherwise survives into the PNG as alpha, and a PNG with holes in it
+         reads as BLACK in most viewers and against any dark page. That is not
+         a missing background; it is a background nobody painted. snapshotThumb
+         has always done this, and the print renderer works on opaque white
+         too, so this is the draft catching up with both. */
+      g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, cv.width, cv.height);
+      g.drawImage(img, 0, 0, cv.width, cv.height);
       stampWatermark(g, cv.width, cv.height);
       cv.toBlob((b) => {
         const a = document.createElement('a'); a.href = URL.createObjectURL(b);
