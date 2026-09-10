@@ -28,6 +28,17 @@
 
 [functions]
   directory = "netlify/functions"
+  # Belt and braces. `directory` already means nothing outside netlify/functions
+  # is scanned, and a build proved services/cutout reaches no bundle -- but the
+  # cutout service is a whole second Node app in this repo, with its own
+  # package.json and a 350 MB node_modules when anyone installs it locally, and
+  # "nothing currently picks it up" is a weaker guarantee than saying so.
+  #
+  # An exclusion only. It copies nothing, which is the point: a top-level
+  # included_files that ADDS a path applies to every function, and doing that
+  # with the style references put 1.2 MB of JPEGs into all seventeen bundles
+  # and raced on Windows. See the note below.
+  included_files = ["!services/**"]
   # NOTE: the style references are deliberately NOT included here.
   #
   # They were, and a top-level included_files applies to EVERY function, so all
