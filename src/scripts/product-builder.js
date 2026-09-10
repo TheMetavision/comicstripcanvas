@@ -2867,14 +2867,18 @@ export function initProductBuilder() {
       if (p.getAttribute('stroke') !== '#000' && p.getAttribute('fill') === 'none'
         && p.getAttribute('stroke-width') === '9') p.setAttribute('stroke', '#000');
     });
-    const toData = (el, maxSide = 1600) => {
+    /* JPEG unless asked otherwise, because most of these are photographs and
+       the draft is a preview. A cutout MUST be asked otherwise: JPEG carries no
+       alpha, so the transparent background it exists to have would flatten to
+       black and the burst would never show through. */
+    const toData = (el, maxSide = 1600, mime = 'image/jpeg') => {
       const k = Math.min(1, maxSide / Math.max(el.naturalWidth || 1, el.naturalHeight || 1));
       const cv = document.createElement('canvas');
       cv.width = Math.max(1, Math.round((el.naturalWidth || 1) * k));
       cv.height = Math.max(1, Math.round((el.naturalHeight || 1) * k));
       const g = cv.getContext('2d'); if (!g) return null;
       g.drawImage(el, 0, 0, cv.width, cv.height);
-      return cv.toDataURL('image/jpeg', 0.9);
+      return mime === 'image/jpeg' ? cv.toDataURL(mime, 0.9) : cv.toDataURL(mime);
     };
     const pending = [];
     c.querySelectorAll('image').forEach((im) => {
@@ -2885,7 +2889,18 @@ export function initProductBuilder() {
         let src = null;
         if (role === 'panel') {
           const s = state.get(im.getAttribute('data-panel'));
-          if (s) { if (s.cut && s.cutUrl) src = s.cutUrl; else if (s.el) src = toData(s.el); }
+          /* Whatever the panel is actually showing, which since the cover gained
+             a Cutout | Full picture toggle is no longer always s.el. This read
+             s.el unconditionally and so exported the whole styled photograph,
+             background and all, over a burst the customer had chosen to see
+             around their subject -- the same zoom and pan, the wrong picture.
+             variantOf() is what the live panel, the recipe and the print all
+             ask, so it is what the draft asks too. */
+          if (s) {
+            if (s.cut && s.cutUrl) src = s.cutUrl;          // studio's own chroma cut
+            else if (variantOf(s) === 'cutout' && s.cutoutEl) src = toData(s.cutoutEl, 1600, 'image/png');
+            else if (s.el) src = toData(s.el);
+          }
         } else if (role === 'logo' && nodes.logo) {
           const probe = new Image(); probe.src = href;
           if (probe.complete && probe.naturalWidth) src = toData(probe, 800);
