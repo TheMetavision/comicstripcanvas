@@ -2406,6 +2406,16 @@ export function initProductBuilder() {
     $('pImg').textContent = s.demo ? 'example artwork'
       : `${s.natW} × ${s.natH}${s.styled ? ' (styled)' : ''}`;
     drawHandles();
+    /* "Take colours from photo" is only offered when the photo has colours to
+       give. A cut-out subject can be almost entirely transparent, and the one
+       thing the button must never do is fire on that by accident -- a stray
+       Enter on a focused button used to be enough to paint the whole burst
+       black. Disabled, it cannot. */
+    const sa = $('sampleArt');
+    if (sa) {
+      const src = s && !s.demo ? ((variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el) : null;
+      sa.disabled = !src || !sampleColours(src, 1);
+    }
     $('zoom').max = String(maxZoomFor(selected));
     $('zoom').value = s.zoom;
     /* Swap is only meaningful from a panel holding one of the customer's
