@@ -1607,8 +1607,20 @@ export function initProductBuilder() {
     !wantsCutout() || !!s.cutoutKey || !!s.cutoutError || s.styleState !== STYLE_DONE
     || (!!s.styleDoneAt && Date.now() - s.styleDoneAt > CUTOUT_GIVE_UP_MS);
 
-  /** Which image a slot is currently showing. */
-  const variantOf = (s) => (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled');
+  /* Which image a slot is currently showing.
+
+     The two modes mean different things by "cutout" and both are right. A
+     customer's cover holds TWO pictures -- the styled photograph and the PNG
+     our service cut out of it -- so the variant says which of them to draw. The
+     studio holds one, and the operator is telling us what it already is: a PNG
+     they cut out themselves. So there the variant is a declaration rather than
+     a choice between files, and it survives with nothing to point at. */
+  const variantOf = (s) => (MODE === 'studio'
+    ? (s.variant === 'cutout' ? 'cutout' : 'styled')
+    : (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled'));
+
+  /** Is this template one where a cutout means anything at all? */
+  const cutoutTemplate = () => TK === CUTOUT_TEMPLATE;
 
   /* The cut-out subject is allowed to bleed off the bottom of the page.
 
@@ -1631,8 +1643,9 @@ export function initProductBuilder() {
      it out is the whole thing this is for. */
   const CUTOUT_MAX_ZOOM = 4;
 
-  const bleeds = (id) => wantsCutout() && id === CUTOUT_PANEL_OF_COVER
-    && variantOf(state.get(id) || {}) === 'cutout';
+  /** Panels where the cutout treatment is available at all. */
+  const bleedable = (id) => cutoutTemplate() && id === CUTOUT_PANEL_OF_COVER;
+  const bleeds = (id) => bleedable(id) && variantOf(state.get(id) || {}) === 'cutout';
   const maxZoomFor = (id) => (bleeds(id) ? CUTOUT_MAX_ZOOM : BASE_MAX_ZOOM);
 
   /** Point the panel's clip at either its art window or the bleeding version. */
@@ -1687,9 +1700,13 @@ export function initProductBuilder() {
   function showVariant(id, variant) {
     const s = state.get(id), n = nodes[id];
     if (!s || !n) return;
-    const useCutout = variant === 'cutout' && s.cutoutUrl;
+    /* In the studio the choice needs no second file behind it -- the placed
+       image IS the cutout, and saying so is the whole of it. In customer mode
+       it still takes the PNG actually being there, or the toggle would promise
+       a picture we do not have. */
+    const useCutout = variant === 'cutout' && (MODE === 'studio' || !!s.cutoutUrl);
     s.variant = useCutout ? 'cutout' : 'styled';
-    const el = useCutout ? s.cutoutEl : s.el;
+    const el = (useCutout && s.cutoutEl) ? s.cutoutEl : s.el;
     const url = srcFor(s);
     if (!el || !url) return;
     // layout() measures from natW/natH, so they have to describe what is shown
@@ -1972,6 +1989,14 @@ export function initProductBuilder() {
            knows. The slot id is only where it currently appears on screen. */
         serverPanel: id,
       });
+      /* Studio only: guess what was dropped, then let them say otherwise. The
+         customer path never guesses -- there the cutout is a file the server
+         made, and its arrival is what selects the variant. */
+      if (MODE === 'studio' && bleedable(id)) {
+        const png = file.type === 'image/png' || /\.png$/i.test(file.name || '');
+        state.get(id).variant = (png && looksCutOut(probe)) ? 'cutout' : 'styled';
+        applyPanelClip(id);
+      }
       drawSlotFlag(id);            // a replaced photo clears the old failure
       const n = nodes[id]; n.img.setAttribute('href', url); n.img.setAttribute('opacity', 1);
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
@@ -2093,6 +2118,30 @@ export function initProductBuilder() {
     const end = () => { drag = null; };
     el.addEventListener('pointerup', end);
     el.addEventListener('pointercancel', end);
+  }
+
+  /* Transparency is the tell. A studio operator dropping a cutout is dropping a
+     PNG with the background already gone, and asking them to then say so is
+     asking them to repeat themselves. Sampled at 320px rather than read at full
+     size: a genuine cutout has whole regions missing, so it shows at any
+     resolution, and a 4096-square image is sixteen million pixels to walk.
+
+     The 1% floor is what keeps a rounded corner or an antialiased edge from
+     being mistaken for a cut-out subject. */
+  function looksCutOut(el) {
+    const W = Math.max(1, Math.min(320, el.naturalWidth || 1));
+    const H = Math.max(1, Math.min(320, el.naturalHeight || 1));
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    if (!g) return false;
+    g.clearRect(0, 0, W, H);
+    g.drawImage(el, 0, 0, W, H);
+    let d;
+    try { d = g.getImageData(0, 0, W, H).data; } catch (e) { return false; }
+    let clear = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] < 250) clear++;
+    return clear / (W * H) > 0.01;
   }
 
   /* A panel does two things with the pointer: a press-and-move repositions the
@@ -2367,8 +2416,12 @@ export function initProductBuilder() {
        offering a choice of one. */
     const vRow = $('variantRow');
     if (vRow) {
-      const have = !!s.cutoutUrl;
-      vRow.hidden = !(wantsCutout() && have && !s.demo);
+      /* Customer: only once the cut-out PNG has actually arrived, or the toggle
+         offers a picture that does not exist yet. Studio: as soon as there is a
+         photo, because the operator is describing the file they just dropped
+         and needs to be able to correct us. */
+      const have = MODE === 'studio' ? !s.demo : !!s.cutoutUrl;
+      vRow.hidden = !(cutoutTemplate() && have && !s.demo);
       if (have) {
         const v = variantOf(s);
         $('variantCutout').setAttribute('aria-pressed', String(v === 'cutout'));
