@@ -1,36 +1,33 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
-import sharp from 'sharp';
-import { DPI, dataUri, prepareScene, rasterise } from './_shared/render.mjs';
-import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_shared/derivatives.mjs';
+import { DPI, dataUri, prepareScene } from './_shared/render.mjs';
 
 /**
  * Turn a design built in the Studio-mode builder into a draft catalogue product.
  *
  * The shop builds a piece at /admin/studio exactly as a customer would, then
- * saves it here. The scene is composed through the same code path as a paid
- * customer build (see _shared/render.mjs) and produces two things:
+ * saves it here. This function is deliberately light: it validates the request,
+ * composes the scene through the same code path as a paid customer build (see
+ * _shared/render.mjs), writes that one composed SVG to Blobs, makes the document
+ * write, and hands off.
  *
- *   listing image  1600px, rendered here, uploaded to Sanity, attached to the
- *                  product, and returned in the response
- *   print master   full resolution, rendered by studio-render-background
- *
- * The print is deferred because it cannot be done inside a synchronous
- * function's budget: a 4800 x 7200 raster measured at ~20s locally and the
- * first version of this timed out at 30s. That is the same reason the customer
- * flow renders in a background function. The listing render is a ninth of the
- * area and comfortably fast, so the caller still gets a real image and a
- * working Studio link in one request.
+ * It rasterises NOTHING. The print master, the listing image, the web master,
+ * the rollback copy and every Sanity asset upload belong to
+ * studio-render-background, which has fifteen minutes rather than ten seconds.
+ * They used to happen here and a 4800 x 7200 raster alone measured ~20s, over
+ * the synchronous budget in production; the split is what keeps both the create
+ * and the replace path inside it.
  *
  * The product is created as an unpublished draft, so nothing appears on the
  * site until someone opens it in the Studio and publishes it.
  *
  * It also REPLACES the artwork on a product that already exists. Pass a
  * productId and it writes to that product instead of creating one, touching
- * only the artwork: images[_key="listing"], images[_key="web-master"], and an
- * artworkHistory entry. Title, slug, price, description, SEO, category, tags
- * and everything else are left exactly as they are -- the point of the mode is
- * that a design can be redrawn without re-entering the shop's own copy.
+ * only artworkHistory here and, through the renderer, images[_key="listing"],
+ * images[_key="web-master"] and printFile. Title, slug, price, description,
+ * SEO, category, tags and everything else are left exactly as they are -- the
+ * point of the mode is that a design can be redrawn without re-entering the
+ * shop's own copy.
  *
  * Edits always land on the DRAFT. A published product gets a draft created from
  * it, so the change is reviewed and published deliberately rather than going
@@ -40,14 +37,13 @@ import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_sh
  * builder can offer a picker. Same secret as everything else here.
  *
  * NOTE ON SANITY ASSETS: the standing rule is that customer photographs never
- * enter Sanity's asset library. That is not what this uploads. The listing
- * image is rendered catalogue artwork for a product the shop is selling, which
- * is precisely what the asset library is for. The source photographs stay in
- * the browser in studio mode and are not persisted anywhere.
+ * enter Sanity's asset library. That is not what the renderer uploads. The
+ * listing and web images are rendered catalogue artwork for a product the shop
+ * is selling, which is precisely what the asset library is for. The source
+ * photographs stay in the browser in studio mode and are not persisted anywhere.
  */
 
 const STUDIO_STORE = 'studio';
-const LISTING_WIDTH = 1600;
 const STUDIO_HOST = 'https://comicstripcanvas.sanity.studio';
 
 /** Which catalogue a template belongs in. */
@@ -97,15 +93,6 @@ function getSanity() {
     useCdn: false,
   });
   return sanityClient;
-}
-
-/** images[] with one entry set under a fixed key -- replaced, or appended. */
-function putImage(images, key, assetId, alt) {
-  const list = Array.isArray(images) ? images.slice() : [];
-  const entry = { _type: 'image', _key: key, asset: { _type: 'reference', _ref: assetId }, alt };
-  const at = list.findIndex((i) => i && i._key === key);
-  if (at >= 0) list[at] = entry; else list.push(entry);
-  return { images: list, replaced: at >= 0 };
 }
 
 const HISTORY_LIMIT = 5;
@@ -226,55 +213,33 @@ export default async (req) => {
   }
 
   try {
-    const listing = rasterise(scene.svg, scene.fontFiles, LISTING_WIDTH);
-    const listingPng = listing.asPng();
-
     const name = replacing ? (target.doc.title || 'artwork') : title;
-
     const store = getStore(STUDIO_STORE);
 
-    /* The rollback copy of the print master is kept by studio-render-background,
-       not here. It is a ~38 MB blob, and reading and rewriting it inside a
-       synchronous function spent the whole budget -- this timed out at 30s
-       before the work moved. The background renderer is the thing that
-       overwrites print.png anyway, so preserving the old one belongs there. */
-
-    await store.set(`studio/${id}/listing.png`, listingPng, {
-      metadata: { id, kind: 'listing', title: name, width: listing.width, height: listing.height },
-    });
-
-    /* The composed scene, with its artwork already inlined, is handed to the
-       background renderer so it does not have to be given the source images a
-       second time. It holds no more than the print master it produces. */
+    /* The composed scene, with its artwork already inlined, is the whole handoff.
+       Everything that turns it into pictures -- the print master, the listing,
+       the web master, and every Sanity asset upload -- happens in
+       studio-render-background, which has minutes rather than seconds. This
+       function does not rasterise anything. */
     await store.set(`studio/${id}/scene.svg`, scene.svg, {
       metadata: { id, kind: 'scene', title: name, printWidth: scene.printWidth, dpi: DPI },
     });
 
-    const asset = await sanity.assets.upload('image', listingPng, {
-      filename: `${slugify(name)}.png`,
-      contentType: 'image/png',
-    });
+    /* Whatever printFile pointed at BEFORE this redraw, recorded now while it is
+       still true. The renderer is about to overwrite it, and this reference is
+       the only way back to the file the shop was fulfilling from. */
+    const prevPrintFile = replacing ? (target.doc.printFile?.asset?._ref || null) : null;
 
-    /* Replacing writes a second image: the web master, at exactly the size and
-       quality tools/builder/web-versions.mjs produces, from the same shared
-       definition. Rasterise big enough that fitting to 2000 is a downscale --
-       renderDerivative never upscales, and a listing-sized source would leave
-       the web master smaller than it claims to be. */
-    let webAsset = null;
-    if (replacing) {
-      const portrait = listing.height > listing.width;
-      const webRasterWidth = Math.ceil(portrait
-        ? WEB_MASTER.side * (listing.width / listing.height)
-        : WEB_MASTER.side);
-      const big = rasterise(scene.svg, scene.fontFiles, webRasterWidth);
-      const { data: webJpeg, info: webInfo } = await renderDerivative(sharp, big.asPng(), WEB_MASTER);
-      webAsset = await sanity.assets.upload('image', webJpeg, {
-        filename: `${slugify(name)}-${WEB_MASTER.side}.jpg`,
-        contentType: 'image/jpeg',
-      });
-      webAsset._px = `${webInfo.width}x${webInfo.height}`;
-    }
+    const entry = {
+      _type: 'artworkChange', _key: `h-${Date.now().toString(36)}`,
+      at: new Date().toISOString(),
+      sceneId: id,
+      by: (form.get('by') || '').toString().trim().slice(0, 60) || 'studio',
+      template: recipe.template,
+      prevPrintFileAssetId: prevPrintFile,
+    };
 
+    let docId, wrote;
     if (replacing) {
       /* A published product with no draft yet needs the draft created from it
          first, or the patch has nothing to land on. createIfNotExists loses a
@@ -283,107 +248,61 @@ export default async (req) => {
         const { _rev, ...body } = target.needsDraftFrom;
         await sanity.createIfNotExists({ ...body, _id: target.docId });
       }
-
-      const current = await sanity.getDocument(target.docId);
-      const withListing = putImage(current?.images, LISTING_KEY, asset._id,
-        `${name} — Comic Strip Canvas`);
-      const withWeb = putImage(withListing.images, WEB_MASTER_KEY, webAsset._id,
-        `${name} — Comic Strip Canvas`);
-
-      /* Capped, newest first, and keyed because Sanity requires it on array
-         items. Five is enough to see a pattern and short enough that nobody
-         has to scroll a product document to find its real fields. */
-      const entry = {
-        _type: 'artworkChange', _key: `h-${Date.now().toString(36)}`,
-        at: new Date().toISOString(),
-        sceneId: id,
-        by: (form.get('by') || '').toString().trim().slice(0, 60) || 'studio',
-        template: recipe.template,
-      };
+      docId = target.docId;
+      const current = await sanity.getDocument(docId);
       const history = [entry, ...(Array.isArray(current?.artworkHistory) ? current.artworkHistory : [])]
         .slice(0, HISTORY_LIMIT);
-
-      /* ONLY the artwork. No title, slug, category, price, description, SEO,
-         tags or variants -- a redraw is not a re-listing, and the shop's own
-         words are not this function's to rewrite. */
-      await sanity.patch(target.docId)
-        .set({ images: withWeb.images, artworkHistory: history })
-        .commit();
-
-      const mode = target.needsDraftFrom ? 'created a draft from the published product'
+      /* ONLY the history. The pictures are the renderer's to write, and the
+         shop's own words -- title, slug, price, description, SEO, tags,
+         category, variants -- are nobody's to rewrite here. */
+      await sanity.patch(docId).set({ artworkHistory: history }).commit();
+      wrote = target.needsDraftFrom ? 'created a draft from the published product'
         : (target.wasPublished ? 'updated the existing draft of a published product'
           : 'updated the draft (never published)');
-
-      scene.cleanup();
-      const printWidth = scene.printWidth;
-      fetch(`${origin}/api/studio-render`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, title: name, printWidth }),
-      }).catch((err) => console.error(`studio-save: could not start the print render for ${id}:`, err.message));
-
-      console.log(
-        `studio-save: replaced artwork on ${target.docId} ("${name}") — ${mode}; ` +
-        `listing ${listing.width}x${listing.height} ${withListing.replaced ? 'replaced' : 'added'}, ` +
-        `web master ${webAsset._px} ${withWeb.replaced ? 'replaced' : 'added'}, ` +
-        `print ${printWidth}px queued, history ${history.length}/${HISTORY_LIMIT}`
-      );
-
-      return json({
-        ok: true, mode: 'replace', id, docId: target.docId, wrote: mode,
-        title: name, slug: current?.slug?.current || null,
-        studioUrl: `${STUDIO_HOST}/intent/edit/id=${target.base};type=product/`,
-        listing: { width: listing.width, height: listing.height, assetId: asset._id, replaced: withListing.replaced },
-        webMaster: { px: webAsset._px, assetId: webAsset._id, replaced: withWeb.replaced },
-        print: { width: printWidth, status: 'rendering' },
-        rollback: `studio/${id}/print-prev.png`,
-        historyLength: history.length,
+    } else {
+      // A `drafts.` id is what "draft" means in Sanity: the document exists and
+      // is editable in the Studio, but nothing reaches the site until someone
+      // presses Publish.
+      docId = `drafts.${id}`;
+      await sanity.create({
+        _id: docId,
+        _type: 'product',
+        title,
+        slug: { _type: 'slug', current: slugify(title) },
+        category,
+        isPersonalised: false,
+        images: [],
+        artworkHistory: [entry],
       });
+      wrote = 'created a new draft product';
     }
-
-    // A `drafts.` id is what "draft" means in Sanity: the document exists and is
-    // editable in the Studio, but nothing is published to the site until someone
-    // presses Publish.
-    const doc = await sanity.create({
-      _id: `drafts.${id}`,
-      _type: 'product',
-      title,
-      slug: { _type: 'slug', current: slugify(title) },
-      category,
-      isPersonalised: false,
-      images: [{
-        _type: 'image',
-        _key: 'listing',
-        asset: { _type: 'reference', _ref: asset._id },
-        alt: `${title} — Comic Strip Canvas`,
-      }],
-    });
 
     scene.cleanup();
 
-    // Fire and forget: the print master is not needed to answer this request,
-    // and a background function has the minutes it takes.
+    /* The renderer does the rest, and is told which document to attach the
+       pictures to -- it cannot work that out from the blob id alone once a
+       product can be redrawn. */
     const printWidth = scene.printWidth;
     fetch(`${origin}/api/studio-render`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title, printWidth }),
-    }).catch((err) => console.error(`studio-save: could not start the print render for ${id}:`, err.message));
+      body: JSON.stringify({ id, docId, title: name, printWidth, replacing }),
+    }).catch((err) => console.error(`studio-save: could not start the render for ${id}:`, err.message));
 
-    const studioUrl = `${STUDIO_HOST}/intent/edit/id=${id};type=product/`;
     console.log(
-      `studio-save: "${title}" -> ${doc._id} (${category}), ` +
-      `listing ${listing.width} x ${listing.height} px, ` +
-      `print ${printWidth}px wide queued`
+      `studio-save: ${replacing ? 'replacing artwork on' : 'created'} ${docId} ("${name}") — ${wrote}; ` +
+      `scene stored, print ${printWidth}px and artwork queued`
     );
+
     return json({
       ok: true,
-      id,
-      title,
-      category,
-      studioUrl,
-      listing: { width: listing.width, height: listing.height, assetId: asset._id },
+      mode: replacing ? 'replace' : 'create',
+      id, docId, wrote, title: name,
+      category: replacing ? undefined : category,
+      studioUrl: `${STUDIO_HOST}/intent/edit/id=${replacing ? target.base : id};type=product/`,
+      artwork: { status: 'rendering' },
       print: { width: printWidth, status: 'rendering' },
+      rollback: `studio/${id}/print-prev.png`,
     });
   } catch (err) {
     scene.cleanup();

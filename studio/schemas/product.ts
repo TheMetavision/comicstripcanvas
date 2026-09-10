@@ -76,6 +76,12 @@ export default defineType({
             { name: 'sceneId', title: 'Scene / product id', type: 'string' },
             { name: 'by', title: 'By', type: 'string' },
             { name: 'template', title: 'Template', type: 'string' },
+            {
+              name: 'prevPrintFileAssetId',
+              title: 'Previous print file asset',
+              type: 'string',
+              description: 'What printFile pointed at before this redraw — the way back if it was wrong.',
+            },
           ],
           preview: {
             select: { at: 'at', by: 'by', template: 'template' },

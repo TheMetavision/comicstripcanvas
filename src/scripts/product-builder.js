@@ -3453,9 +3453,8 @@ export function initProductBuilder() {
       }
       if (!res.ok || !data.ok) throw new Error(data.error || 'Could not replace the artwork');
       studioMsg = {
-        text: `Artwork replaced — ${data.wrote}. Listing ${data.listing.replaced ? 'replaced' : 'added'}, ` +
-              `web master ${data.webMaster.px} ${data.webMaster.replaced ? 'replaced' : 'added'}, ` +
-              `print master rendering. `,
+        text: `Artwork replaced — ${data.wrote}. The print master, listing and web ` +
+              `master are rendering now and will attach themselves in a minute or two. `,
         href: data.studioUrl,
         label: `Open "${data.title}" in the Studio`,
       };
@@ -3517,8 +3516,8 @@ export function initProductBuilder() {
       if (!res.ok || !data.ok) throw new Error(data.error || 'Could not save the product');
 
       studioMsg = {
-        text: `Saved as a draft — listing ${data.listing.width} x ${data.listing.height}, ` +
-              `print master (${data.print.width}px wide) rendering in the background. `,
+        text: `Saved as a draft — the print master (${data.print.width}px wide), listing and ` +
+              `web master are rendering in the background and will attach themselves. `,
         href: data.studioUrl,
         label: 'Open "' + data.title + '" in the Studio',
       };
