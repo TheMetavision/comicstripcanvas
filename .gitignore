@@ -32,3 +32,6 @@ tools/builder/renderer/node_modules/
 
 # comic style test output (local only, images + api log)
 tools/builder/style-out/
+
+# Netlify CLI writes this when it bundles edge functions
+deno.lock
