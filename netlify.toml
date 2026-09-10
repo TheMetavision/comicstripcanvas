@@ -126,6 +126,18 @@
   status = 200
   force = true
 
+# Repairing one by hand: POST /api/studio-render/<productId> runs the render
+# again from the scene already in the store. A DIFFERENT function from the rule
+# above -- that one is the internal trigger and takes a JSON body, this one is
+# secret-protected and takes the id in the path -- so it must come after the
+# exact match and before the /api/* catch-all, which would otherwise look for a
+# function called "studio-render" and 404.
+[[redirects]]
+  from = "/api/studio-render/*"
+  to = "/.netlify/functions/studio-rerender/:splat"
+  status = 200
+  force = true
+
 # Route /api/* requests to Netlify Functions.
 # Required for the contact form (src/pages/contact.astro POSTs to /api/contact
 # which gets rewritten to /.netlify/functions/contact).

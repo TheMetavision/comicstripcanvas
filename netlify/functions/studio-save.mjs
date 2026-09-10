@@ -2,6 +2,7 @@ import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { DPI, printGeometry } from './_shared/scene.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
+import { startRender } from './_shared/studio-render-trigger.mjs';
 
 /**
  * Turn a design built in the Studio-mode builder into a draft catalogue product.
@@ -263,24 +264,6 @@ export default async (req) => {
       }, 409);
     }
 
-    /* The handoff is the TOKENISED scene plus the keys to fill it with, not a
-       composed document. Composing means base64-ing every photograph into the
-       SVG, which for one 20 MB cutout is a 28 MB string this function would
-       hold in memory and write to the store -- to be read straight back out
-       again by the renderer. So the renderer composes instead, from the same
-       {{IMAGE:...}} tokens the customer pipeline already resolves.
-       Everything visual -- the print master, the listing, the web master, the
-       Sanity uploads -- happens there, where there are minutes rather than
-       seconds. This function rasterises nothing. */
-    await store.set(`studio/${id}/scene.json`, JSON.stringify({
-      id, title: name, svg: sceneSvg, recipe,
-      images: Object.fromEntries(uploads),
-      printWidth, dpi: DPI,
-      savedAt: new Date().toISOString(),
-    }), {
-      metadata: { id, kind: 'scene', title: name, printWidth, dpi: DPI },
-    });
-
     /* Whatever printFile pointed at BEFORE this redraw, recorded now while it is
        still true. The renderer is about to overwrite it, and this reference is
        the only way back to the file the shop was fulfilling from. */
@@ -333,26 +316,77 @@ export default async (req) => {
       wrote = 'created a new draft product';
     }
 
-    /* The renderer does the rest, and is told which document to attach the
-       pictures to -- it cannot work that out from the blob id alone once a
-       product can be redrawn. */
-    fetch(`${origin}/api/studio-render`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, docId, title: name, printWidth, replacing }),
-    }).catch((err) => console.error(`studio-save: could not start the render for ${id}:`, err.message));
+    /* The handoff is the TOKENISED scene plus the keys to fill it with, not a
+       composed document. Composing means base64-ing every photograph into the
+       SVG, which for one 20 MB cutout is a 28 MB string this function would
+       hold in memory and write to the store -- to be read straight back out
+       again by the renderer. So the renderer composes instead, from the same
+       {{IMAGE:...}} tokens the customer pipeline already resolves.
+       Everything visual -- the print master, the listing, the web master, the
+       Sanity uploads -- happens there, where there are minutes rather than
+       seconds. This function rasterises nothing.
+
+       Written AFTER the document, and carrying docId: the scene is what makes a
+       render re-runnable, and a re-run has to know where to attach the pictures.
+       Writing it first meant that a failed document write left a scene nothing
+       sweeps, pinning its uploads in the store for ever. */
+    await store.set(`studio/${id}/scene.json`, JSON.stringify({
+      id, docId, replacing, title: name, svg: sceneSvg, recipe,
+      images: Object.fromEntries(uploads),
+      printWidth, dpi: DPI,
+      savedAt: new Date().toISOString(),
+    }), {
+      metadata: { id, docId, kind: 'scene', title: name, printWidth, dpi: DPI },
+    });
+
+    /* Start the renderer, and WAIT for the platform to accept the job.
+       This await is the whole point. It used to be fire-and-forget, and in
+       production that means the job is never started at all: a function's
+       execution environment is frozen the instant it returns its response, so
+       an outbound request that has not completed is suspended mid-flight and
+       never resumes. Locally it worked, because `netlify dev` is one long-lived
+       process that is never frozen -- which is exactly how this reached
+       production. Every other trigger in this codebase awaits (personalise-save
+       and personalisation-style to /api/style-photo, webhook and
+       personalisation-action to /api/render-personalisation); this one is now
+       the same shape as those.
+
+       It costs almost nothing: a background function answers 202 as soon as the
+       platform has taken the job, not when the render finishes. */
+    const trigger = await startRender({ origin, id, docId, title: name, printWidth, replacing });
 
     console.log(
       `studio-save: ${replacing ? 'replacing artwork on' : 'created'} ${docId} ("${name}") — ${wrote}; ` +
-      `scene stored, print ${printWidth}px and artwork queued`
+      `scene stored, print ${printWidth}px; render trigger POST ${trigger.url} -> ` +
+      (trigger.ok ? `${trigger.status}` : `FAILED (${trigger.status || trigger.error})`)
     );
 
-    return json({
-      ok: true,
+    const body = {
       mode: replacing ? 'replace' : 'create',
       id, docId, wrote, title: name,
       category: replacing ? undefined : category,
       studioUrl: `${STUDIO_HOST}/intent/edit/id=${replacing ? target.base : id};type=product/`,
+      trigger: { url: trigger.url, status: trigger.status || null },
+    };
+
+    /* A save whose renderer never started is NOT a success, however much of it
+       worked -- the product would sit there with no images and no printFile and
+       nothing to say why. The draft and the scene both survive, so name the
+       repair rather than just the failure. */
+    if (!trigger.ok) {
+      console.error(`studio-save: ${docId} saved but the render did not start — repair with POST /api/studio-render/${id}`);
+      return json({
+        ...body,
+        ok: false,
+        error: `The draft was saved but the renderer would not start (${trigger.status ? `HTTP ${trigger.status}` : trigger.error}). ` +
+          `Nothing is lost — POST /api/studio-render/${id} with the studio secret to run it again.`,
+        repair: `/api/studio-render/${id}`,
+      }, 502);
+    }
+
+    return json({
+      ...body,
+      ok: true,
       artwork: { status: 'rendering' },
       print: { width: printWidth, status: 'rendering' },
       rollback: `studio/${id}/print-prev.png`,

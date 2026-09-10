@@ -58,6 +58,10 @@ export default async (req) => {
     const body = await req.json().catch(() => ({}));
     id = body.id;
     const title = body.title || '(untitled)';
+    /* First line, before anything can fail. "Was it even invoked?" was the
+       question that took two hours to answer when the trigger was silently
+       never sent, and an empty log is the same shape as a crashed one. */
+    console.log(`studio-render: invoked for ${id || '(no id)'} ("${title}")`);
     if (!isId(id)) {
       console.error('studio-render: bad or missing id', JSON.stringify(body).slice(0, 200));
       return new Response('Bad id', { status: 400 });
@@ -148,7 +152,14 @@ export default async (req) => {
 
     /* ---- attach them ---- */
     const sanity = sanityClient();
-    const docId = isDocId(body.docId) ? body.docId : null;
+    /* The trigger says where to attach; the scene says so too, and either will
+       do. Two sources because the trigger body is the thing that can be
+       reconstructed wrongly by hand, and the scene is the thing that was
+       written at save time and cannot. */
+    const docId = isDocId(body.docId) ? body.docId : (isDocId(job.docId) ? job.docId : null);
+    if (!isDocId(body.docId) && docId) {
+      console.log(`studio-render: no docId in the trigger — using ${docId} from the stored scene`);
+    }
     let attached = 'no document';
     if (sanity && docId) {
       const slug = (title || 'artwork').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'artwork';
@@ -208,3 +219,7 @@ export default async (req) => {
 // NOTE: deliberately NO `export const config = { path }` here.
 // studio-save posts to /api/studio-render, which netlify.toml rewrites to this
 // function by name -- the same arrangement as render-personalisation.
+//
+// /api/studio-render/<id> is a DIFFERENT function, studio-rerender: the
+// secret-protected repair route that starts this one again from the stored
+// scene. Both rules live in netlify.toml, exact match first.
