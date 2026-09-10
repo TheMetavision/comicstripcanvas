@@ -61,16 +61,19 @@
 # zip-it-and-ship-it accepts any integer from 1024 to 4096 and 3008 parses fine.
 # The key itself is simply not being applied from this file.
 #
-# Proved with a real `netlify build`, reading .netlify/functions/manifest.json:
+# Proved with a real `netlify build`, reading .netlify/functions/manifest.json.
+# At the time, style-photo-background asked for 1536 here and nowhere else:
 #
 #   studio-render-background          toml + in-source  ->  memory: 3072
 #   render-personalisation-background toml + in-source  ->  memory: 3072
-#   style-photo-background            toml only         ->  NO memory field
+#   style-photo-background            toml ONLY         ->  no memory field
 #
-# style-photo-background asks for 1536 right here in this file and the bundler
-# emits nothing for it. So the value that actually reaches the platform is the
-# one declared in the function source, and these lines are documentation plus
-# insurance against the day the toml path starts working.
+# The bundler emitted nothing for the one that had only a toml entry. So the
+# value that actually reaches the platform is the one declared in the function
+# source, and every memory line in this file is documentation plus insurance
+# against the day the toml path starts working. All three functions now declare
+# it in both places; that third row is what the control looked like, not what
+# the file says today.
 #
 # ALWAYS CHECK AFTER DEPLOYING. A memory setting that does not take is invisible
 # until a render dies:
@@ -108,11 +111,19 @@
 #
 # Memory: the three references are ~1.2 MB on disk and ~1.6 MB once base64'd
 # into the request, and a 4K result decodes to a 5504 x 3072 surface for the
-# JPEG re-encode. 1536 MB leaves room for both with the model response in
-# flight; sharp stays out of the bundle for the same reason resvg does, since
-# esbuild cannot inline a native .node binary.
+# JPEG re-encode -- so it needs room for both with the model response in flight.
+# sharp stays out of the bundle for the same reason resvg does, since esbuild
+# cannot inline a native .node binary.
+#
+# This line said 1536 and never did anything: the memory key is not applied from
+# this file (see the long note on the renderers above), so this function had been
+# running at the 1024 MB default the whole time -- unnoticed, because unlike the
+# studio renderer it had not yet been killed for it. The value that reaches the
+# platform is the one in the function source, which now asks for 2gb: the same
+# intent as 1536 with headroom for the 4K decode rather than a figure chosen to
+# sit just above it.
 [functions."style-photo-background"]
-  memory = 1536
+  memory = "2gb"
   included_files = ["netlify/functions/_shared/style-refs/*.jpg"]
   external_node_modules = ["sharp"]
 

@@ -3,6 +3,11 @@ import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { styleImage, imageSize, nearestRatio, loadStyleRefs, StyleError, MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { cutoutConfigured } from './_shared/cutout.mjs';
+/* From the leaf module, NOT from _shared/render.mjs, which imports
+   @resvg/resvg-js at the top -- and resvg is not in this function's
+   external_node_modules, so importing it here would try to bundle a native
+   .node binary. */
+import { memoryNote } from './_shared/scene.mjs';
 
 /**
  * Style one photograph.
@@ -175,6 +180,14 @@ export default async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id; panel = body.panel;
+    /* First line, before anything can fail, and it carries the memory this
+       container actually got. A 4K result decodes to a 5504 x 3072 surface for
+       the JPEG re-encode, with the three reference images and the model
+       response in flight beside it -- and there is no exception to catch when
+       a container is killed for allocating, so the size it had has to be in
+       the log before the work starts. The studio renderer was killed exactly
+       that way, running at 1024 MB while netlify.toml believed otherwise. */
+    console.log(`style-photo: invoked for ${id || '(no id)'} panel ${panel || '(none)'} — ${memoryNote()}`);
     if (!isId(id) || !isPanel(panel)) {
       console.error('style-photo: bad id or panel', JSON.stringify(body).slice(0, 200));
       return new Response('Bad request', { status: 400 });
@@ -354,7 +367,17 @@ export default async (req) => {
   }
 };
 
-// NOTE: deliberately NO `export const config = { path }` here.
+/* Memory, and ONLY memory. This is the declaration that works: netlify.toml
+   asks for the same 2gb and is ignored by the bundler -- a real build emits no
+   memory field at all for a function whose only request lives there. This one
+   asked for 1536 in netlify.toml and had been running at the 1024 MB default
+   ever since, unnoticed, exactly as the studio renderer was until it died of
+   it. 2gb rather than 1536 for headroom on a 4K decode.
+
+   NOTE THE ABSENCE OF `path` -- see below. memory does not touch routing. */
+export const config = { memory: '2gb' };
+
+// NOTE: deliberately NO `path` in the config above.
 // personalise-save posts to /api/style-photo, which netlify.toml rewrites to
 // this function by name. An inline config.path collides with that forced
 // rewrite and 404s, as it does for every other function in this directory.
