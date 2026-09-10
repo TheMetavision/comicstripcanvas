@@ -555,6 +555,7 @@ export function initProductBuilder() {
       nodes[p.id].hit = hit; wire(p.id);
     });
     applyTint(); layoutAllText(); drawGuides();
+    nodes.handles = null; drawHandles();   // build() discarded the old layer
   }
   /* The burst is flat colour + black line work, so each region can be remapped
      exactly rather than hue-shifted. Classify once, then repaint cheaply. */
@@ -732,6 +733,7 @@ export function initProductBuilder() {
     T.text.forEach((f) => nodes['t-' + f.id].classList.toggle('movable', moveMode));
     T.boxes.forEach((b) => nodes['b-' + b.id].g.classList.toggle('movable', moveMode));
     T.panels.forEach((p) => { if (nodes[p.id].hit) nodes[p.id].hit.style.pointerEvents = moveMode ? 'none' : ''; });
+    drawHandles();   // the photo box would otherwise sit over the text being moved
   });
 
   /* ---------- logo: exact fit, no letterboxing ---------- */
@@ -852,6 +854,44 @@ export function initProductBuilder() {
   }
 
   /* ---------- images ---------- */
+  /* Where the placed image actually sits, in canvas units, INCLUDING the parts
+     outside the panel's clip. layout() computes this to position the <image>;
+     the handles need the same numbers to draw a box round it and to scale it
+     about a fixed corner, so it is worked out in one place and used by both. */
+  function imageRect(id) {
+    const n = nodes[id], s = state.get(id);
+    if (!n || !s) return null;
+    const p = n.panel;
+    const base = Math.max(p.width / s.natW, p.height / s.natH);
+    const dw = s.natW * base * s.zoom, dh = s.natH * base * s.zoom;
+    return { x: p.x + (p.width - dw) / 2 + s.ox, y: p.y + (p.height - dh) / 2 + s.oy, w: dw, h: dh, base };
+  }
+
+  /* Scale a slot to `zoom` while holding one point of the image still.
+
+     ax/ay is the point to hold, in canvas units; fx/fy say where it sits in the
+     image as a fraction (0,0 is the top-left corner, 1,1 the bottom-right).
+     Dragging the bottom-right handle holds the top-left corner, so fx=fy=0;
+     a pinch holds the midpoint between the fingers, so fx/fy are wherever that
+     landed. Rearranged from layout()'s own positioning:
+
+       x = p.x + (p.width - dw) / 2 + ox   and   ax = x + fx * dw
+
+     Panning is still clamped by layout(), so the held point can drift when the
+     image would otherwise leave a gap -- which is the older promise, and the
+     more important one. */
+  function zoomAbout(id, zoom, ax, ay, fx, fy) {
+    const s = state.get(id), n = nodes[id];
+    if (!s || !n) return;
+    const p = n.panel;
+    s.zoom = Math.max(1, Math.min(maxZoomFor(id), zoom));
+    const r = imageRect(id);
+    s.ox = ax - fx * r.w - p.x - (p.width - r.w) / 2;
+    s.oy = ay - fy * r.h - p.y - (p.height - r.h) / 2;
+    layout(id);
+    if (selected === id) syncPanel();
+  }
+
   function layout(id) {
     const { panel: p, img } = nodes[id], s = state.get(id); if (!s) return;
     // Everything fills its panel, examples included. The example graphic keeps its
@@ -879,6 +919,7 @@ export function initProductBuilder() {
        placed, not of the file in the abstract. recipe() reports it as
        effectiveDpi, so the brief now carries the corrected figure too. */
     s.dpi = Math.round(geom().ppi * s.natW / dw);
+    if (id === selected) drawHandles();
   }
   /* ---------- upload ---------- */
   /* Functions run on Lambda with a ~6 MB request cap, so each photo goes up on
@@ -1542,13 +1583,14 @@ export function initProductBuilder() {
   /* The cut-out subject is allowed to bleed off the bottom of the page.
 
      A full picture is a framed photograph and belongs inside the art window.
-     A cut-out person is not: standing them in a box with their legs sliced off
-     at the window's edge looks like a mistake, where running them off the
-     bottom of the cover reads as deliberate -- it is what the printed comics
-     this imitates actually do. So for the cutout only, the clip runs from the
-     art window down to the bottom of the page INCLUDING the wrap, while the
-     top and both sides stay exactly where they were. The line-art overlay is
-     appended after the panels and so still draws over the top of it.
+     A cut-out person is not: standing them in a box with their limbs sliced
+     off at the window's edge looks like a mistake, where running them off the
+     page reads as deliberate -- it is what the printed comics this imitates
+     actually do. So for the cutout only, the clip becomes the whole page
+     including the wrap, on all four sides, and the subject can bleed off the
+     left, the right and the bottom. The line-art overlay is appended after the
+     panels and so still draws over the top of it: burst, cutout, line art,
+     text, in that order.
 
      Nothing about the layout moves: the image is still positioned and panned
      against the same panel rect, and the same SVG goes to the proof and the
@@ -1568,10 +1610,12 @@ export function initProductBuilder() {
     const n = nodes[id];
     if (!n || !n.clip || n.clip.tagName !== 'rect') return;   // shaped panels keep their path
     const p = n.panel;
-    const { c, dy } = geom();
-    // Page bottom including the wrap, which is where the viewBox ends.
-    const height = bleeds(id) ? (c.height + dy) - p.y : p.height;
-    n.clip.setAttribute('height', Math.max(p.height, height));
+    const { c, dx, dy } = geom();
+    // The whole page including the wrap is exactly the viewBox.
+    const box = bleeds(id)
+      ? { x: -dx, y: -dy, width: c.width + 2 * dx, height: c.height + 2 * dy }
+      : { x: p.x, y: p.y, width: p.width, height: p.height };
+    Object.entries(box).forEach(([k, v]) => n.clip.setAttribute(k, v));
   }
 
   /* Fetch the background-removed PNG and hold it alongside the styled JPEG.
@@ -1908,14 +1952,154 @@ export function initProductBuilder() {
     };
     probe.src = url;
   }
+  /* ---------- resize handles ---------- */
+  /* A dashed box round the whole placed image -- the parts hanging outside the
+     panel included, because that is exactly what the customer cannot otherwise
+     see and is the thing they are trying to judge -- with a handle at each
+     corner. Dragging a corner scales about the opposite one; dragging inside
+     still pans, which is what the panel already did.
+
+     Screen affordances only. They carry data-role="handles" and both exporters
+     strip them, so nothing here reaches the recipe, the proof or the print --
+     the drags only move the same zoom and ox/oy the slider has always set. */
+  const HANDLE_HIT_PX = 32;      // finger-sized, per the touch guidance
+  const HANDLE_DRAW_PX = 11;     // what is actually drawn inside that hit area
+  const CORNERS = [[0, 0], [1, 0], [0, 1], [1, 1]];   // fx, fy
+
+  /** Canvas units per screen pixel, for sizing handles against the fingertip. */
+  const perScreenPx = () =>
+    T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width);
+
+  /** Canvas units -> client pixels, the inverse of reading a pointer event. */
+  function clientOf(x, y) {
+    const b = svg.getBoundingClientRect(), k = perScreenPx();
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    return { x: b.left + (x - vb[0]) / k, y: b.top + (y - vb[1]) / k };
+  }
+
+  function handleLayer() {
+    if (!nodes.handles) {
+      const g = mk('g', { 'data-role': 'handles' });
+      nodes.handles = g;
+    }
+    // always last, so the box sits above the artwork and the text
+    if (nodes.handles.parentNode !== svg || svg.lastChild !== nodes.handles) svg.appendChild(nodes.handles);
+    return nodes.handles;
+  }
+
+  function drawHandles() {
+    const g = handleLayer();
+    const s = selected && state.get(selected);
+    const r = selected && nodes[selected] && s && !s.demo && !moveMode ? imageRect(selected) : null;
+    while (g.firstChild) g.removeChild(g.firstChild);
+    if (!r) return;
+    const k = perScreenPx();
+    const box = mk('rect', {
+      x: r.x, y: r.y, width: r.w, height: r.h, fill: 'none',
+      stroke: '#EC008C', 'stroke-width': 2 * k, 'stroke-dasharray': `${9 * k} ${7 * k}`,
+      'pointer-events': 'none', 'data-role': 'handles',
+    });
+    g.appendChild(box);
+    CORNERS.forEach(([fx, fy]) => {
+      const cx = r.x + fx * r.w, cy = r.y + fy * r.h;
+      // The drawn dot, and over it an invisible square big enough for a finger.
+      g.appendChild(mk('rect', {
+        x: cx - (HANDLE_DRAW_PX / 2) * k, y: cy - (HANDLE_DRAW_PX / 2) * k,
+        width: HANDLE_DRAW_PX * k, height: HANDLE_DRAW_PX * k,
+        fill: '#fff', stroke: '#EC008C', 'stroke-width': 2 * k,
+        'pointer-events': 'none', 'data-role': 'handles',
+      }));
+      const grab = mk('rect', {
+        x: cx - (HANDLE_HIT_PX / 2) * k, y: cy - (HANDLE_HIT_PX / 2) * k,
+        width: HANDLE_HIT_PX * k, height: HANDLE_HIT_PX * k,
+        fill: 'transparent', 'data-role': 'handles',
+      });
+      grab.style.cursor = (fx === fy) ? 'nwse-resize' : 'nesw-resize';
+      grab.style.touchAction = 'none';
+      wireHandle(grab, fx, fy);
+      g.appendChild(grab);
+    });
+  }
+
+  /** One corner. fx/fy is the corner being dragged; the opposite one is held. */
+  function wireHandle(el, fx, fy) {
+    let drag = null;
+    el.addEventListener('pointerdown', (e) => {
+      const id = selected, s = id && state.get(id);
+      if (!s || s.demo) return;
+      e.preventDefault(); e.stopPropagation();
+      // Capture keeps the drag alive when the pointer leaves the small handle,
+      // but it is not worth losing the gesture over: Safari has refused it on
+      // pointers it does not consider active, and a synthetic one always does.
+      try { el.setPointerCapture(e.pointerId); } catch (err) { /* drag on without it */ }
+      const r = imageRect(id);
+      // The held corner and the dragged one, both in client pixels, so the
+      // gesture can be measured along the diagonal between them.
+      const anchor = clientOf(r.x + (1 - fx) * r.w, r.y + (1 - fy) * r.h);
+      const corner = clientOf(r.x + fx * r.w, r.y + fy * r.h);
+      drag = {
+        id, zoom: s.zoom,
+        // the corner diagonally opposite, held still for the whole gesture
+        ax: r.x + (1 - fx) * r.w, ay: r.y + (1 - fy) * r.h,
+        anchor, vx: corner.x - anchor.x, vy: corner.y - anchor.y,
+      };
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      e.preventDefault(); e.stopPropagation();
+      /* How far along the original corner-to-anchor diagonal the pointer now
+         sits, as a fraction. A projection rather than a per-axis ratio: it
+         scales uniformly whichever way the hand moves, and it goes NEGATIVE
+         when the corner is dragged past the anchor instead of folding back
+         into growth -- which an earlier abs() did, so dragging inwards made
+         the photo bigger and it could never be shrunk again. */
+      const vv = drag.vx * drag.vx + drag.vy * drag.vy;
+      if (!vv) return;
+      const px = e.clientX - drag.anchor.x, py = e.clientY - drag.anchor.y;
+      const f = Math.max(0, (px * drag.vx + py * drag.vy) / vv);
+      zoomAbout(drag.id, drag.zoom * f, drag.ax, drag.ay, 1 - fx, 1 - fy);
+    });
+    const end = () => { drag = null; };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+
   /* A panel does two things with the pointer: a press-and-move repositions the
      photo; a press-and-release without moving opens the file chooser. The same
      gesture split as a photo app -- tap to change, drag to move. */
   const CLICK_SLOP = 6;   // px of movement before a press counts as a drag
   function wire(id) {
     const hit = nodes[id].hit; let drag = null, moved = false;
+    /* Live pointers on this panel. One is a pan, two are a pinch -- and the
+       pinch has to cancel the pan the first finger already started, or the
+       photo lurches sideways as the second finger lands. */
+    const touches = new Map();
+    let pinch = null;
+
+    const svgPoint = (e) => {
+      const b = svg.getBoundingClientRect();
+      const k = perScreenPx();
+      const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+      return { x: vb[0] + (e.clientX - b.left) * k, y: vb[1] + (e.clientY - b.top) * k };
+    };
+
     hit.addEventListener('pointerdown', (e) => {
       if (moveMode) return;
+      touches.set(e.pointerId, e);
+      if (touches.size === 2) {
+        const s = state.get(id); if (!s || s.demo) return;
+        drag = null; hit.classList.remove('dragging');   // the pan is off
+        const [a, b] = [...touches.values()];
+        const mid = svgPoint({ clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 });
+        const r = imageRect(id);
+        pinch = {
+          zoom: s.zoom, dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+          ax: mid.x, ay: mid.y,
+          // where the pinch centre sits within the image, held there throughout
+          fx: r.w ? (mid.x - r.x) / r.w : 0.5, fy: r.h ? (mid.y - r.y) / r.h : 0.5,
+        };
+        return;
+      }
       select(id); moved = false;
       const s = state.get(id); if (!s) return;
       hit.setPointerCapture(e.pointerId); hit.classList.add('dragging');
@@ -1925,13 +2109,25 @@ export function initProductBuilder() {
       };
     });
     hit.addEventListener('pointermove', (e) => {
+      if (touches.has(e.pointerId)) touches.set(e.pointerId, e);
+      if (pinch && touches.size >= 2) {
+        const [a, b] = [...touches.values()];
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        moved = true;
+        zoomAbout(id, pinch.zoom * (d / pinch.dist), pinch.ax, pinch.ay, pinch.fx, pinch.fy);
+        return;
+      }
       if (!drag) return;
       if (!moved && Math.hypot(e.clientX - drag.px, e.clientY - drag.py) < CLICK_SLOP) return;
       moved = true;
       const s = state.get(id);
       s.ox = drag.ox + (e.clientX - drag.px) * drag.k; s.oy = drag.oy + (e.clientY - drag.py) * drag.k; layout(id);
     });
-    const end = () => { drag = null; hit.classList.remove('dragging'); };
+    const end = (e) => {
+      if (e && touches.has(e.pointerId)) touches.delete(e.pointerId);
+      if (touches.size < 2) pinch = null;
+      drag = null; hit.classList.remove('dragging');
+    };
     hit.addEventListener('pointerup', end); hit.addEventListener('pointercancel', end);
     // click fires after pointerup; only treat it as "choose a photo" if the
     // pointer didn't travel -- otherwise it was a reposition
@@ -1939,10 +2135,38 @@ export function initProductBuilder() {
        carried tabIndex 0 and role="button" since they were built, which
        promised keyboard operation that was never actually wired -- an SVG
        element does not synthesise a click from Enter the way a <button> does. */
+    /* Arrows nudge the photo, Shift+arrows resize it -- the same two things the
+       handles do, for anyone not using a pointer. The step is a fraction of the
+       panel rather than a pixel count, so it feels the same on a 4200-wide
+       cover as on a strip panel. */
+    const NUDGE = 0.02;        // of the panel's width/height
+    const NUDGE_ZOOM = 0.05;
     hit.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        hit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return;
+      }
+      const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (!dir) return;
+      const s = state.get(id); if (!s || s.demo || moveMode) return;
       e.preventDefault();
-      hit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const p = nodes[id].panel;
+      if (e.shiftKey) {
+        // Up/right grow, down/left shrink, about the middle of the panel so the
+        // subject does not walk off while being resized.
+        const grow = dir[0] + dir[1] * -1 > 0 ? 1 : -1;
+        const r = imageRect(id);
+        zoomAbout(id, s.zoom + grow * NUDGE_ZOOM,
+          p.x + p.width / 2, p.y + p.height / 2,
+          r.w ? (p.x + p.width / 2 - r.x) / r.w : 0.5,
+          r.h ? (p.y + p.height / 2 - r.y) / r.h : 0.5);
+      } else {
+        s.ox += dir[0] * p.width * NUDGE;
+        s.oy += dir[1] * p.height * NUDGE;
+        layout(id);
+        if (selected === id) syncPanel();
+      }
     });
     hit.addEventListener('click', () => {
       // A swap in progress claims the next tap, whatever it lands on.
@@ -2065,6 +2289,7 @@ export function initProductBuilder() {
     selected = id;
     if (nodes[id].outline) nodes[id].outline.setAttribute('stroke',
       getComputedStyle(root).getPropertyValue('--b-accent').trim() || '#EC008C');
+    drawHandles();
     syncPanel();
   }
   function syncPanel() {
@@ -2100,6 +2325,7 @@ export function initProductBuilder() {
     $('pSize').textContent = `${n.panel.width} × ${n.panel.height}`;
     $('pImg').textContent = s.demo ? 'example artwork'
       : `${s.natW} × ${s.natH}${s.styled ? ' (styled)' : ''}`;
+    drawHandles();
     $('zoom').max = String(maxZoomFor(selected));
     $('zoom').value = s.zoom;
     /* Swap is only meaningful from a panel holding one of the customer's
@@ -2471,7 +2697,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"],[data-role="handles"]').forEach((el) => el.remove());
     c.querySelectorAll('image').forEach((im) => {
       const role = im.getAttribute('data-role');
       const token = role === 'panel' ? `{{IMAGE:${im.getAttribute('data-panel')}}}`
@@ -2573,7 +2799,7 @@ export function initProductBuilder() {
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
-    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"]').forEach((el) => el.remove());
+    c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"],[data-role="handles"]').forEach((el) => el.remove());
     // the selection highlight is a screen affordance, not part of the artwork
     c.querySelectorAll('path[stroke]').forEach((p) => {
       if (p.getAttribute('stroke') !== '#000' && p.getAttribute('fill') === 'none'
