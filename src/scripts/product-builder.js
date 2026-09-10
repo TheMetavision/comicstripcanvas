@@ -417,7 +417,11 @@ export function initProductBuilder() {
       if (nodes[k]) {
         state.set(k, v);
         const n = nodes[k];
-        n.img.setAttribute('href', v.url); n.img.setAttribute('opacity', 1);
+        /* srcFor, not v.url: after a cutout has been chosen, v.url is the full
+           picture, and changing print size would have quietly put it back
+           while the toggle still said Cutout. */
+        n.img.setAttribute('href', srcFor(v)); n.img.setAttribute('opacity', 1);
+        applyPanelClip(k);
         if (n.num) n.num.setAttribute('opacity', 0);
         if (n.plate) n.plate.setAttribute('opacity', 0);
         n.hit.classList.add('filled'); layout(k);
@@ -455,7 +459,10 @@ export function initProductBuilder() {
     });
     EP.forEach((p, i) => {
       const cl = document.createElementNS(SVGNS, 'clipPath'); cl.id = 'clip-' + p.id;
-      cl.appendChild(p.d ? mk('path', { d: p.d }) : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height }));
+      const clipShape = p.d
+        ? mk('path', { d: p.d })
+        : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height });
+      cl.appendChild(clipShape);
       defs.appendChild(cl);
       const g = mk('g', { 'clip-path': `url(#clip-${p.id})` });
       const plate = p.d ? mk('path', { d: p.d, fill: '#fff' }) : mk('rect', { x: p.x, y: p.y, width: p.width, height: p.height, fill: T.bg ? 'none' : '#1A1A1A' });
@@ -468,7 +475,7 @@ export function initProductBuilder() {
         num = mk('text', { x: p.x + p.width / 2, y: p.y + p.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 190, 'font-weight': 800, fill: '#B9BCC2' });
         num.textContent = String(i + 1).padStart(2, '0'); svg.appendChild(num);
       }
-      nodes[p.id] = { panel: p, img, num, index: i, plate };
+      nodes[p.id] = { panel: p, img, num, index: i, plate, clip: clipShape };
     });
     if (T.vectorOutlines) EP.forEach((p) => {
       nodes[p.id].outline = mk('path', { d: p.d, fill: 'none', stroke: '#000', 'stroke-width': 9, 'stroke-linejoin': 'round' });
@@ -945,6 +952,13 @@ export function initProductBuilder() {
      flight is not "waiting for style", it is waiting for itself. */
   const styleable = () => mine().filter((s) => s.uploadState === UPLOADED);
   const styleReady = () => styleable().filter((s) => s.styleState === STYLE_DONE).length;
+  /* A styling job that never lands at all. The server has its own limits, but a
+     background function can die without writing anything back, and then the
+     panel sits on "styling" for ever with the gate shut behind it. Four minutes
+     is well clear of a 4K call (~52s) plus the server's own retry. Mirrors
+     CUTOUT_GIVE_UP_MS, for the same reason. */
+  const STYLE_GIVE_UP_MS = 240000;
+
   const styleWaiting = () => styleable().filter(
     (s) => s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING
   ).length;
@@ -1088,6 +1102,9 @@ export function initProductBuilder() {
     if (!s) return;
     s.uploadState = st;
     s.uploadError = st === FAILED ? (reason || "Upload failed") : null;
+    // The styling clock starts when the server has the photo, because that is
+    // when the server starts styling it.
+    if (st === UPLOADED && !s.styleClockAt) s.styleClockAt = Date.now();
     // Dim while it is not yet safely stored, so "still working" is visible on
     // the artwork itself rather than only in the side panel.
     if (n && n.img) n.img.setAttribute("opacity", st === UPLOADED ? 1 : 0.45);
@@ -1238,8 +1255,35 @@ export function initProductBuilder() {
     pollStartedAt = 0;
   }
 
+  /* Slots stuck mid-style past the deadline, moved to the ordinary retryable
+     failure -- the same state, wording and tap-to-retry a server-reported
+     timeout produces, because to the customer it is the same event. Marking
+     them failed is also what lets the gate through: a failed slot does not
+     block Add to basket, a styling one does. */
+  function expireStalledStyles() {
+    const now = Date.now();
+    let changed = false;
+    for (const s of styleable()) {
+      if (s.styleState !== STYLE_PENDING && s.styleState !== STYLE_STYLING) continue;
+      if (!s.styleClockAt || now - s.styleClockAt <= STYLE_GIVE_UP_MS) continue;
+      const slot = slotForServerPanel(s.serverPanel) || s.serverPanel;
+      s.styleState = STYLE_FAILED;
+      s.styleError = 'timeout';
+      s.styleGaveUp = true;
+      changed = true;
+      console.warn(
+        `[builder] ${saveId || '(no id)'} ${s.serverPanel}: gave up waiting for the comic style ` +
+        `after ${Math.round((now - s.styleClockAt) / 1000)}s — offering a retry`
+      );
+      drawSlotFlag(slot);
+      if (selected === slot) syncPanel();
+    }
+    if (changed) refresh();
+  }
+
   async function runStylePoll() {
     pollTimer = null;
+    expireStalledStyles();
     /* A hidden tab is throttled to roughly one timer a minute anyway, and
        polling it burns the customer's data for answers nobody is looking at.
        Genuinely paused rather than slowed: the visibilitychange listener below
@@ -1381,7 +1425,17 @@ export function initProductBuilder() {
       const s = state.get(slot);
       if (!s || s.demo) continue;              // the seeded example is not ours to style
       const was = s.styleState;
-      s.styleState = row.styleStatus || STYLE_PENDING;
+      /* A slot we have given up on stays given up. The server keeps answering
+         "styling" for a job that is never coming back, so taking that answer
+         would undo the give-up on the very next poll -- the panel flickering
+         between failed and styling for ever, the customer never seeing the
+         retry, the gate never opening. A terminal answer is still worth
+         having: if the styling does eventually land, we take it. */
+      const reported = row.styleStatus || STYLE_PENDING;
+      const stillWorking = reported === STYLE_PENDING || reported === STYLE_STYLING;
+      if (s.styleGaveUp && stillWorking) continue;
+      s.styleGaveUp = false;
+      s.styleState = reported;
       /* When the cutout's clock starts. The server writes the cutout after the
          panel is already done, so this is the moment from which waiting for it
          is reasonable -- and, past CUTOUT_GIVE_UP_MS, no longer is. */
@@ -1463,6 +1517,7 @@ export function initProductBuilder() {
   /* ---------- cutout (standard cover only) ---------- */
   /** Is the cutout question settled for this slot -- arrived, refused, or N/A? */
   const CUTOUT_TEMPLATE = 'cover';
+  const CUTOUT_PANEL_OF_COVER = 'art';
   /* Assume the service is on until the server says otherwise, and let the first
      status poll correct it. The other way round -- assume off, switch on when
      told -- opens Add to basket for the moment before the first poll lands,
@@ -1483,6 +1538,41 @@ export function initProductBuilder() {
 
   /** Which image a slot is currently showing. */
   const variantOf = (s) => (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled');
+
+  /* The cut-out subject is allowed to bleed off the bottom of the page.
+
+     A full picture is a framed photograph and belongs inside the art window.
+     A cut-out person is not: standing them in a box with their legs sliced off
+     at the window's edge looks like a mistake, where running them off the
+     bottom of the cover reads as deliberate -- it is what the printed comics
+     this imitates actually do. So for the cutout only, the clip runs from the
+     art window down to the bottom of the page INCLUDING the wrap, while the
+     top and both sides stay exactly where they were. The line-art overlay is
+     appended after the panels and so still draws over the top of it.
+
+     Nothing about the layout moves: the image is still positioned and panned
+     against the same panel rect, and the same SVG goes to the proof and the
+     print. Only what is allowed to show changes. */
+  const BASE_MAX_ZOOM = 3;
+  /* Deliberately above BASE_MAX_ZOOM: at 3x the cutout's own bottom edge can
+     still sit inside the page on a tall photograph, and being unable to push
+     it out is the whole thing this is for. */
+  const CUTOUT_MAX_ZOOM = 4;
+
+  const bleeds = (id) => wantsCutout() && id === CUTOUT_PANEL_OF_COVER
+    && variantOf(state.get(id) || {}) === 'cutout';
+  const maxZoomFor = (id) => (bleeds(id) ? CUTOUT_MAX_ZOOM : BASE_MAX_ZOOM);
+
+  /** Point the panel's clip at either its art window or the bleeding version. */
+  function applyPanelClip(id) {
+    const n = nodes[id];
+    if (!n || !n.clip || n.clip.tagName !== 'rect') return;   // shaped panels keep their path
+    const p = n.panel;
+    const { c, dy } = geom();
+    // Page bottom including the wrap, which is where the viewBox ends.
+    const height = bleeds(id) ? (c.height + dy) - p.y : p.height;
+    n.clip.setAttribute('height', Math.max(p.height, height));
+  }
 
   /* Fetch the background-removed PNG and hold it alongside the styled JPEG.
      Both are kept: the toggle switches between them without another request,
@@ -1533,6 +1623,7 @@ export function initProductBuilder() {
     s.zoom = 1; s.ox = 0; s.oy = 0;
     n.img.setAttribute('href', url);
     n.img.setAttribute('opacity', 1);
+    applyPanelClip(id);
     layout(id);
     if (selected === id) syncPanel();
     refresh();
@@ -1545,6 +1636,8 @@ export function initProductBuilder() {
     if (!s || s.demo || !saveId) return false;
     if (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING) return false;
     s.styleState = STYLE_PENDING; s.styleError = null;
+    s.styleClockAt = Date.now();        // a retry gets the full four minutes too
+    s.styleGaveUp = false;
     drawSlotFlag(id);
     if (selected === id) syncPanel();
     refresh();
@@ -1772,7 +1865,11 @@ export function initProductBuilder() {
   }
 
   function place(id, file) {
-    if (!hasConsent()) return;          // belt and braces: picker, panel drop, board drop
+    if (!hasConsent()) {                // belt and braces: picker, panel drop, board drop
+      // Keep only the newest file per slot, so dropping twice does not upload twice.
+      pendingConsent = pendingConsent.filter((w) => w.id !== id).concat([{ id, file }]);
+      return;
+    }
     const url = URL.createObjectURL(file), probe = new Image();
     probe.onload = () => {
       if (MODE === 'customer' && tooSmall(probe.naturalWidth, probe.naturalHeight)) {
@@ -1870,7 +1967,7 @@ export function initProductBuilder() {
     });
     hit.addEventListener('wheel', (e) => {
       const s = state.get(id); if (!s) return; e.preventDefault();
-      s.zoom = Math.min(3, Math.max(1, s.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
+      s.zoom = Math.min(maxZoomFor(id), Math.max(1, s.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
       layout(id); if (selected === id) syncPanel();
     }, { passive: false });
     hit.addEventListener('dragover', (e) => e.preventDefault());
@@ -1891,15 +1988,45 @@ export function initProductBuilder() {
   if (consentBox) consentBox.addEventListener('change', () => {
     if (consentBox.checked) consentAt = consentAt || new Date().toISOString();
     else consentAt = null;
+    const box = $('consentBox');
+    if (box) box.classList.remove('b-need');
     $('consentHint').textContent = consentBox.checked
       ? 'Thanks — you can add your photos now.'
       : 'Tick this before adding your first photo.';
     refresh();
+    /* Anything dropped while it was unticked goes in now, in the order it was
+       dropped. Cleared first: place() calls back into hasConsent(), and a
+       queue that is still holding the file would re-queue it for ever. */
+    if (consentBox.checked && pendingConsent.length) {
+      const waiting = pendingConsent;
+      pendingConsent = [];
+      console.log(`[builder] consent given — starting ${waiting.length} held upload(s)`);
+      waiting.forEach((w) => place(w.id, w.file));
+    }
   });
+  /* Photos dropped before the box is ticked. Held in memory rather than
+     refused: the customer has already chosen their picture, and making them
+     find it again to punish them for reading the page in a different order is
+     not a consent flow, it is an obstacle. They go in the moment it is
+     ticked. */
+  let pendingConsent = [];
+
+  function askForConsent() {
+    const hint = $('consentHint');
+    if (hint) hint.textContent = 'Please confirm you own the rights to your photos first';
+    const box = $('consentBox');
+    if (box) {
+      box.classList.remove('b-need');       // restart the flash if it is already on
+      void box.offsetWidth;                 // reflow, or the class re-add is coalesced away
+      box.classList.add('b-need');
+      try { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { box.scrollIntoView(); }
+    }
+    try { consentBox.focus({ preventScroll: true }); } catch (e) { /* not focusable yet */ }
+  }
+
   function hasConsent() {
     if (consented()) return true;
-    $('consentHint').textContent = 'Please tick this before adding photos.';
-    try { consentBox.focus(); } catch (e) { /* not focusable yet */ }
+    askForConsent();
     return false;
   }
 
@@ -1973,6 +2100,7 @@ export function initProductBuilder() {
     $('pSize').textContent = `${n.panel.width} × ${n.panel.height}`;
     $('pImg').textContent = s.demo ? 'example artwork'
       : `${s.natW} × ${s.natH}${s.styled ? ' (styled)' : ''}`;
+    $('zoom').max = String(maxZoomFor(selected));
     $('zoom').value = s.zoom;
     /* Swap is only meaningful from a panel holding one of the customer's
        photographs -- the seeded example is not theirs to move. While a swap is

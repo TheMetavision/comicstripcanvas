@@ -98,6 +98,7 @@ const builderData = JSON.stringify({
     >
       {mode === 'customer' && (
       <section id="consentBox" class="border-4 border-comic-yellow bg-dark-grey p-3">
+        <h3 class="b-h mb-2">Step 1 &mdash; your photos</h3>
         <div class="flex items-start gap-2.5">
           <input type="checkbox" id="consent" class="mt-0.5 h-5 w-5 flex-none accent-comic-red" />
           <label for="consent" class="font-source text-[13px] leading-snug text-off-white">
@@ -108,7 +109,7 @@ const builderData = JSON.stringify({
                class="text-comic-yellow underline hover:text-comic-cyan">privacy policy</a>.
           </label>
         </div>
-        <p class="b-hint" id="consentHint">Tick this before adding your first photo.</p>
+        <p class="b-hint" id="consentHint" aria-live="polite" role="status">Tick this before adding your first photo.</p>
       </section>
       )}
 
@@ -164,7 +165,8 @@ const builderData = JSON.stringify({
       <section>
         <h3 id="panelTitle" class="b-h">Image</h3>
         <p class="b-hint" id="panelEmpty">
-          Click any panel to choose a photo, or drop one straight on. Drag inside a photo to move it.
+          Confirm the rights box above first, then click any panel to choose a photo, or drop one
+          straight on. Drag inside a photo to move it.
         </p>
         <div id="panelControls" hidden>
           <div class="b-stat"><span>Window</span><span id="pSize"></span></div>
@@ -266,6 +268,12 @@ const builderData = JSON.stringify({
         How to build your artwork
       </h3>
       <ol class="mb-4 list-decimal pl-6 font-source text-gray-300">
+        <li class="mb-3 leading-relaxed">
+          <b class="text-comic-yellow">Confirm the rights box.</b> Before your first photo, tick the
+          box at the top of the panel to confirm the pictures are yours to use and that you are happy
+          for them to be styled. Drop a photo in before ticking and we will hold on to it and start
+          as soon as you do.
+        </li>
         <li class="mb-3 leading-relaxed">
           <b class="text-comic-yellow">Add your photos.</b> Click any panel to choose a picture, or
           drag one straight onto it. On the strip you can drop all twelve at once. The comic style
@@ -409,6 +417,17 @@ const builderData = JSON.stringify({
      the red drawn over the slot itself, so the panel and the board agree. */
   .csc-builder .b-hint-bad {
     @apply border-l-4 border-comic-red pl-2 font-semibold text-comic-red;
+  }
+  /* Asking, not scolding: the yellow border the box already has, brightened and
+     pulsed twice so it catches the eye of someone who has just dropped a photo
+     and is looking at the artwork, then settles. */
+  .csc-builder .b-need { animation: b-need-flash 0.6s ease-in-out 2; }
+  @keyframes b-need-flash {
+    0%, 100% { border-color: #FFD400; box-shadow: none; }
+    50% { border-color: #EC008C; box-shadow: 0 0 0 4px rgba(236, 0, 140, 0.35); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .csc-builder .b-need { animation: none; border-color: #EC008C; }
   }
   .csc-builder .b-row { @apply my-2 flex items-center gap-2.5; }
   .csc-builder .b-lab {
