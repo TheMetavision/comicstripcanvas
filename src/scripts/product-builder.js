@@ -1161,39 +1161,62 @@ export function initProductBuilder() {
 
      data-role marks it as screen furniture: both exporters strip it, so it can
      never reach a print file, a draft download or the basket snapshot. */
+  /** @returns {boolean} whether the message changed, so callers can refresh. */
   function drawSlotFlag(id) {
     const n = nodes[id];
-    if (!n) return;
-    if (n.flag) { n.flag.remove(); n.flag = null; }
-    // the reason lives on the hit area, which is what a pointer actually meets
-    if (n.hit) {
-      const old = n.hit.querySelector("title");
-      if (old) old.remove();
-    }
+    if (!n) return false;
     const s = state.get(id);
-    if (!s || s.demo) return;            // the seeded example is exempt from all of this
 
-    /* Three things can be worth saying over a slot, and only one at a time.
+    /* Four things can be worth saying over a slot, and only one at a time.
        Upload first: until the photo is stored there is nothing to style, so a
        styling message would be describing work that has not been queued. */
     let kind = null, lines = null, tip = null;
-    if (s.uploadState === FAILED) {
-      kind = 'bad';
-      lines = ['Upload failed', 'Tap to retry'];
-      tip = `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
-    } else if (s.uploadState === UPLOADED && s.styleState === STYLE_FAILED) {
-      kind = 'bad';
-      lines = isSafetyReason(s.styleError) ? ['Style not applied', 'Use a different photo']
-        : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
-          : ['Style not applied', 'Tap to try again'];
-      tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
-    } else if (s.uploadState === UPLOADED && !s.styled
-      && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING)) {
-      kind = 'busy';
-      lines = ['Applying', 'comic style…'];
-      tip = 'Applying the comic style to this photo…';
+    if (!s || s.demo) { kind = null; }    // the seeded example is exempt from all of this
+    else {
+      if (s.uploadState === FAILED) {
+        kind = 'bad';
+        lines = ['Upload failed', 'Tap to retry'];
+        tip = `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
+      } else if (s.uploadState === UPLOADED && s.styleState === STYLE_FAILED) {
+        kind = 'bad';
+        lines = isSafetyReason(s.styleError) ? ['Style not applied', 'Use a different photo']
+          : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
+            : ['Style not applied', 'Tap to try again'];
+        tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
+      } else if (s.uploadState === UPLOADED && !s.styled
+        && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING)) {
+        kind = 'busy';
+        lines = ['Applying', 'comic style…'];
+        tip = 'Applying the comic style to this photo…';
+      } else if (s.uploadState === UPLOADED && !cutoutSettled(s)) {
+        /* The styled image has landed but the cover's cutout has not. Same
+           overlay, same spinner: the panel would otherwise look finished for the
+           twenty-odd seconds before the subject is lifted off its background,
+           and a customer who thinks it is done reads the next change as the page
+           undoing their work. cutoutSettled() is the same test the Add to basket
+           gate uses, so the panel and the button always agree -- and it is false
+           only on a customer's cover, before the key or the error arrives, and
+           only within the give-up window. */
+        kind = 'busy';
+        lines = ['Applying', 'cutout…'];
+        tip = 'Cutting the background out of this photo…';
+      }
     }
-    if (!kind) return;
+
+    /* Rebuild only when the message actually changes. The spinner is a SMIL
+       animation on a fresh element, so redrawing an unchanged overlay every
+       poll would restart it two or three times a minute and make it stutter. */
+    const key = kind ? `${kind}|${lines.join('|')}|${tip || ''}` : '';
+    if (n.flagKey === key && !!n.flag === !!kind) return false;
+    n.flagKey = key;
+
+    if (n.flag) { n.flag.remove(); n.flag = null; }
+    // the reason lives on the hit area, which is what a pointer actually meets
+    if (n.hit) {
+      const old = n.hit.querySelector('title');
+      if (old) old.remove();
+    }
+    if (!kind) return true;
 
     const bad = kind === 'bad';
     const p = n.panel;
@@ -1260,6 +1283,7 @@ export function initProductBuilder() {
       title.textContent = tip;
       n.hit.appendChild(title);
     }
+    return true;
   }
 
   /** The sentence a customer reads when styling did not work. */
@@ -1498,6 +1522,12 @@ export function initProductBuilder() {
         // 'styling' in between. Nothing special to do -- the swap is the same.
         await applyStyled(slot);
         if (s.cutoutKey && !s.cutoutUrl) { await applyCutout(slot); touched = true; }
+        /* Every poll, not just on a change: this is where a cutoutError lands,
+           and where the give-up deadline quietly passes with no row to notice.
+           drawSlotFlag rebuilds nothing when the message is unchanged, and
+           says so -- a refusal moves the hint and unlocks the gate, and
+           without this neither of them heard about it. */
+        if (drawSlotFlag(slot)) touched = true;
       } else if (was !== s.styleState) {
         drawSlotFlag(slot);
         touched = true;
@@ -1640,6 +1670,7 @@ export function initProductBuilder() {
       });
       s.cutoutUrl = url; s.cutoutEl = probe;
       if (s.variant !== 'styled') showVariant(id, 'cutout');   // default to the cutout
+      drawSlotFlag(id);                    // the panel is finished; drop the overlay
       console.log(`[builder] ${id} cutout ${probe.naturalWidth}x${probe.naturalHeight}`);
     } catch (e) {
       // Not fatal, and not recorded as a cutoutError -- the server's verdict is
@@ -2416,15 +2447,21 @@ export function initProductBuilder() {
     const styleFailed = st === UPLOADED && s.styleState === STYLE_FAILED;
     const styling = st === UPLOADED && !s.styled
       && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING);
+    const cuttingOut = st === UPLOADED && !styling && !cutoutSettled(s);
     up.classList.toggle('b-hint-bad', st === FAILED || styleFailed);
-    up.hidden = !(st === PENDING || st === UPLOADING || st === FAILED || styling || styleFailed || s.styled);
+    up.hidden = !(st === PENDING || st === UPLOADING || st === FAILED || styling || styleFailed
+      || cuttingOut || s.styled);
     up.textContent = st === PENDING ? 'Waiting to upload…'
       : st === UPLOADING ? 'Uploading this photo…'
         : st === FAILED ? `Upload failed — tap the panel to retry. ${s.uploadError || ''}`.trim()
           : styleFailed ? styleFailureText(s)
             : styling ? 'Applying comic style…'
-              : s.styled ? 'Style applied — adjust the crop if you like'
-                : '';
+              /* The cutout is still coming, so the panel is not finished and
+                 must not say it is -- the overlay over the artwork says the
+                 same thing, and Add to basket is shut behind the same test. */
+              : cuttingOut ? 'Applying cutout…'
+                : s.styled ? 'Style applied — adjust the crop if you like'
+                  : '';
   }
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
