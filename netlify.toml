@@ -62,9 +62,11 @@
 
 # studio-save renders the listing image itself, so it needs resvg too -- but it
 # stays a synchronous function because it answers with the new product's URL.
+# sharp joins resvg here now that Replace artwork encodes a web master JPEG:
+# both ship a native .node binary that esbuild cannot inline.
 [functions."studio-save"]
   memory = 3008
-  external_node_modules = ["@resvg/resvg-js"]
+  external_node_modules = ["@resvg/resvg-js", "sharp"]
 
 # The comic styling job. A background function: the model takes ~36s at 2K and
 # ~52s at 4K, well past the 10s a synchronous function gets, and background

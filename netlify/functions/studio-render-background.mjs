@@ -54,6 +54,19 @@ export default async (req) => {
     const printPng = print.asPng();
     fonts.cleanup();
 
+    /* One rollback. Replacing the artwork on an existing product overwrites the
+       only full-resolution copy of what the shop sells, and a redraw that turns
+       out wrong is otherwise a door with no handle on the inside. A brand new
+       product has no print.png yet, so this costs it nothing. */
+    const previous = await store.get(`studio/${id}/print.png`, { type: 'arrayBuffer' }).catch(() => null);
+    if (previous) {
+      const prevMeta = await store.getMetadata(`studio/${id}/print.png`).catch(() => null);
+      await store.set(`studio/${id}/print-prev.png`, previous, {
+        metadata: { ...(prevMeta?.metadata || {}), kind: 'print-prev', supersededAt: new Date().toISOString() },
+      });
+      console.log(`studio-render: kept the previous print master as studio/${id}/print-prev.png`);
+    }
+
     await store.set(`studio/${id}/print.png`, printPng, {
       metadata: { id, kind: 'print', title, width: print.width, height: print.height, dpi: DPI },
     });

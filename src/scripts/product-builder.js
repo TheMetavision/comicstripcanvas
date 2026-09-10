@@ -2817,6 +2817,26 @@ export function initProductBuilder() {
                     : `Add your own photo to every panel — ${total - real} to go.`;
     }
 
+    const openReplace = $('replaceOpen');
+    if (openReplace && !openReplace.dataset.wired) {
+      openReplace.dataset.wired = '1';
+      openReplace.addEventListener('click', () => {
+        const box = $('replaceBox');
+        box.hidden = !box.hidden;
+        if (box.hidden) replaceReset(); else $('replaceSearch').focus();
+      });
+      let searchTimer = null;
+      $('replaceSearch').addEventListener('input', (e) => {
+        const term = e.target.value;
+        replaceReset();
+        clearTimeout(searchTimer);
+        // Typed searches, not a request per keystroke.
+        searchTimer = setTimeout(() => replaceSearch(term), 250);
+      });
+      $('replaceConfirm').addEventListener('click', replaceArtwork);
+      $('replaceCancel').addEventListener('click', () => { $('replaceBox').hidden = true; replaceReset(); });
+    }
+
     const save = $('saveProduct');
     if (save) {
       const titled = ($('studioTitle').value || '').trim().length > 0;
@@ -3326,6 +3346,131 @@ export function initProductBuilder() {
   /* The photos have stayed in the browser up to this point. They are sent once,
      with the recipe and the scene, and the function renders the print master and
      creates a draft product; it never stores the photos. */
+  /* ---------- replace artwork on an existing product (studio only) ---------- */
+  /* A redraw is not a re-listing. This sends the same scene to the same
+     endpoint, but names a product, and the endpoint then touches nothing but
+     the artwork. The confirmation step exists because the two images sitting
+     side by side is the only way to be sure you picked the right product --
+     titles in a catalogue this size are not distinctive enough to trust. */
+  let replaceTarget = null;
+  let replaceBusy = false;
+
+  function replaceReset() {
+    replaceTarget = null;
+    const box = $('replaceCompare');
+    if (box) box.hidden = true;
+    const res = $('replaceResults');
+    if (res) [...res.children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+  }
+
+  async function replaceSearch(term) {
+    const list = $('replaceResults');
+    if (!list) return;
+    list.innerHTML = '';
+    if (term.trim().length < 2) return;
+    let products = [];
+    try {
+      const res = await fetch(`/api/studio-save?q=${encodeURIComponent(term.trim())}`, {
+        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+      });
+      if (res.status === 401) {
+        try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
+        throw new Error('That secret was not accepted — search again to re-enter it.');
+      }
+      if (!res.ok) throw new Error(`search failed (${res.status})`);
+      products = (await res.json()).products || [];
+    } catch (e) {
+      $('replaceHint').textContent = e.message;
+      return;
+    }
+    if (!products.length) { $('replaceHint').textContent = 'Nothing matched.'; return; }
+    $('replaceHint').textContent = 'Pick the product you are replacing.';
+    products.forEach((p) => {
+      const b = document.createElement('button');
+      b.className = 'b-btn mt-1 w-full text-left';
+      b.setAttribute('aria-pressed', 'false');
+      b.textContent = `${p.title || '(untitled)'}${p.draft ? '  · draft' : ''}`;
+      b.addEventListener('click', () => {
+        replaceTarget = p;
+        [...list.children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+        b.setAttribute('aria-pressed', 'true');
+        showComparison(p);
+      });
+      list.appendChild(b);
+    });
+  }
+
+  async function showComparison(p) {
+    const cur = $('replaceCurrent'), next = $('replaceNext'), box = $('replaceCompare');
+    if (!cur || !next || !box) return;
+    cur.src = p.image || '';
+    cur.style.visibility = p.image ? 'visible' : 'hidden';
+    try {
+      const blob = await snapshotThumb();
+      next.src = URL.createObjectURL(blob);
+    } catch (e) {
+      next.removeAttribute('src');
+    }
+    $('replaceWarn').textContent = p.draft
+      ? 'This product is a draft. The change is written straight to it.'
+      : 'This product is published. The change goes to its draft for you to review and publish.';
+    box.hidden = false;
+  }
+
+  async function replaceArtwork() {
+    if (replaceBusy || !replaceTarget) return;
+    const filled = T.panels
+      .map((p) => [p.id, state.get(p.id)])
+      .filter(([, st]) => st && !st.demo && st.file);
+    if (filled.length !== T.panels.length) {
+      $('replaceHint').textContent = 'Every panel needs a photo before this can be saved.';
+      return;
+    }
+    const btn = $('replaceConfirm'), hint = $('replaceHint');
+    replaceBusy = true; btn.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Replacing…';
+    hint.textContent = 'Rendering the artwork…';
+    try {
+      const r = recipe();
+      const fd = new FormData();
+      fd.append('productId', replaceTarget._id);
+      fd.append('sceneSvg', r.svg || '');
+      const rest = Object.assign({}, r); delete rest.svg;
+      fd.append('recipe', JSON.stringify(rest));
+      for (const [id, st] of filled) {
+        const sending = await encodeForUpload(st.file);
+        fd.append('image:' + id, sending, sending.name || (id + '.jpg'));
+      }
+      const res = await fetch('/api/studio-save', {
+        method: 'POST',
+        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
+        throw new Error('That secret was not accepted — press Replace again to re-enter it.');
+      }
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not replace the artwork');
+      studioMsg = {
+        text: `Artwork replaced — ${data.wrote}. Listing ${data.listing.replaced ? 'replaced' : 'added'}, ` +
+              `web master ${data.webMaster.px} ${data.webMaster.replaced ? 'replaced' : 'added'}, ` +
+              `print master rendering. `,
+        href: data.studioUrl,
+        label: `Open "${data.title}" in the Studio`,
+      };
+      btn.textContent = 'Replaced';
+      replaceReset();
+      setTimeout(() => { btn.textContent = label; }, 2500);
+      refresh();
+    } catch (e) {
+      btn.textContent = label;
+      hint.textContent = e.message || 'Could not replace the artwork';
+    } finally {
+      replaceBusy = false; btn.disabled = false;
+    }
+  }
+
   function studioSecret(reset) {
     let v = '';
     try { v = reset ? '' : (sessionStorage.getItem('csc-studio-secret') || ''); } catch (e) { /* private mode */ }

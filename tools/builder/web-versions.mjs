@@ -106,11 +106,10 @@ function findDesigns(dir) {
   return out.sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
-const DERIVATIVES = [
-  { name: '2000.jpg', side: 2000, format: 'jpeg', quality: 85 },
-  { name: '1200.webp', side: 1200, format: 'webp', quality: 80 },
-  { name: '400.webp', side: 400, format: 'webp', quality: 80 },
-];
+/* The sizes live with the function that also makes them, so the studio's
+   Replace artwork path and this tool cannot drift apart. */
+const { DERIVATIVES, WEB_MASTER_KEY, renderDerivative } =
+  await import('../../netlify/functions/_shared/derivatives.mjs');
 
 const kb = (n) => `${Math.round(n / 1024)}`;
 
@@ -130,23 +129,14 @@ async function build(sharp, design, outRoot) {
       results.push({ ...d, dest, bytes: fs.statSync(dest).size, width: meta.width, height: meta.height, skipped: true });
       continue;
     }
-    let pipe = sharp(design.file)
-      .resize(d.side, d.side, { fit: 'inside', withoutEnlargement: true })
-      .toColorspace('srgb');
-    pipe = d.format === 'jpeg'
-      ? pipe.jpeg({ quality: d.quality, chromaSubsampling: '4:4:4' })
-      : pipe.webp({ quality: d.quality });
-    // No withMetadata(): sharp drops EXIF and the ICC profile unless asked to
-    // keep them, which is what "strip metadata" means here.
-    const info = await pipe.toFile(dest);
-    results.push({ ...d, dest, bytes: info.size, width: info.width, height: info.height, skipped: false });
+    const { data, info } = await renderDerivative(sharp, design.file, d);
+    fs.writeFileSync(dest, data);
+    results.push({ ...d, dest, bytes: data.length, width: info.width, height: info.height, skipped: false });
   }
   return { dir, results };
 }
 
 /* ---------- Sanity ---------- */
-
-const WEB_MASTER_KEY = 'web-master';
 
 function sanityClient() {
   const envFile = '.env';

@@ -59,6 +59,37 @@ export default defineType({
       validation: (Rule) => Rule.min(1).error('At least one image is required'),
     }),
     defineField({
+      name: 'artworkHistory',
+      title: 'Artwork History',
+      type: 'array',
+      readOnly: true,
+      description:
+        'The last five times this product’s artwork was replaced from the studio builder. ' +
+        'Written by studio-save; the previous print master is kept in the studio blob store ' +
+        'as print-prev.png for one rollback.',
+      of: [
+        {
+          type: 'object',
+          name: 'artworkChange',
+          fields: [
+            { name: 'at', title: 'When', type: 'datetime' },
+            { name: 'sceneId', title: 'Scene / product id', type: 'string' },
+            { name: 'by', title: 'By', type: 'string' },
+            { name: 'template', title: 'Template', type: 'string' },
+          ],
+          preview: {
+            select: { at: 'at', by: 'by', template: 'template' },
+            prepare({ at, by, template }: any) {
+              return {
+                title: at ? new Date(at).toLocaleString('en-GB') : 'unknown date',
+                subtitle: [by, template].filter(Boolean).join(' · '),
+              };
+            },
+          },
+        },
+      ],
+    }),
+    defineField({
       name: 'printFile',
       title: 'High-Res Print File',
       type: 'file',

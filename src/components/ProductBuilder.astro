@@ -252,6 +252,36 @@ const builderData = JSON.stringify({
           placeholder="e.g. Adam Ant &mdash; Stand and Deliver" />
         <button id="saveProduct" class="b-btn b-btn-primary mt-3 w-full">Save as product</button>
         <p class="b-hint" id="studioHint">Renders the print master and creates a draft product in the Studio.</p>
+
+        <button id="replaceOpen" class="b-btn mt-3 w-full">Replace artwork on existing product&hellip;</button>
+
+        <div id="replaceBox" class="mt-3 border-[3px] border-black bg-dark-grey p-2.5" hidden>
+          <label for="replaceSearch" class="b-lab">Find the product</label>
+          <input id="replaceSearch" type="search" maxlength="80" autocomplete="off"
+            class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"
+            placeholder="Title or slug&hellip;" />
+          <div id="replaceResults" class="mt-2 max-h-52 overflow-y-auto" aria-live="polite"></div>
+
+          <div id="replaceCompare" hidden>
+            <p class="b-lab mt-3">Replacing</p>
+            <div class="flex items-start gap-2">
+              <figure class="m-0 min-w-0 flex-1">
+                <img id="replaceCurrent" alt="The product's current listing image"
+                  class="block w-full border-2 border-black bg-black" />
+                <figcaption class="b-hint mt-1">Now</figcaption>
+              </figure>
+              <figure class="m-0 min-w-0 flex-1">
+                <img id="replaceNext" alt="The design you have just built"
+                  class="block w-full border-2 border-comic-yellow bg-black" />
+                <figcaption class="b-hint mt-1">Your new design</figcaption>
+              </figure>
+            </div>
+            <p class="b-hint b-hint-bad" id="replaceWarn"></p>
+            <button id="replaceConfirm" class="b-btn b-btn-primary mt-2 w-full">Replace the artwork</button>
+            <button id="replaceCancel" class="b-btn mt-2 w-full">Cancel</button>
+          </div>
+          <p class="b-hint" id="replaceHint">Only the artwork changes. Title, price, description and everything else stay as they are.</p>
+        </div>
       </section>
       )}
     </aside>
