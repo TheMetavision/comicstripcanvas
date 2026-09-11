@@ -3675,8 +3675,35 @@ export function initProductBuilder() {
     // The takeover warning belongs to one picked product, so it goes with it.
     const takeover = $('replaceTakeover');
     if (takeover) { takeover.hidden = true; takeover.textContent = ''; }
+    const cat = $('replaceCategory');
+    if (cat) { cat.hidden = true; cat.textContent = ''; }
+    const pick = $('replacePick');
+    if (pick) pick.textContent = '';
     const res = $('replaceResults');
     if (res) [...res.children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+  }
+
+  /* Which catalogue a template belongs in, and what that catalogue is called.
+     The same mapping studio-save uses to file a NEW product; here it decides
+     which results are likely to be what you meant. */
+  const CATEGORY_OF = {
+    cover: 'comic-book-covers', 'cover-fullbleed': 'comic-book-covers',
+    'icon-portrait': 'comic-book-icons', 'icon-landscape': 'comic-book-icons',
+    strip: 'comic-book-strips',
+  };
+  const CATEGORY_LABEL = {
+    'comic-book-covers': 'Comic Book Covers',
+    'comic-book-icons': 'Comic Book Icons',
+    'comic-book-strips': 'Comic Book Strips',
+    personalised: 'Personalised',
+  };
+  const categoryName = (c) => CATEGORY_LABEL[c] || c || 'Uncategorised';
+
+  /* A small version of the same image the comparison pane shows. Sanity's CDN
+     sizes it rather than the browser downloading a 2000px JPEG twelve times. */
+  function thumbUrl(url) {
+    if (!url) return null;
+    return url + (url.includes('?') ? '&' : '?') + 'w=96&h=96&fit=crop&auto=format';
   }
 
   async function replaceSearch(term) {
@@ -3701,11 +3728,50 @@ export function initProductBuilder() {
     }
     if (!products.length) { $('replaceHint').textContent = 'Nothing matched.'; return; }
     $('replaceHint').textContent = 'Pick the product you are replacing.';
-    products.forEach((p) => {
+
+    /* Products for THIS template first. Not filtered out -- redrawing a cover
+       design onto an icon product is unusual but legitimate, and hiding the row
+       would just look like the product does not exist. Sorting says "probably
+       these" without deciding for anyone, and the confirm panel says so plainly
+       if the pick crosses a category. Array.sort is stable, so within each group
+       the server's most-recently-updated-first order survives. */
+    const want = CATEGORY_OF[TK];
+    const ordered = [...products].sort(
+      (x, y) => (y.category === want ? 1 : 0) - (x.category === want ? 1 : 0)
+    );
+
+    ordered.forEach((p) => {
       const b = document.createElement('button');
       b.className = 'b-btn mt-1 w-full text-left';
       b.setAttribute('aria-pressed', 'false');
-      b.textContent = `${p.title || '(untitled)'}${p.draft ? '  · draft' : ''}`;
+
+      /* Title alone is not an identity: "Bruce Lee" is a Cover AND an Icon, and
+         by title those are the same row twice. The picture is what the eye uses;
+         the category and slug are what settles it when two pictures are similar. */
+      const rowEl = document.createElement('span');
+      rowEl.className = 'flex min-w-0 items-center gap-2';
+
+      const thumb = document.createElement('img');
+      thumb.className = 'h-9 w-9 flex-none border-2 border-black bg-black object-contain';
+      thumb.alt = '';
+      thumb.loading = 'lazy';
+      if (p.image) thumb.src = thumbUrl(p.image); else thumb.style.visibility = 'hidden';
+
+      const txt = document.createElement('span');
+      txt.className = 'min-w-0 flex-1';
+      const l1 = document.createElement('span');
+      l1.className = 'block truncate';
+      l1.textContent = `${p.title || '(untitled)'}${p.draft ? '  · draft' : ''}`;
+      const l2 = document.createElement('span');
+      l2.className = 'block truncate font-source text-[11px] opacity-60';
+      l2.textContent = [categoryName(p.category), p.slug].filter(Boolean).join('  ·  ');
+      txt.append(l1, l2);
+
+      rowEl.append(thumb, txt);
+      b.appendChild(rowEl);
+      b.setAttribute('aria-label',
+        `${p.title || 'untitled'}, ${categoryName(p.category)}${p.slug ? ', ' + p.slug : ''}${p.draft ? ', draft' : ''}`);
+
       b.addEventListener('click', () => {
         replaceTarget = p;
         [...list.children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
@@ -3727,6 +3793,29 @@ export function initProductBuilder() {
     } catch (e) {
       next.removeAttribute('src');
     }
+    /* Say WHICH product, in the panel that has the Replace button on it. The
+       list above can scroll and the pick can end up off screen, and "Bruce Lee"
+       narrows nothing down on its own. */
+    const pick = $('replacePick');
+    if (pick) {
+      pick.textContent = [p.title || '(untitled)', categoryName(p.category), p.slug]
+        .filter(Boolean).join('  ·  ') + (p.draft ? '  ·  draft' : '');
+    }
+
+    /* Crossing a category is allowed -- the row was deliberately not hidden --
+       but it is worth saying out loud, because the most likely way to get here
+       is picking the wrong "Bruce Lee". */
+    const cat = $('replaceCategory');
+    if (cat) {
+      const want = CATEGORY_OF[TK];
+      const crosses = !!want && !!p.category && p.category !== want;
+      cat.textContent = crosses
+        ? `Different category from this template — this is ${categoryName(p.category)}, `
+          + `and you are building a ${categoryName(want)} design.`
+        : '';
+      cat.hidden = !crosses;
+    }
+
     /* A product with no "listing" entry is one of the hand-curated catalogue
        ones: its images[0] is a picture somebody chose, and the render takes
        that slot rather than sitting after it -- appending would leave the old

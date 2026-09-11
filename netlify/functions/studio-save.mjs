@@ -135,6 +135,10 @@ export default async (req) => {
        somebody chose, and the render takes that slot. The picker warns before
        the button is pressed rather than after.
 
+       category comes back so the picker can tell two products of the same
+       subject apart -- "Bruce Lee" exists as a Cover and as an Icon, and by
+       title alone those two rows are the same row twice.
+
        It has to be read off the version a save will actually write to, and the
        "drafts" perspective is exactly that version: it overlays each draft on
        its published document and returns one row per product. A product with a
@@ -153,7 +157,7 @@ export default async (req) => {
     const products = await sanity.fetch(
       `*[_type == "product" && (title match $m || slug.current match $m)]
          | order(_updatedAt desc)[0...12]{
-           _id, title, "slug": slug.current,
+           _id, title, "slug": slug.current, category,
            "draft": _originalId in path("drafts.**"),
            "image": images[0].asset->url, "updatedAt": _updatedAt,
            "hasListing": count(images[_key == "listing"]) > 0
