@@ -3161,7 +3161,47 @@ export function initProductBuilder() {
     assetDataCache.set(url, p);
     return p;
   }
-  async function draftSVG() {
+  /* The draft is a watermarked preview, so everything in it is sized for a
+     preview and nothing in it is sized for a press.
+
+     A phone is the constraint. iOS Safari caps a canvas at about 16.7 MP and,
+     past that, drawImage does not throw -- it quietly draws nothing. The draft
+     used to hand it an SVG whose intrinsic size was the whole page, 3867 x 5800
+     for a cover, which is 22 MP before a single pixel is composited: the
+     browser has to rasterise the <img> at that size before it can be scaled
+     into the destination canvas, and that is the step that failed. What came
+     back was a PNG with the vector shapes on it and every raster layer and
+     every glyph missing -- the parts that need that intermediate bitmap. */
+  const DRAFT_MAX_SIDE = 2400;          // 2400 x 1600 = 3.8 MP, a fifth of the cap
+  const DRAFT_RETRY_SIDE = 1600;        // and again at 1.7 MP if a device still says no
+  const DRAFT_IMAGE_SIDE = 2000;        // longest side of an opaque photograph inside it
+  /* A cutout has to stay PNG to keep its alpha, and PNG of a photograph costs
+     roughly six times the bytes of the same pixels as JPEG. Measured on this
+     cover: the panel alone was 4.2 MB of a 5.6 MB document at 2000px, which is
+     over the budget that made the export fail in the first place. 1600 is still
+     more than the draft can show -- the art panel occupies about 1400px of a
+     2400px-tall preview -- so this costs no visible detail. */
+  const DRAFT_CUTOUT_SIDE = 1600;
+  const DRAFT_JPEG_Q = 0.85;
+
+  /** The draft's pixel size for a given scene, longest side capped. */
+  function draftSize(maxSide) {
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    const w = Math.round(vb[2]), h = Math.round(vb[3]);
+    const k = Math.min(1, maxSide / Math.max(w, h));
+    return { width: Math.max(1, Math.round(w * k)), height: Math.max(1, Math.round(h * k)) };
+  }
+
+  async function draftSVG(maxSide = DRAFT_MAX_SIDE) {
+    /* The embedded photographs come down with the raster, not just the canvas.
+       Two things can defeat a phone here and the retry has to answer both: the
+       pixel count of the bitmap, and the sheer size of the SVG data URL it has
+       to parse first. Scaling the images by the same factor takes the document
+       to roughly (1600/2400)^2 of its bytes, so the second attempt is a smaller
+       job in both senses rather than the same document drawn smaller. */
+    const scale = Math.min(1, maxSide / DRAFT_MAX_SIDE);
+    const imageSide = Math.round(DRAFT_IMAGE_SIDE * scale);
+    const cutoutSide = Math.round(DRAFT_CUTOUT_SIDE * scale);
     const c = sceneCopy();
     c.setAttribute('xmlns', SVGNS);
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
@@ -3177,14 +3217,14 @@ export function initProductBuilder() {
        the draft is a preview. A cutout MUST be asked otherwise: JPEG carries no
        alpha, so the transparent background it exists to have would flatten to
        black and the burst would never show through. */
-    const toData = (el, maxSide = 1600, mime = 'image/jpeg') => {
+    const toData = (el, maxSide = DRAFT_IMAGE_SIDE, mime = 'image/jpeg') => {
       const k = Math.min(1, maxSide / Math.max(el.naturalWidth || 1, el.naturalHeight || 1));
       const cv = document.createElement('canvas');
       cv.width = Math.max(1, Math.round((el.naturalWidth || 1) * k));
       cv.height = Math.max(1, Math.round((el.naturalHeight || 1) * k));
       const g = cv.getContext('2d'); if (!g) return null;
       g.drawImage(el, 0, 0, cv.width, cv.height);
-      return mime === 'image/jpeg' ? cv.toDataURL(mime, 0.9) : cv.toDataURL(mime);
+      return mime === 'image/jpeg' ? cv.toDataURL(mime, DRAFT_JPEG_Q) : cv.toDataURL(mime);
     };
     const pending = [];
     c.querySelectorAll('image').forEach((im) => {
@@ -3210,11 +3250,18 @@ export function initProductBuilder() {
                to the JPEG default and the transparency became black. */
             const el = (variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el;
             if (s.cut && s.cutUrl) src = s.cutUrl;          // studio's own chroma cut
-            else if (el) src = toData(el, 1600, looksCutOut(el) ? 'image/png' : 'image/jpeg');
+            /* Draft resolution, never the 4K master. The styled image a cover
+               carries is 4096px on its longest side; inlined whole it is
+               several megabytes of base64 in a document the phone then has to
+               parse before it can draw anything. */
+            else if (el) {
+              const alpha = looksCutOut(el);
+              src = toData(el, alpha ? cutoutSide : imageSide, alpha ? 'image/png' : 'image/jpeg');
+            }
           }
         } else if (role === 'logo' && nodes.logo) {
           const probe = new Image(); probe.src = href;
-          if (probe.complete && probe.naturalWidth) src = toData(probe, 800);
+          if (probe.complete && probe.naturalWidth) src = toData(probe, Math.round(800 * scale));
         }
         if (src) im.setAttribute('href', src);
         return;
@@ -3233,13 +3280,17 @@ export function initProductBuilder() {
 
     /* An intrinsic size, or there is not one. Without width and height the
        browser rasterises this at its default -- 100 x 150 here -- and the
-       download then scales that postage stamp up to 1400px, which is why a
-       draft came back smeared. exportSVG() has always set them; this path
-       never did. The viewBox is the whole board including the wrap, so the
-       aspect is unchanged. */
-    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
-    c.setAttribute('width', Math.round(vb[2]));
-    c.setAttribute('height', Math.round(vb[3]));
+       download then scales that postage stamp up, which is why a draft once
+       came back smeared.
+
+       CAPPED, not the page size. This is the number the browser decodes the
+       <img> at, so it is the one that decides whether a phone can do this at
+       all. The viewBox is untouched and carries the whole board including the
+       wrap, so the aspect and the composition are exactly as before -- only the
+       resolution of the preview changes. */
+    const size = draftSize(maxSide);
+    c.setAttribute('width', size.width);
+    c.setAttribute('height', size.height);
     return new XMLSerializer().serializeToString(c);
   }
 
@@ -3368,19 +3419,53 @@ export function initProductBuilder() {
     g.restore();
   }
 
-  $('download').addEventListener('click', async () => {
-    const s = await draftSVG();
-    const blob = new Blob([s], { type: 'image/svg+xml' });
-    const img = new Image(); const url = URL.createObjectURL(blob);
-    img.onload = () => {
-      /* Studio mode still gets the canvas at full size -- it is producing
-         artwork, not previewing it -- but the watermark now applies to both.
-         A studio draft is still a draft, and one that leaves the building
-         unmarked is one that can come back as somebody's product photo. */
-      const full = MODE === 'studio';
-      const c = T.canvas, k = full ? 1 : 1400 / Math.max(c.width, c.height);
-      const cv = document.createElement('canvas'); cv.width = Math.round(c.width * k); cv.height = Math.round(c.height * k);
+  /* Did anything actually land on the canvas?
+
+     Sampled BEFORE the watermark is stamped, which matters: the watermark is
+     drawn by this code and would put variation on an otherwise empty canvas,
+     hiding exactly the failure this is looking for.
+
+     Every sample identical means nothing was drawn over the white fill. It
+     cannot catch a partial failure -- vector shapes present, rasters missing,
+     which is what a phone actually produced -- but it catches the total one,
+     and the size cap is what addresses the partial. A getImageData that throws
+     is treated as "fine": refusing to hand over a draft we could not inspect
+     is worse than handing over one that might be imperfect. */
+  function canvasHasContent(g, w, h) {
+    try {
+      const fracs = [0.06, 0.28, 0.5, 0.72, 0.94];
+      let first = null;
+      for (const fx of fracs) {
+        for (const fy of fracs) {
+          const d = g.getImageData(Math.round(fx * (w - 1)), Math.round(fy * (h - 1)), 1, 1).data;
+          const key = `${d[0]},${d[1]},${d[2]},${d[3]}`;
+          if (first === null) first = key;
+          else if (key !== first) return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  /** One attempt at a draft PNG. Throws with a reason rather than returning a blank. */
+  async function renderDraft(maxSide) {
+    const text = await draftSVG(maxSide);
+    const size = draftSize(maxSide);
+    const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    try {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        // iOS gives no reason; it simply refuses a data URL it thinks is too big.
+        im.onerror = () => rej(new Error('the device would not decode the preview'));
+        im.src = url;
+      });
+      const cv = document.createElement('canvas');
+      cv.width = size.width; cv.height = size.height;
       const g = cv.getContext('2d');
+      if (!g) throw new Error('no 2D canvas context');
       /* Opaque white first. Anything see-through in the scene -- a cut-out
          photograph on a template with no background behind it, most of all --
          otherwise survives into the PNG as alpha, and a PNG with holes in it
@@ -3390,15 +3475,61 @@ export function initProductBuilder() {
          too, so this is the draft catching up with both. */
       g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, cv.width, cv.height);
       g.drawImage(img, 0, 0, cv.width, cv.height);
+      if (!canvasHasContent(g, cv.width, cv.height)) throw new Error('the canvas came back blank');
+
+      /* Studio drafts are watermarked too. A studio draft is still a draft, and
+         one that leaves the building unmarked is one that can come back as
+         somebody's product photo. */
       stampWatermark(g, cv.width, cv.height);
-      cv.toBlob((b) => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(b);
-        a.download = `${TK}-${full ? 'studio' : 'draft'}.png`; a.click();
-      });
+
+      const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('the canvas would not encode');
+      return { blob, size, svgBytes: text.length };
+    } finally {
       URL.revokeObjectURL(url);
-    };
-    img.src = url;
+    }
+  }
+
+  $('download').addEventListener('click', async () => {
+    const btn = $('download'), hint = $('downloadHint');
+    if (btn.disabled) return;
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    if (hint) { hint.hidden = true; hint.textContent = ''; }
+    try {
+      /* Once at preview size, once smaller. A device that cannot manage 2400
+         sometimes manages 1600, and the second attempt costs a few seconds
+         against handing somebody a blank PNG they will not notice is blank
+         until they open it. */
+      let out = null, why = null;
+      for (const side of [DRAFT_MAX_SIDE, DRAFT_RETRY_SIDE]) {
+        try { out = await renderDraft(side); break; }
+        catch (e) {
+          why = why || e;
+          console.warn(`[builder] draft at ${side}px failed: ${e.message}`);
+        }
+      }
+      if (!out) throw why || new Error('unknown');
+
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(out.blob);
+      a.download = `${TK}-${MODE === 'studio' ? 'studio' : 'draft'}.png`;
+      a.click();
+      // The old code never revoked this, so every draft leaked its bitmap.
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      console.log(`[builder] draft ${out.size.width}x${out.size.height}, `
+        + `svg ${Math.round(out.svgBytes / 1024)} KB, png ${Math.round(out.blob.size / 1024)} KB`);
+    } catch (e) {
+      console.warn(`[builder] draft export failed: ${e.message}`);
+      if (hint) {
+        hint.textContent = "Couldn't create the draft on this device — try on a desktop.";
+        hint.hidden = false;
+      }
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
   });
+
   /* ---------- add to basket ---------- */
   /* Saves the build first -- recipe, scene and the photos themselves -- then puts a
      line in the basket carrying the returned pendingPersonalisation id. The photos
