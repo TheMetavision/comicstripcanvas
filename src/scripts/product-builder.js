@@ -273,14 +273,7 @@ export function initProductBuilder() {
       if (f.stroke === undefined) f.stroke = STROKE[f.id] || null;
       f.strokeScale = f.strokeScale || 1; f.sizeScale = f.sizeScale || 1;
       if (f.linked === undefined) f.linked = true;
-      if (!f.pos) {
-        if (f.boxRef) {
-          const b = T.boxes.find((x) => x.id === f.boxRef);
-          const s = f.slot && (b.slots || []).find((o) => o.id === f.slot);
-          f.pos = s ? { x: b.x + b.dx + s.x + s.w / 2, y: b.y + b.dy + s.y + s.h / 2 }
-            : ((a) => ({ x: a.cx, y: a.cy }))(boxArea(b));
-        } else f.pos = { x: f.cx, y: f.cy };
-      }
+      if (!f.pos) f.pos = defaultPos(f);
     });
     bg = T.bg && T.bg.type === 'colour' ? T.bg.value : null;
     [...sw.children].forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === key));
@@ -643,6 +636,25 @@ export function initProductBuilder() {
     const h = Math.max(n.h * 0.35, Math.min(n.h, limit - top));
     return { cx: left + n.w / 2, cy: top + h / 2, w: n.w, h };
   }
+  /* Where a text field sits when nobody has moved it.
+     Its own centre for a fixed field, the middle of its slot or box for one
+     that belongs to a caption box. Extracted because two things need it now:
+     the first layout, and Recentre putting a moved field back. */
+  function defaultPos(f) {
+    if (!f.boxRef) return { x: f.cx, y: f.cy };
+    const b = T.boxes.find((x) => x.id === f.boxRef);
+    const s = f.slot && (b.slots || []).find((o) => o.id === f.slot);
+    if (s) return { x: b.x + b.dx + s.x + s.w / 2, y: b.y + b.dy + s.y + s.h / 2 };
+    const a = boxArea(b);
+    return { x: a.cx, y: a.cy };
+  }
+
+  /** Put a field back on its default centre, undoing any Move text drag. */
+  function recentreText(f) {
+    f.pos = defaultPos(f);
+    layoutText(f);
+  }
+
   function anchorOf(f) {
     if (f.boxRef) {
       const b = T.boxes.find((x) => x.id === f.boxRef);
@@ -2730,6 +2742,18 @@ export function initProductBuilder() {
         cb.addEventListener('change', () => { f.linked = cb.checked; });
         lk.append(cb, ll); w.appendChild(lk);
       }
+      /* Move text is a manual override, so there has to be a way back from it.
+         Without this a field nudged by a drag stayed nudged for the life of the
+         build, and on the masthead that is the difference between text centred
+         in its bar and text sitting against the publisher stamp. */
+      const rc = document.createElement('div'); rc.className = 'b-row';
+      const rb = document.createElement('button'); rb.type = 'button';
+      rb.className = 'b-btn w-full';
+      rb.textContent = 'Recentre';
+      rb.title = 'Put this text back in the middle of its bar';
+      rb.addEventListener('click', () => { recentreText(f); });
+      rc.appendChild(rb); w.appendChild(rc);
+
       const an = document.createElement('div'); an.className = 'b-row';
       const al = document.createElement('label'); al.textContent = 'Angle'; al.className = 'b-lab';
       const ar = document.createElement('input'); ar.type = 'range'; ar.min = -30; ar.max = 30; ar.step = 0.5;
