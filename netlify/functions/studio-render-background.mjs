@@ -3,15 +3,15 @@ import { getStore } from '@netlify/blobs';
 import sharp from 'sharp';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
-import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_shared/derivatives.mjs';
+import { WEB_MASTER, renderDerivative, setListingImage } from './_shared/derivatives.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
  *
  * studio-save validates, writes the draft and its history entry, and stops.
  * EVERYTHING visual is made here: the scene is composed, then the print master,
- * the listing image, the web master, the Sanity asset uploads and the images[]
- * writes.
+ * the one web image the shop shows, the Sanity asset uploads and the images[]
+ * write.
  *
  * That split is not tidiness. A synchronous function has ten seconds in
  * production; composing and rasterising this took ~37s measured locally and
@@ -28,8 +28,6 @@ import { WEB_MASTER, WEB_MASTER_KEY, LISTING_KEY, renderDerivative } from './_sh
  * copy.
  */
 
-const LISTING_WIDTH = 1600;
-
 /* A blob id is either a fresh studio id or, when a product is being redrawn,
    the product's own id -- so this can no longer insist on the studio- shape. */
 const isId = (s) => typeof s === 'string' && /^[A-Za-z0-9._-]{1,120}$/.test(s) && !s.includes('..');
@@ -39,15 +37,6 @@ const sanityClient = () => (process.env.SANITY_WRITE_TOKEN ? createClient({
   projectId: 'lwbwahym', dataset: 'production', apiVersion: '2026-04-11',
   token: process.env.SANITY_WRITE_TOKEN, useCdn: false,
 }) : null);
-
-/** images[] with one entry set under a fixed key -- replaced, or appended. */
-function putImage(images, key, assetId, alt) {
-  const list = Array.isArray(images) ? images.slice() : [];
-  const entry = { _type: 'image', _key: key, asset: { _type: 'reference', _ref: assetId }, alt };
-  const at = list.findIndex((i) => i && i._key === key);
-  if (at >= 0) list[at] = entry; else list.push(entry);
-  return { images: list, replaced: at >= 0 };
-}
 
 export default async (req) => {
   let id = null;
@@ -131,51 +120,42 @@ export default async (req) => {
       metadata: { id, kind: 'print', title, width: print.width, height: print.height, dpi: DPI },
     });
 
-    /* ---- the pictures the shop actually shows ---- */
-    /* Rasterised, NOT downscaled from the print -- and that is a measured
-       choice, not an oversight.
+    /* ---- the picture the shop actually shows ---- */
+    /* ONE web image, not two. This used to rasterise the scene twice more: a
+       1600px PNG stored as images[_key="listing"] and a 2000px JPEG stored as
+       images[_key="web-master"], which put two near-identical pictures of the
+       same artwork next to each other in the product gallery. The JPEG wins on
+       every count -- larger, sRGB-converted, a twentieth of the bytes -- so it
+       is the only one now, and it keeps the "listing" key so nothing reading
+       images[0] or querying by key has to change.
 
-       Deriving these from the print master with sharp is the obvious tidy-up:
-       one Resvg pass instead of three, no re-parsing the same multi-megabyte
-       SVG or re-decoding the 4200 x 5800 overlay and background each time. It
-       is faster. It is also worse HERE, because it trades the one resource
-       this function died of for the one it has to spare. Measured on the real
-       production scene, peak RSS over three runs each:
+       The 1600px pass went with it. Its blob, studio/<id>/listing.png, had no
+       reader anywhere in the repo; it existed to become the Sanity asset that
+       no longer exists. The 2000px JPEG is written to the store in its place,
+       under a name that matches what is in it.
 
-         three Resvg passes (this)      544 MB   <- leanest
-         web master from the listing    629 MB
-         both from the print PNG        611 MB
-         both from the raw pixmap       801 MB
-
-       A small rasterise allocates a small surface; any sharp downscale has to
-       materialise a large decoded source first. Rendering at 1600 costs less
-       than decoding 4800 x 7199 to shrink it. The time it saves is free
-       anyway: this is a background function with fifteen minutes and a job
-       that takes about twenty seconds.
-
-       Revisit if the print ever gets big enough that a third pass costs real
-       money -- but not before `m` on this function is confirmed above 1024. */
-    const listing = rasterise(svg, fontFiles, LISTING_WIDTH);
-    const listingPng = listing.asPng();
-    await store.set(`studio/${id}/listing.png`, listingPng, {
-      metadata: { id, kind: 'listing', title, width: listing.width, height: listing.height },
-    });
-
-    /* Rasterise big enough that fitting to 2000 is a downscale. renderDerivative
-       never upscales, so a listing-sized source would quietly leave the web
-       master smaller than its name claims. */
-    const portrait = listing.height > listing.width;
+       Still RASTERISED at web size rather than downscaled from the print, which
+       is measured rather than assumed -- see the note that used to live here,
+       now in the commit for chore/single-listing-image. A small rasterise
+       allocates a small surface; a sharp downscale has to materialise a decoded
+       4800 x 7199 first, and this function has been killed once already for
+       what it allocates. Dropping a pass makes that strictly better. */
+    const portrait = print.height > print.width;
     const webRasterWidth = Math.ceil(portrait
-      ? WEB_MASTER.side * (listing.width / listing.height)
+      ? WEB_MASTER.side * (print.width / print.height)
       : WEB_MASTER.side);
     const webSource = rasterise(svg, fontFiles, webRasterWidth).asPng();
-    const { data: webJpeg, info: webInfo } = await renderDerivative(sharp, webSource, WEB_MASTER);
+    const { data: listingJpeg, info: listingInfo } = await renderDerivative(sharp, webSource, WEB_MASTER);
 
     /* Only now. cleanup() deletes the directory the font files are IN, and
        resvg reads them off disk on every rasterise -- calling it after the
-       print, as this once did, left the listing and the web master to render
-       their text in whatever resvg fell back to. */
+       print, as this once did, left the web image to render its text in
+       whatever resvg fell back to. */
     cleanupFonts(); cleanupFonts = null;
+
+    await store.set(`studio/${id}/listing.jpg`, listingJpeg, {
+      metadata: { id, kind: 'listing', title, width: listingInfo.width, height: listingInfo.height },
+    });
 
     /* ---- attach them ---- */
     const sanity = sanityClient();
@@ -190,24 +170,28 @@ export default async (req) => {
     let attached = 'no document';
     if (sanity && docId) {
       const slug = (title || 'artwork').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'artwork';
-      const [listingAsset, webAsset, printAsset] = await Promise.all([
-        sanity.assets.upload('image', listingPng, { filename: `${slug}.png`, contentType: 'image/png' }),
-        sanity.assets.upload('image', webJpeg, { filename: `${slug}-${WEB_MASTER.side}.jpg`, contentType: 'image/jpeg' }),
+      const [listingAsset, printAsset] = await Promise.all([
+        sanity.assets.upload('image', listingJpeg, {
+          filename: `${slug}-${WEB_MASTER.side}.jpg`, contentType: 'image/jpeg',
+        }),
         /* printFile is what a human fulfils from. Leaving it pointing at the
            artwork this render just replaced is how the wrong design gets
            printed; the reference it used to hold is in artworkHistory. */
         sanity.assets.upload('file', printPng, { filename: `${slug}-print.png`, contentType: 'image/png' }),
       ]);
 
+      /* This is also the migration. Every product rendered before this change
+         carries a second, near-identical "web-master" entry; setListingImage
+         drops it, so a redraw quietly tidies the gallery as it goes and nothing
+         has to be migrated by hand. */
       const current = await sanity.getDocument(docId);
-      const withListing = putImage(current?.images, LISTING_KEY, listingAsset._id, `${title} — Comic Strip Canvas`);
-      const withWeb = putImage(withListing.images, WEB_MASTER_KEY, webAsset._id, `${title} — Comic Strip Canvas`);
+      const listing = setListingImage(current?.images, listingAsset._id, `${title} — Comic Strip Canvas`);
       await sanity.patch(docId).set({
-        images: withWeb.images,
+        images: listing.images,
         printFile: { _type: 'file', asset: { _type: 'reference', _ref: printAsset._id } },
       }).commit();
-      attached = `${docId} (listing ${withListing.replaced ? 'replaced' : 'added'}, ` +
-        `web ${withWeb.replaced ? 'replaced' : 'added'}, printFile set)`;
+      attached = `${docId} (listing ${listing.replaced ? 'replaced' : 'added'}` +
+        `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;
     } else if (docId) {
       console.error('studio-render: SANITY_WRITE_TOKEN is not set — the pictures exist but nothing was attached');
     }
@@ -228,8 +212,8 @@ export default async (req) => {
 
     console.log(
       `studio-render: "${title}" ${id} -> print ${print.width} x ${print.height} px ` +
-      `(${printPng.length} B) @ ${DPI}dpi, listing ${listing.width}x${listing.height}, ` +
-      `web master ${webInfo.width}x${webInfo.height} (${webJpeg.length} B) -> ${attached}`
+      `(${printPng.length} B) @ ${DPI}dpi, listing ${listingInfo.width}x${listingInfo.height} ` +
+      `(${listingJpeg.length} B jpeg) -> ${attached}`
     );
     return new Response('Rendered', { status: 200 });
   } catch (err) {

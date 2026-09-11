@@ -26,10 +26,15 @@ const require = createRequire(path.join(process.cwd(), 'package.json'));
  * a print master carries a print profile and a browser handed one without
  * conversion renders it wrong.
  *
- * --upload attaches the 2000px JPEG to the product as an entry in `images[]`
- * keyed "web-master". The key is what makes it idempotent: re-running replaces
- * that entry rather than appending a second copy. Nothing else in images[] is
- * touched, so the listing image studio-save created stays where it is.
+ * --upload attaches the 2000px JPEG to the product as the entry in `images[]`
+ * keyed "listing" -- the one the whole frontend reads as images[0]. The key is
+ * what makes it idempotent: re-running replaces that entry rather than
+ * appending a second copy. Nothing else in images[] is touched, so lifestyle
+ * mockups at images[1..] stay where they are.
+ *
+ * It also removes the old "web-master" entry if the product still has one. The
+ * renderer used to write both -- a 1600px PNG and this JPEG -- and they showed
+ * as two near-identical thumbnails in the gallery.
  *
  * Designs are matched to products BY ID, not by name. studio-save uses one
  * value for both halves -- the blob goes to studio/<id>/print.png and the
@@ -108,7 +113,7 @@ function findDesigns(dir) {
 
 /* The sizes live with the function that also makes them, so the studio's
    Replace artwork path and this tool cannot drift apart. */
-const { DERIVATIVES, WEB_MASTER_KEY, renderDerivative } =
+const { DERIVATIVES, LISTING_KEY, LEGACY_WEB_MASTER_KEY, renderDerivative, setListingImage } =
   await import('../../netlify/functions/_shared/derivatives.mjs');
 
 const kb = (n) => `${Math.round(n / 1024)}`;
@@ -183,21 +188,20 @@ async function findProduct(sanity, design) {
 }
 
 /**
- * Put the web master into images[] under a fixed _key, replacing whatever was
- * there before. Sanity has no "upsert into an array", so it is read, rewritten
- * and set -- which is safe here because the key makes the operation the same
+ * Put the 2000px JPEG into images[] under the listing key, replacing whatever
+ * was there before. Sanity has no "upsert into an array", so it is read,
+ * rewritten and set -- safe here because the key makes the operation the same
  * whether it has run before or not.
+ *
+ * The surgery itself is setListingImage, shared with the studio renderer so
+ * the tool and the renderer cannot disagree about what a product's images look
+ * like. It also drops the stale "web-master" entry, which is how a product
+ * uploaded before the two keys were collapsed gets tidied by a re-run.
  */
 async function attach(sanity, doc, assetId, alt) {
-  const images = Array.isArray(doc.images) ? doc.images.slice() : [];
-  const entry = {
-    _type: 'image', _key: WEB_MASTER_KEY,
-    asset: { _type: 'reference', _ref: assetId }, alt,
-  };
-  const at = images.findIndex((i) => i && i._key === WEB_MASTER_KEY);
-  if (at >= 0) images[at] = entry; else images.push(entry);
+  const { images, replaced, removedLegacy } = setListingImage(doc.images, assetId, alt);
   await sanity.patch(doc._id).set({ images }).commit();
-  return at >= 0 ? 'replaced' : 'added';
+  return (replaced ? 'replaced' : 'added') + (removedLegacy ? ' +dropped web-master' : '');
 }
 
 /* ---------- main ---------- */
@@ -248,8 +252,10 @@ async function main() {
           uploaded = design.id ? 'no product (id or slug)' : 'no product';
           failures++;
         } else if (DRY_RUN) {
-          const at = (doc.images || []).findIndex((i) => i && i._key === WEB_MASTER_KEY);
-          uploaded = `would ${at >= 0 ? 'replace' : 'add'} on ${doc.slug || doc._id} (by ${doc.matchedBy})`;
+          const has = (doc.images || []).some((i) => i && i._key === LISTING_KEY);
+          const stale = (doc.images || []).some((i) => i && i._key === LEGACY_WEB_MASTER_KEY);
+          uploaded = `would ${has ? 'replace' : 'add'}${stale ? ' +drop web-master' : ''} ` +
+            `on ${doc.slug || doc._id} (by ${doc.matchedBy})`;
         } else {
           const asset = await sanity.assets.upload('image', fs.createReadStream(master.dest), {
             filename: `${design.slug}-2000.jpg`, contentType: 'image/jpeg',

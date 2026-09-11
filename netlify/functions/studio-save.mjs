@@ -32,8 +32,8 @@ import { startRender } from './_shared/studio-render-trigger.mjs';
  *
  * It also REPLACES the artwork on a product that already exists. Pass a
  * productId and it writes to that product instead of creating one, touching
- * only artworkHistory here and, through the renderer, images[_key="listing"],
- * images[_key="web-master"] and printFile. Title, slug, price, description,
+ * only artworkHistory here and, through the renderer, images[_key="listing"]
+ * and printFile. Title, slug, price, description,
  * SEO, category, tags and everything else are left exactly as they are -- the
  * point of the mode is that a design can be redrawn without re-entering the
  * shop's own copy.
