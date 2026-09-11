@@ -26,11 +26,17 @@ const require = createRequire(path.join(process.cwd(), 'package.json'));
  * a print master carries a print profile and a browser handed one without
  * conversion renders it wrong.
  *
- * --upload attaches the 2000px JPEG to the product as the entry in `images[]`
- * keyed "listing" -- the one the whole frontend reads as images[0]. The key is
- * what makes it idempotent: re-running replaces that entry rather than
- * appending a second copy. Nothing else in images[] is touched, so lifestyle
- * mockups at images[1..] stay where they are.
+ * --upload attaches the 2000px JPEG to the product as `images[0]` -- the slot
+ * the whole frontend reads as the product image -- keyed "listing". Re-running
+ * replaces that entry rather than appending a second copy.
+ *
+ * On a hand-curated product there is no "listing" entry, and images[0] is a
+ * picture somebody chose. This TAKES THAT SLOT, because appending would leave
+ * the old image on the site and put the one you just uploaded at the end of the
+ * array where nothing shows it. The ref it displaces is written to
+ * artworkHistory as prevListingAssetId, which is the way back. Everything from
+ * images[1] on -- the curated gallery, and later the lifestyle mockups -- is
+ * left exactly as it is.
  *
  * It also removes the old "web-master" entry if the product still has one. The
  * renderer used to write both -- a 1600px PNG and this JPEG -- and they showed
@@ -113,7 +119,8 @@ function findDesigns(dir) {
 
 /* The sizes live with the function that also makes them, so the studio's
    Replace artwork path and this tool cannot drift apart. */
-const { DERIVATIVES, LISTING_KEY, LEGACY_WEB_MASTER_KEY, renderDerivative, setListingImage } =
+const { DERIVATIVES, LISTING_KEY, LEGACY_WEB_MASTER_KEY, renderDerivative, setListingImage,
+        recordDisplacedListing } =
   await import('../../netlify/functions/_shared/derivatives.mjs');
 
 const kb = (n) => `${Math.round(n / 1024)}`;
@@ -175,13 +182,13 @@ function sanityClient() {
 async function findProduct(sanity, design) {
   if (design.id) {
     const byId = await sanity.fetch(
-      '*[_id == $id || _id == $draft][0]{ _id, title, "slug": slug.current, images }',
+      '*[_id == $id || _id == $draft][0]{ _id, title, "slug": slug.current, images, artworkHistory }',
       { id: design.id, draft: `drafts.${design.id}` }
     );
     if (byId) return { ...byId, matchedBy: 'id' };
   }
   const bySlug = await sanity.fetch(
-    '*[_type == "product" && slug.current == $slug][0]{ _id, title, "slug": slug.current, images }',
+    '*[_type == "product" && slug.current == $slug][0]{ _id, title, "slug": slug.current, images, artworkHistory }',
     { slug: design.slug }
   );
   return bySlug ? { ...bySlug, matchedBy: 'slug' } : null;
@@ -199,9 +206,19 @@ async function findProduct(sanity, design) {
  * uploaded before the two keys were collapsed gets tidied by a re-run.
  */
 async function attach(sanity, doc, assetId, alt) {
-  const { images, replaced, removedLegacy } = setListingImage(doc.images, assetId, alt);
-  await sanity.patch(doc._id).set({ images }).commit();
-  return (replaced ? 'replaced' : 'added') + (removedLegacy ? ' +dropped web-master' : '');
+  const { images, mode, displaced, removedLegacy } = setListingImage(doc.images, assetId, alt);
+  /* Unlike the renderer this has no history entry of its own, so it writes one.
+     It matters most here: run against a hand-curated product, this takes over
+     an images[0] somebody chose, and prevListingAssetId is the only record of
+     what used to be there. */
+  const history = recordDisplacedListing(doc.artworkHistory, displaced, { by: 'web-versions' });
+
+  const patch = { images };
+  if (history.recorded) patch.artworkHistory = history.history;
+  await sanity.patch(doc._id).set(patch).commit();
+
+  return (mode === 'displaced' ? 'TOOK OVER images[0]' : mode === 'first' ? 'added' : 'replaced')
+    + (removedLegacy ? ' +dropped web-master' : '');
 }
 
 /* ---------- main ---------- */
@@ -252,9 +269,13 @@ async function main() {
           uploaded = design.id ? 'no product (id or slug)' : 'no product';
           failures++;
         } else if (DRY_RUN) {
-          const has = (doc.images || []).some((i) => i && i._key === LISTING_KEY);
-          const stale = (doc.images || []).some((i) => i && i._key === LEGACY_WEB_MASTER_KEY);
-          uploaded = `would ${has ? 'replace' : 'add'}${stale ? ' +drop web-master' : ''} ` +
+          const live = (doc.images || []).filter((i) => i && i._key !== LEGACY_WEB_MASTER_KEY);
+          const has = live.some((i) => i && i._key === LISTING_KEY);
+          const stale = (doc.images || []).length !== live.length;
+          const what = has ? 'replace listing'
+            : live.length ? `TAKE OVER images[0] (${live[0]?.asset?._ref || 'no asset'})`
+              : 'add as the only image';
+          uploaded = `would ${what}${stale ? ' +drop web-master' : ''} ` +
             `on ${doc.slug || doc._id} (by ${doc.matchedBy})`;
         } else {
           const asset = await sanity.assets.upload('image', fs.createReadStream(master.dest), {

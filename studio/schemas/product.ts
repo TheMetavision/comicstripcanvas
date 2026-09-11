@@ -64,9 +64,10 @@ export default defineType({
       type: 'array',
       readOnly: true,
       description:
-        'The last five times this product’s artwork was replaced from the studio builder. ' +
-        'Written by studio-save; the previous print master is kept in the studio blob store ' +
-        'as print-prev.png for one rollback.',
+        'The last five times this product’s artwork was replaced from the studio builder, ' +
+        'or its product image was taken over by a render or a web-versions upload. ' +
+        'Written by studio-save and the renderer; the previous print master is kept in the ' +
+        'studio blob store as print-prev.png for one rollback.',
       of: [
         {
           type: 'object',
@@ -81,6 +82,16 @@ export default defineType({
               title: 'Previous print file asset',
               type: 'string',
               description: 'What printFile pointed at before this redraw — the way back if it was wrong.',
+            },
+            {
+              name: 'prevListingAssetId',
+              title: 'Previous product image asset',
+              type: 'string',
+              description:
+                'What images[0] pointed at before this change took that slot. Set when a render ' +
+                'or a web-versions upload replaces a product image somebody else chose — the ' +
+                'hand-curated catalogue products keep their gallery, but their first image is ' +
+                'taken over, and this is the way back to it.',
             },
           ],
           preview: {

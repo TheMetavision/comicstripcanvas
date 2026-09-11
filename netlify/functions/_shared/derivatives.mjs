@@ -42,30 +42,92 @@ export const LISTING_KEY = 'listing';
  */
 export const LEGACY_WEB_MASTER_KEY = 'web-master';
 
+/** How many artwork changes a product remembers. */
+export const HISTORY_LIMIT = 5;
+
 /**
  * images[] with the product image set under LISTING_KEY, and any stale
  * web-master entry taken out.
  *
  * Both things that attach product images go through here -- the renderer and
- * the batch tool -- because "replace one entry by key and drop another" is
- * exactly the kind of small array surgery that drifts into two versions.
+ * the batch tool -- because this is exactly the kind of small array surgery
+ * that drifts into two versions.
  *
- * Order matters and is preserved: the whole frontend reads images[0] as the
- * product image (ProductCard, the product page's main image, the category
- * carousels, related products), so an existing listing entry is replaced where
- * it already sits rather than moved to the end. Lifestyle mockups added later
- * sit at images[1..] and show as the gallery's thumbnail strip.
+ * THE PRODUCT IMAGE IS images[0]. Not "the entry keyed listing" -- that is only
+ * how the studio's own products happen to be arranged. Every consumer on the
+ * site reads position zero: ProductCard, the product page's main image, the
+ * category carousels on the home and services pages, related products. So that
+ * is the slot this writes to, and there are three ways in:
+ *
+ *   listing    an entry keyed "listing" already exists -> replace it in place
+ *   displaced  no such entry, but images[0] exists -> REPLACE images[0], taking
+ *              over its slot and its role, and keep its asset ref so the
+ *              caller can record what was pushed out
+ *   first      images[] is empty -> it becomes the only entry
+ *
+ * "displaced" is the one to be careful with, and it is what happens to all 292
+ * hand-curated catalogue products: their images[0] is a picture somebody chose,
+ * and appending would have left it on the site while the render it was supposed
+ * to produce sat invisibly at the end of the array. Replacing is right, but it
+ * does mean a curated image stops being displayed -- hence `displaced`, which
+ * both callers write into artworkHistory so there is a way back.
+ *
+ * images[1..] are never touched in any of the three cases. That is the curated
+ * gallery, and later the lifestyle mockups.
  */
 export function setListingImage(images, assetId, alt) {
-  const list = (Array.isArray(images) ? images : [])
-    .filter((i) => i && i._key !== LEGACY_WEB_MASTER_KEY);
-  const removedLegacy = (Array.isArray(images) ? images : []).length !== list.length;
+  const original = Array.isArray(images) ? images : [];
+  const list = original.filter((i) => i && i._key !== LEGACY_WEB_MASTER_KEY);
+  const removedLegacy = list.length !== original.length;
 
   const entry = { _type: 'image', _key: LISTING_KEY, asset: { _type: 'reference', _ref: assetId }, alt };
   const at = list.findIndex((i) => i && i._key === LISTING_KEY);
-  if (at >= 0) list[at] = entry; else list.push(entry);
+  const slot = at >= 0 ? at : 0;
+  const mode = at >= 0 ? 'listing' : (list.length ? 'displaced' : 'first');
 
-  return { images: list, replaced: at >= 0, removedLegacy };
+  /* What was in the slot before. Null when there was nothing there, which is
+     the only case where nothing is being taken away from anybody. */
+  const displaced = (list[slot] && list[slot].asset && list[slot].asset._ref) || null;
+
+  if (mode === 'first') list.push(entry); else list[slot] = entry;
+
+  return { images: list, mode, displaced, removedLegacy, replaced: mode !== 'first' };
+}
+
+/**
+ * artworkHistory with the displaced product image recorded on the change that
+ * displaced it.
+ *
+ * The renderer already writes an entry per redraw (studio-save creates it, with
+ * the printFile reference it is about to overwrite); this fills in the other
+ * half, which is only knowable at attach time because it is whatever the
+ * document's images[0] happened to be a moment before. The batch tool has no
+ * entry of its own, so it gets one.
+ *
+ * @param {Array}  history   the document's artworkHistory, or undefined
+ * @param {string} displaced asset ref that is no longer the product image
+ * @param {object} opts      { by, ownEntry } -- ownEntry true when the caller
+ *                           already wrote the entry this belongs on
+ */
+export function recordDisplacedListing(history, displaced, { by = 'studio', ownEntry = false } = {}) {
+  if (!displaced) return { history: Array.isArray(history) ? history : [], recorded: false };
+  const list = (Array.isArray(history) ? history : []).slice();
+
+  /* Fill in the entry this change already has rather than adding a second one
+     describing the same event. */
+  if (ownEntry && list[0]) {
+    list[0] = { ...list[0], prevListingAssetId: displaced };
+    return { history: list, recorded: true };
+  }
+
+  list.unshift({
+    _type: 'artworkChange',
+    _key: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    at: new Date().toISOString(),
+    by,
+    prevListingAssetId: displaced,
+  });
+  return { history: list.slice(0, HISTORY_LIMIT), recorded: true };
 }
 
 /**

@@ -3,7 +3,7 @@ import { getStore } from '@netlify/blobs';
 import sharp from 'sharp';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
-import { WEB_MASTER, renderDerivative, setListingImage } from './_shared/derivatives.mjs';
+import { WEB_MASTER, renderDerivative, setListingImage, recordDisplacedListing } from './_shared/derivatives.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
@@ -180,18 +180,33 @@ export default async (req) => {
         sanity.assets.upload('file', printPng, { filename: `${slug}-print.png`, contentType: 'image/png' }),
       ]);
 
-      /* This is also the migration. Every product rendered before this change
-         carries a second, near-identical "web-master" entry; setListingImage
-         drops it, so a redraw quietly tidies the gallery as it goes and nothing
-         has to be migrated by hand. */
+      /* This is also the migration, in two directions. A product rendered before
+         the keys were collapsed carries a near-identical "web-master" entry and
+         setListingImage drops it; a hand-curated product has no listing entry at
+         all, and its images[0] -- the picture the whole site shows -- is taken
+         over rather than appended after, because appending would leave the old
+         one on display and the new render invisible at the end of the array.
+         Whatever was in that slot is written into the history entry studio-save
+         already made, so there is a way back to it. */
       const current = await sanity.getDocument(docId);
       const listing = setListingImage(current?.images, listingAsset._id, `${title} — Comic Strip Canvas`);
-      await sanity.patch(docId).set({
+      const history = recordDisplacedListing(current?.artworkHistory, listing.displaced, {
+        by: 'studio', ownEntry: true,
+      });
+
+      const patch = {
         images: listing.images,
         printFile: { _type: 'file', asset: { _type: 'reference', _ref: printAsset._id } },
-      }).commit();
-      attached = `${docId} (listing ${listing.replaced ? 'replaced' : 'added'}` +
+      };
+      if (history.recorded) patch.artworkHistory = history.history;
+      await sanity.patch(docId).set(patch).commit();
+
+      attached = `${docId} (images[0] ${listing.mode === 'displaced' ? 'TAKEN OVER from a curated image' : listing.mode === 'first' ? 'added' : 'replaced'}` +
         `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;
+      if (listing.mode === 'displaced') {
+        console.warn(`studio-render: ${docId} had no listing entry — images[0] (${listing.displaced}) ` +
+          `is no longer the product image; recorded as prevListingAssetId for rollback`);
+      }
     } else if (docId) {
       console.error('studio-render: SANITY_WRITE_TOKEN is not set — the pictures exist but nothing was attached');
     }
