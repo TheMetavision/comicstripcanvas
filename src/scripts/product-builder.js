@@ -3517,6 +3517,9 @@ export function initProductBuilder() {
     replaceTarget = null;
     const box = $('replaceCompare');
     if (box) box.hidden = true;
+    // The takeover warning belongs to one picked product, so it goes with it.
+    const takeover = $('replaceTakeover');
+    if (takeover) { takeover.hidden = true; takeover.textContent = ''; }
     const res = $('replaceResults');
     if (res) [...res.children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
   }
@@ -3568,6 +3571,27 @@ export function initProductBuilder() {
       next.src = URL.createObjectURL(blob);
     } catch (e) {
       next.removeAttribute('src');
+    }
+    /* A product with no "listing" entry is one of the hand-curated catalogue
+       ones: its images[0] is a picture somebody chose, and the render takes
+       that slot rather than sitting after it -- appending would leave the old
+       image on the site and the new one invisible at the end of the gallery.
+       That is the right behaviour and it is recoverable (the displaced asset
+       is recorded on the product's artwork history), but it is a bigger change
+       than "replace the artwork" sounds, so say so before the button is
+       pressed rather than after. */
+    const takeover = $('replaceTakeover');
+    if (takeover) {
+      /* Only when there is actually something to displace. A product with no
+         images at all also has no listing entry, and telling somebody their
+         current product image is about to be replaced when the "Now" pane is
+         empty is worse than saying nothing. */
+      const displaces = p.hasListing === false && !!p.image;
+      takeover.textContent = displaces
+        ? 'This will replace the current product image (the other gallery images stay). '
+          + "You'll review the draft before publishing."
+        : '';
+      takeover.hidden = !displaces;
     }
     $('replaceWarn').textContent = p.draft
       ? 'This product is a draft. The change is written straight to it.'

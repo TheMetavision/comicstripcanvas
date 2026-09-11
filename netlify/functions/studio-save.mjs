@@ -126,12 +126,22 @@ export default async (req) => {
   if (req.method === 'GET') {
     const q = (new URL(req.url).searchParams.get('q') || '').trim();
     if (q.length < 2) return json({ products: [] });
+    /* hasListing says whether a render would slot into an entry of its own or
+       REPLACE this product's current image. A product with no "listing" entry
+       is one of the hand-curated catalogue ones: its images[0] is a picture
+       somebody chose, and the render takes that slot. The picker warns before
+       the button is pressed rather than after.
+
+       Keep explanations OUT of the query string: GROQ has no block comment, and
+       putting one in a projection fails with a parse error that points at the
+       projection rather than at the comment. */
     const products = await sanity.fetch(
       `*[_type == "product" && (title match $m || slug.current match $m)]
          | order(_updatedAt desc)[0...12]{
            _id, title, "slug": slug.current,
            "draft": _id in path("drafts.**"),
-           "image": images[0].asset->url, "updatedAt": _updatedAt
+           "image": images[0].asset->url, "updatedAt": _updatedAt,
+           "hasListing": count(images[_key == "listing"]) > 0
          }`,
       { m: `*${q}*` }
     );

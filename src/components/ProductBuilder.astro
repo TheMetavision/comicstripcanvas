@@ -266,7 +266,7 @@ const builderData = JSON.stringify({
             <p class="b-lab mt-3">Replacing</p>
             <div class="flex items-start gap-2">
               <figure class="m-0 min-w-0 flex-1">
-                <img id="replaceCurrent" alt="The product's current listing image"
+                <img id="replaceCurrent" alt="The product's current image"
                   class="block w-full border-2 border-black bg-black" />
                 <figcaption class="b-hint mt-1">Now</figcaption>
               </figure>
@@ -276,6 +276,7 @@ const builderData = JSON.stringify({
                 <figcaption class="b-hint mt-1">Your new design</figcaption>
               </figure>
             </div>
+            <p class="b-hint b-hint-bad" id="replaceTakeover" hidden></p>
             <p class="b-hint b-hint-bad" id="replaceWarn"></p>
             <button id="replaceConfirm" class="b-btn b-btn-primary mt-2 w-full">Replace the artwork</button>
             <button id="replaceCancel" class="b-btn mt-2 w-full">Cancel</button>
