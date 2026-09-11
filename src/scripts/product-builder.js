@@ -3972,6 +3972,59 @@ export function initProductBuilder() {
   on('studioTitle', 'input', () => { studioMsg = null; refresh(); });
 
   if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
+
+  /* ---------- ?probe ---------- */
+  /* A readout of where a text field actually ENDED UP, for the case where a
+     device disagrees with every other device and there is no debugger on it.
+
+     The builder computes text position without asking the browser anything:
+     the anchor is a constant from the template data and the fit is measured
+     against the advance tables in METRICS, not against a loaded font. So when
+     a phone puts the masthead somewhere else, the question is whether the
+     BUILDER produced a different number or the RENDERER drew the same number
+     differently -- and those need different fixes.
+
+     anchor is what we asked for. ink is the centre of what was drawn,
+     from getBBox. If they agree, the builder and the renderer agree and
+     anything off-centre is the artwork or the data. If they disagree, the
+     renderer is not honouring text-anchor the way the others do, and the
+     difference between them is the error. font says which face was actually
+     used, which separates "the webfont never arrived" from either. */
+  if (new URLSearchParams(location.search).has('probe')) {
+    const box = document.createElement('pre');
+    box.id = 'csc-probe';
+    box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;margin:0;'
+      + 'max-height:45vh;overflow:auto;background:#000;color:#0f0;font:11px/1.35 ui-monospace,monospace;'
+      + 'padding:8px;white-space:pre-wrap;-webkit-user-select:text;user-select:text';
+    root.appendChild(box);
+    const probe = () => {
+      const rows = (T.text || []).map((f) => {
+        const el = nodes['t-' + f.id];
+        if (!el) return `${f.id}: no element`;
+        const ts = el.querySelector('tspan');
+        const anchor = ts ? +ts.getAttribute('x') : NaN;
+        let ink = NaN, w = NaN;
+        try { const b = el.getBBox(); ink = b.x + b.width / 2; w = b.width; } catch (e) { /* not rendered */ }
+        const fam = (window.getComputedStyle ? getComputedStyle(el).fontFamily : '') || '';
+        const d = ink - anchor;
+        return `${f.id.padEnd(13)} anchor ${anchor.toFixed(1).padStart(8)}  ink ${Number.isFinite(ink) ? ink.toFixed(1).padStart(8) : '       -'}`
+          + `  Δ ${Number.isFinite(d) ? d.toFixed(1).padStart(7) : '      -'}  w ${Number.isFinite(w) ? w.toFixed(0).padStart(6) : '     -'}`
+          + `  size ${el.getAttribute('font-size')}  font ${fam.slice(0, 28)}`;
+      });
+      box.textContent = [
+        `template ${TK}  mode ${MODE}  viewBox ${svg.getAttribute('viewBox')}`,
+        `dpr ${window.devicePixelRatio}  board ${Math.round(svg.getBoundingClientRect().width)}px  ua ${navigator.userAgent.slice(0, 60)}`,
+        `fonts.status ${document.fonts ? document.fonts.status : 'n/a'}`,
+        '',
+        ...rows,
+      ].join(String.fromCharCode(10));
+    };
+    probe();
+    // Again once the fonts settle and once more after layout has certainly run.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(probe).catch(() => {});
+    setTimeout(probe, 1500);
+    svg.addEventListener('click', probe);
+  }
   load(INITIAL);
   try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }
 
