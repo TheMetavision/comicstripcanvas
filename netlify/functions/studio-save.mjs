@@ -122,7 +122,10 @@ export default async (req) => {
 
   /* The picker's search. Drafts are included deliberately: a design being
      redrawn is very often one that has never been published, and leaving those
-     out would hide exactly the products this mode is for. */
+     out hides exactly the products this mode is for -- which is what it did.
+     The client is built with no perspective, and that default behaves like
+     "published", so a draft-only product matched nothing at all and the picker
+     said "Nothing matched" about a product sitting right there. */
   if (req.method === 'GET') {
     const q = (new URL(req.url).searchParams.get('q') || '').trim();
     if (q.length < 2) return json({ products: [] });
@@ -132,6 +135,18 @@ export default async (req) => {
        somebody chose, and the render takes that slot. The picker warns before
        the button is pressed rather than after.
 
+       It has to be read off the version a save will actually write to, and the
+       "drafts" perspective is exactly that version: it overlays each draft on
+       its published document and returns one row per product. A product with a
+       draft answers from the draft; one without answers from the published
+       document, which is what studio-save copies the new draft from. Either
+       way the answer describes what the render will find.
+
+       _originalId, not _id, decides the draft marker: under this perspective
+       _id is always the published id, and _originalId is the document the row
+       actually came from. _id being the base id also suits the caller, which
+       sends it back as productId -- the base is what blobs are keyed on.
+
        Keep explanations OUT of the query string: GROQ has no block comment, and
        putting one in a projection fails with a parse error that points at the
        projection rather than at the comment. */
@@ -139,11 +154,15 @@ export default async (req) => {
       `*[_type == "product" && (title match $m || slug.current match $m)]
          | order(_updatedAt desc)[0...12]{
            _id, title, "slug": slug.current,
-           "draft": _id in path("drafts.**"),
+           "draft": _originalId in path("drafts.**"),
            "image": images[0].asset->url, "updatedAt": _updatedAt,
            "hasListing": count(images[_key == "listing"]) > 0
          }`,
-      { m: `*${q}*` }
+      { m: `*${q}*` },
+      /* Per REQUEST, never on the client: the same client does getDocument,
+         create and patch on exact ids in the replace path below, and those must
+         keep seeing documents as they really are. */
+      { perspective: 'drafts' }
     );
     return json({ products });
   }
