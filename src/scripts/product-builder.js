@@ -3990,13 +3990,20 @@ export function initProductBuilder() {
      renderer is not honouring text-anchor the way the others do, and the
      difference between them is the error. font says which face was actually
      used, which separates "the webfont never arrived" from either. */
-  if (new URLSearchParams(location.search).has('probe')) {
+  /* Query OR hash. A query is easy to lose -- a redirect, a shared link, a
+     keyboard that helpfully strips it -- and #probe survives all of them. */
+  if (new URLSearchParams(location.search).has('probe') || /(^|[#&])probe/.test(location.hash)) {
     const box = document.createElement('pre');
     box.id = 'csc-probe';
     box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;margin:0;'
       + 'max-height:45vh;overflow:auto;background:#000;color:#0f0;font:11px/1.35 ui-monospace,monospace;'
       + 'padding:8px;white-space:pre-wrap;-webkit-user-select:text;user-select:text';
-    root.appendChild(box);
+    /* On the BODY, not the builder root. position:fixed is resolved against the
+       nearest ancestor with a transform, filter or will-change rather than the
+       viewport, and the builder's board has one -- so appended inside the root
+       this pinned itself to the artwork and scrolled away with it, which is
+       why it never appeared on the phone it was written for. */
+    (document.body || root).appendChild(box);
     const probe = () => {
       const rows = (T.text || []).map((f) => {
         const el = nodes['t-' + f.id];
