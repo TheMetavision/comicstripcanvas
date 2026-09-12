@@ -8,7 +8,7 @@ const require = createRequire(path.join(process.cwd(), 'package.json'));
 /**
  * Take the lifestyle mockups back out of products.
  *
- *   node tools/builder/strip-mockups.mjs [--category <slug>] [--id <docId>] [--apply]
+ *   node tools/builder/strip-mockups.mjs [--category <slug>] [--id a,b,c] [--batch <n>] [--apply]
  *   node tools/builder/strip-mockups.mjs --restore tools/builder/mockup-backup-<ts>.json
  *
  * An entry is removed only if ALL of these hold:
@@ -43,10 +43,14 @@ const opt = (n, d = null) => {
 const APPLY = flag('apply');
 const RESTORE = opt('restore');
 const CATEGORY = opt('category');
-/* One document, by id. Narrower than --category and the only safe way to try
-   --apply against the real dataset: without it the default scope is every
-   product there is. Takes the id exactly, so a draft needs its drafts. prefix. */
-const ONLY_ID = opt('id');
+/* Specific documents, by id, comma separated. Narrower than --category and the
+   only safe way to try --apply against the real dataset: without it the default
+   scope is every product there is. Ids are taken exactly, so a draft needs its
+   drafts. prefix. */
+const ONLY_IDS = (opt('id') || '').split(',').map((s2) => s2.trim()).filter(Boolean);
+/* Mutations per transaction. Fifty keeps each request small enough to reason
+   about while turning a 292-product run into six of them. */
+const BATCH = Math.max(1, parseInt(opt('batch', '50'), 10) || 50);
 const CATEGORIES = ['comic-book-covers', 'comic-book-icons', 'comic-book-strips'];
 
 /** The one thing this looks for. */
@@ -94,6 +98,52 @@ function doomedEntries(images) {
   return out;
 }
 
+/**
+ * Commit patches in transactions rather than one request each.
+ *
+ * A full run is 292 products. One patch per product is 292 round trips and 292
+ * separate revisions landing over several minutes; in transactions of fifty it
+ * is six, and the whole catalogue changes in a few seconds rather than
+ * trickling. Batch size is --batch, default 50.
+ *
+ * A transaction is all-or-nothing, which is the trade: one bad document would
+ * otherwise take its forty-nine neighbours down with it and say nothing about
+ * which. So a failed batch is retried one patch at a time -- slow, but only on
+ * the path where something is already wrong, and it turns "fifty did not
+ * happen" into "this one did not happen, and here is why".
+ *
+ * @param items  [{ id, ops, line }]  ops is a patch object: { unset } or { set }
+ * @returns { done, failures }
+ */
+async function commitInBatches(sanity, items, size) {
+  let done = 0, failures = 0;
+  const of = Math.ceil(items.length / size);
+
+  for (let i = 0; i < items.length; i += size) {
+    const batch = items.slice(i, i + size);
+    const n = Math.floor(i / size) + 1;
+    try {
+      const tx = sanity.transaction();
+      for (const it of batch) tx.patch(it.id, it.ops);
+      await tx.commit();
+      console.log(`  transaction ${n}/${of} — ${batch.length} product(s):`);
+      for (const it of batch) { done++; console.log(`    ${it.line}`); }
+    } catch (err) {
+      console.error(`  transaction ${n}/${of} failed: ${err.message}`);
+      console.error(`  retrying its ${batch.length} patches one at a time to find the one at fault`);
+      for (const it of batch) {
+        try {
+          await sanity.transaction().patch(it.id, it.ops).commit();
+          done++; console.log(`    ${it.line}`);
+        } catch (e) {
+          failures++; console.error(`    FAILED ${it.id}: ${e.message}`);
+        }
+      }
+    }
+  }
+  return { done, failures };
+}
+
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 
@@ -111,13 +161,13 @@ async function strip(sanity) {
   if (CATEGORY && !CATEGORIES.includes(CATEGORY)) {
     throw new Error(`--category must be one of ${CATEGORIES.join(', ')}`);
   }
-  const filter = (CATEGORY ? ' && category == $category' : '') + (ONLY_ID ? ' && _id == $id' : '');
-  const params = { ...(CATEGORY ? { category: CATEGORY } : {}), ...(ONLY_ID ? { id: ONLY_ID } : {}) };
+  const filter = (CATEGORY ? ' && category == $category' : '') + (ONLY_IDS.length ? ' && _id in $ids' : '');
+  const params = { ...(CATEGORY ? { category: CATEGORY } : {}), ...(ONLY_IDS.length ? { ids: ONLY_IDS } : {}) };
   const products = await sanity.fetch(
     `*[_type == "product"${filter}] | order(title asc){ _id, title, category, "slug": slug.current, images }`,
     params
   );
-  if (ONLY_ID && !products.length) throw new Error(`no product with _id ${ONLY_ID}`);
+  if (ONLY_IDS.length && !products.length) throw new Error(`no product with _id ${ONLY_IDS.join(' or ')}`);
 
   const plan = [];
   for (const p of products) {
@@ -126,7 +176,7 @@ async function strip(sanity) {
     plan.push({ product: p, doomed });
   }
 
-  console.log(`${products.length} product document(s)${CATEGORY ? ` in ${CATEGORY}` : ''}${ONLY_ID ? ` matching ${ONLY_ID}` : ''}`
+  console.log(`${products.length} product document(s)${CATEGORY ? ` in ${CATEGORY}` : ''}${ONLY_IDS.length ? ` matching ${ONLY_IDS.join(', ')}` : ''}`
     + `, ${plan.length} with lifestyle mockups to remove`
     + (APPLY ? '' : '  —  DRY RUN, nothing will be written'));
   console.log('');
@@ -171,22 +221,18 @@ async function strip(sanity) {
   }
 
   console.log('');
-  let failures = 0, patched = 0, removed = 0;
-  for (const { product, doomed } of plan) {
-    try {
-      await sanity
-        .patch(product._id)
-        .unset(doomed.map((d) => `images[_key=="${d._key}"]`))
-        .commit();
-      patched++; removed += doomed.length;
-      console.log(`  removed ${doomed.length} from ${product._id}`);
-    } catch (err) {
-      failures++;
-      console.error(`  FAILED ${product._id}: ${err.message}`);
-    }
-  }
+  const items = plan.map(({ product, doomed }) => ({
+    id: product._id,
+    ops: { unset: doomed.map((d) => `images[_key=="${d._key}"]`) },
+    line: `removed ${doomed.length} from ${product._id}`,
+    count: doomed.length,
+  }));
+  console.log(`${items.length} patch(es) in ${Math.ceil(items.length / BATCH)} transaction(s) of up to ${BATCH}`);
+  const { done, failures } = await commitInBatches(sanity, items, BATCH);
+  const removed = items.slice(0, done).reduce((n, it) => n + it.count, 0);
+
   console.log('');
-  console.log(`${patched} product(s) patched, ${removed} entr${removed === 1 ? 'y' : 'ies'} removed, `
+  console.log(`${done} product(s) patched, ${removed} entr${removed === 1 ? 'y' : 'ies'} removed, `
     + `${failures} failure(s). No assets were deleted.`);
   return { plan, backupFile, failures };
 }
@@ -201,7 +247,8 @@ async function restore(sanity, file) {
   console.log(`restoring from ${file}  (taken ${backup.createdAt}, mode ${backup.mode})`);
   console.log('');
 
-  let failures = 0, put = 0, skipped = 0;
+  let readFailures = 0, skipped = 0;
+  const items = [];
   for (const rec of backup.products) {
     try {
       const doc = await sanity.getDocument(rec._id);
@@ -220,14 +267,28 @@ async function restore(sanity, file) {
         added++;
       }
       if (!added) { console.log(`  ${rec._id} — already complete`); continue; }
-      await sanity.patch(rec._id).set({ images }).commit();
-      put += added;
-      console.log(`  restored ${added} to ${rec._id} (${images.length} images now)`);
+      /* The whole array, because the positions are the point -- an unset/insert
+         pair would have to reason about indexes that move as it goes. */
+      items.push({
+        id: rec._id, ops: { set: { images } },
+        line: `restored ${added} to ${rec._id} (${images.length} images now)`,
+        count: added,
+      });
     } catch (err) {
-      failures++;
-      console.error(`  FAILED ${rec._id}: ${err.message}`);
+      readFailures++;
+      console.error(`  FAILED reading ${rec._id}: ${err.message}`);
     }
   }
+
+  let put = 0, failures = readFailures;
+  if (items.length) {
+    console.log('');
+    console.log(`${items.length} patch(es) in ${Math.ceil(items.length / BATCH)} transaction(s) of up to ${BATCH}`);
+    const r = await commitInBatches(sanity, items, BATCH);
+    put = items.slice(0, r.done).reduce((n, it) => n + it.count, 0);
+    failures += r.failures;
+  }
+
   console.log('');
   console.log(`${put} entr${put === 1 ? 'y' : 'ies'} restored, ${skipped} already present or orphaned, ${failures} failure(s).`);
   return { failures };
