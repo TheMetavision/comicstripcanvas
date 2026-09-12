@@ -81,6 +81,26 @@ export function initProductBuilder() {
      getComputedTextLength answers with whatever face is currently rendering, so
      before the webfont arrives it reports fallback metrics and the fit concludes
      text fits when it doesn't. This is deterministic and race-free. */
+  /* Where the alphabetic baseline goes so a line of this font sits centred on a
+     given y, as a fraction of the font size.
+
+     This replaces dominant-baseline="central". That attribute is honoured by
+     Blink, by Playwright's WebKit and by resvg -- but iOS Safari does not apply
+     it to a <tspan>, and the masthead came out sitting high in its bar with the
+     cap tops against the top edge, which is exactly where the glyphs land when
+     the attribute is dropped and the baseline stays on y.
+
+     The number is not a guess and not a measurement of a browser: resvg's
+     central resolves to (hheaAscender + hheaDescender) / 2, and the values in
+     METRICS are computed from the font files and agree with what resvg draws to
+     five decimal places -- 0.33838 for Chewy, 0.20313 for Luckiest Guy. So the
+     explicit baseline reproduces the print exactly while asking no renderer to
+     interpret anything. */
+  function baselineEm(family) {
+    const m = METRICS[family] || METRICS.Chewy;
+    return m.baseline !== undefined ? m.baseline : 0.33838;
+  }
+
   function textWidth(str, size, family) {
     const m = METRICS[family] || METRICS.Chewy;
     let w = 0;
@@ -465,7 +485,12 @@ export function initProductBuilder() {
       g.appendChild(img); svg.appendChild(g);
       let num = null;
       if (T.panels.length > 1) {
-        num = mk('text', { x: p.x + p.width / 2, y: p.y + p.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 190, 'font-weight': 800, fill: '#B9BCC2' });
+        /* Same treatment as the real text: an explicit baseline rather than an
+           attribute iOS may ignore. This one is the grey number in an empty
+           panel -- screen furniture that is hidden the moment a photo lands, so
+           it never reaches a print -- but leaving one dominant-baseline behind
+           is how the next person concludes the audit missed something. */
+        num = mk('text', { x: p.x + p.width / 2, y: p.y + p.height / 2 + baselineEm('Chewy') * 190, 'text-anchor': 'middle', 'font-size': 190, 'font-weight': 800, fill: '#B9BCC2' });
         num.textContent = String(i + 1).padStart(2, '0'); svg.appendChild(num);
       }
       nodes[p.id] = { panel: p, img, num, index: i, plate, clip: clipShape };
@@ -688,7 +713,8 @@ export function initProductBuilder() {
     el.style.strokeWidth = (f.stroke ? size * SR * 2 * (f.strokeScale || 1) : 0) + 'px';
     const lh = size * 1.16, top = a.cy - (lines.length - 1) * lh / 2;
     lines.forEach((ln, i) => {
-      const ts = mk('tspan', { x: a.cx, y: top + i * lh, 'dominant-baseline': 'central' });
+      /* Explicit baseline, no dominant-baseline anywhere. See baselineEm. */
+      const ts = mk('tspan', { x: a.cx, y: top + i * lh + baselineEm(fam) * size });
       if (f.twoTone && lines.length === 1 && f.colours[1]) {
         const sp = ln.indexOf(' ');
         const a1 = mk('tspan', {}); a1.style.fill = f.colours[0]; a1.textContent = ln.slice(0, sp + 1);
