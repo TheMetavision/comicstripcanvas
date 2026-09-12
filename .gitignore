@@ -38,3 +38,8 @@ deno.lock
 
 # Generated web derivatives (tools/builder/web-versions.mjs)
 tools/builder/web-out/
+
+# Restore files written by tools/builder/strip-mockups.mjs. Operational
+# artefacts, one per run, hundreds of KB each -- keep them where they land,
+# just not in the repository.
+tools/builder/mockup-backup-*.json
