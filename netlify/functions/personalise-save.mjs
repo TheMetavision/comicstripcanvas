@@ -3,6 +3,11 @@ import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { styleSizeForTemplate, MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
+import {
+  guardStore, visitorKey, checkVisitor, bumpVisitor, readGlobal, LIMIT_MESSAGE,
+} from './_shared/spend-guard.mjs';
+import { pausePanel } from './_shared/style-resume.mjs';
+import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -94,7 +99,7 @@ export default async (req, context) => {
 
     const photo = form.get('photo');
     return photo && typeof photo !== 'string'
-      ? await savePhoto(form, photo, req)
+      ? await savePhoto(form, photo, req, context)
       : await finalise(form);
   } catch (error) {
     console.error('Personalisation save error:', error);
@@ -103,7 +108,7 @@ export default async (req, context) => {
 };
 
 /* ---------- one photo ---------- */
-async function savePhoto(form, file, req) {
+async function savePhoto(form, file, req, context) {
   const panelId = form.get('panelId');
   if (!isPanelId(panelId)) return json({ error: 'Invalid panel id' }, 400);
 
@@ -123,6 +128,24 @@ async function savePhoto(form, file, req) {
   }
   const creating = !given;
   const id = creating ? newId() : given;
+
+  /* Per-visitor spend guards, before a byte is stored. Checked here rather than
+     at the styling trigger because the upload is the thing being asked for: a
+     photograph stored and then refused a style is a build the customer cannot
+     finish, and it would still have cost us the storage.
+
+     The key is a salted hash of the address; the address itself is never held.
+     Failing open is deliberate -- see checkVisitor. */
+  const guard = guardStore();
+  const gkey = visitorKey(req, context);
+  const verdict = await checkVisitor(guard, gkey, { newDesign: creating });
+  if (!verdict.ok) {
+    console.warn(
+      `spend-guard: refused an upload from ${gkey} — ${verdict.reason} ` +
+      `(${verdict.designsThisHour} new design(s) this hour, ${verdict.styleCalls24h} style call(s) in 24h)`
+    );
+    return json({ error: LIMIT_MESSAGE, reason: verdict.reason, limited: true }, 429);
+  }
 
   // The key is deterministic per panel, so replacing a panel's photo overwrites
   // rather than accumulating.
@@ -200,6 +223,11 @@ async function savePhoto(form, file, req) {
         ...(templateId ? { templateId } : {}),
         styleSize: styleSizeForTemplate(templateId),
         styleCalls: 0,
+        /* The hashed visitor key travels with the document, because the
+           increment that actually spends money happens in a background
+           function that never sees the request. Hashed, so what is stored
+           still identifies nobody. */
+        guardKey: gkey,
         consentAt,
         createdAt: new Date().toISOString(),
       });
@@ -246,10 +274,21 @@ async function savePhoto(form, file, req) {
     throw err;
   }
 
+  /* Counted only once the document exists. A create that threw above never
+     made a personalisation, so it must not spend one from the visitor's hour --
+     and this is the only place a personalisation is born. */
+  if (creating) {
+    try {
+      await bumpVisitor(guard, gkey, 'designs', 1);
+    } catch (err) {
+      console.warn(`spend-guard: could not count a new design for ${gkey}: ${err.message}`);
+    }
+  }
+
   // Styling is best-effort from here: the photo is stored and the document is
   // written, so a trigger that does not fire leaves a retryable 'pending' row
   // rather than losing anything.
-  const style = await triggerStyle({ id, panelId, sha256, req });
+  const style = await triggerStyle({ id, panelId, sha256, req, guard });
 
   return json({ id, key, sha256, style });
 }
@@ -274,7 +313,7 @@ const photoRow = ({ panel, rawKey, sha256, styleStatus = 'pending' }) => ({
  * a styling trigger that fails leaves the row 'pending' and is retryable
  * through /api/personalisation-style.
  */
-async function triggerStyle({ id, panelId, sha256, req }) {
+async function triggerStyle({ id, panelId, sha256, req, guard }) {
   try {
     const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
     const photos = doc?.photos || [];
@@ -285,6 +324,30 @@ async function triggerStyle({ id, panelId, sha256, req }) {
       await adoptStyledTwin(sanity, id, panelId, twin);
       console.log(`personalise-save: dedupe hit — ${id} ${panelId} reused the styled photo from ${twin.panel} (same sha256)`);
       return { deduped: true, from: twin.panel };
+    }
+
+    /* The circuit breaker. Checked AFTER the dedupe and before the cap, in the
+       order the money is: a dedupe costs nothing so it is never worth pausing,
+       and a design that has spent its own cap has a different answer to give.
+
+       The photograph is already stored and the document already written, so
+       pausing costs the customer nothing except time -- the panel says so, the
+       Add to basket gate stays shut behind it, and style-resume picks it up
+       when the counter resets. */
+    const store = guard || guardStore();
+    const breaker = await readGlobal(store);
+    if (breaker.tripped) {
+      await pausePanel(sanity, id, panelId);
+      console.warn(
+        `spend-guard: paused ${id} ${panelId} — site-wide limit reached ` +
+        `(${breaker.calls}/${breaker.max} today)`
+      );
+      /* Claimed once a day, so this is a no-op for every refusal after the
+         first. Here as well as at the crossing in style-photo-background
+         because a ceiling lowered by hand trips the breaker without any call
+         ever crossing it. */
+      await notifyBreakerTripped({ store, calls: breaker.calls });
+      return { paused: true, until: 'the daily limit resets' };
     }
 
     if ((doc?.styleCalls || 0) >= MAX_STYLE_CALLS) {

@@ -8,6 +8,9 @@ import { cutoutConfigured } from './_shared/cutout.mjs';
    external_node_modules, so importing it here would try to bundle a native
    .node binary. */
 import { memoryNote } from './_shared/scene.mjs';
+import { guardStore, bumpVisitor, bumpGlobal, readGlobal } from './_shared/spend-guard.mjs';
+import { pausePanel } from './_shared/style-resume.mjs';
+import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 
 /**
  * Style one photograph.
@@ -177,6 +180,11 @@ async function markFailed(id, panel, reason) {
 export default async (req) => {
   const started = Date.now();
   let id = null, panel = null, charged = false;
+  /* Three separate claims, because they can fail separately and a refund must
+     hand back exactly what was taken. Rolling them into one flag would either
+     refund a counter that was never incremented or keep one that was. */
+  let visitorCharged = false, globalCharged = false;
+  let guard = null, guardKey = null;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id; panel = body.panel;
@@ -194,7 +202,7 @@ export default async (req) => {
     }
 
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId }', { id }
+      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId, guardKey }', { id }
     );
     if (!doc) {
       console.error(`style-photo: ${id} does not exist`);
@@ -204,6 +212,24 @@ export default async (req) => {
     if (!row || !row.rawKey) {
       console.error(`style-photo: ${id} has no photo row for panel ${panel}`);
       return new Response('No such panel', { status: 404 });
+    }
+
+    /* And the site-wide breaker, counted here as well as at the trigger for the
+       same reason the cap is: this function is reachable from three callers and
+       is the only one of them that actually spends. A trigger that was allowed
+       a second ago can arrive after the ceiling has been reached by somebody
+       else, and the panel is better paused than billed. */
+    guard = guardStore();
+    guardKey = doc.guardKey || null;
+    const breaker = await readGlobal(guard);
+    if (breaker.tripped) {
+      await pausePanel(sanity, id, panel);
+      console.warn(
+        `spend-guard: style-photo paused ${id} ${panel} — site-wide limit reached ` +
+        `(${breaker.calls}/${breaker.max} today)`
+      );
+      await notifyBreakerTripped({ store: guard, calls: breaker.calls });
+      return new Response('Paused', { status: 200 });
     }
 
     /* The cap is counted here as well as at the trigger, because this function
@@ -246,6 +272,26 @@ export default async (req) => {
        model at all. */
     await sanity.patch(id).setIfMissing({ styleCalls: 0 }).inc({ styleCalls: 1 }).commit();
     charged = true;   // set only after the increment has committed
+
+    /* The spend guards are claimed at the same instant and for the same reason:
+       this line is the last one before the money is spent. Everything that
+       never reaches the model -- a dedupe hit, a refused cap, a paused breaker
+       -- returns above this point and is therefore never counted, which is what
+       makes the counters mean "billed calls" rather than "attempts".
+
+       Best-effort: a counter that cannot be written must not cost the customer
+       their photograph, so a failure here is logged and the call proceeds. */
+    try {
+      if (guardKey) { await bumpVisitor(guard, guardKey, 'style', 1); visitorCharged = true; }
+      const site = await bumpGlobal(guard, 1);
+      globalCharged = true;
+      if (site.crossed) {
+        console.warn(`spend-guard: this call took the day to ${site.calls}/${site.max} — breaker open`);
+        await notifyBreakerTripped({ store: guard, calls: site.calls });
+      }
+    } catch (err) {
+      console.warn(`spend-guard: could not count the call for ${id} ${panel}: ${err.message}`);
+    }
 
     const styled = await styleImage({
       buffer: rawBuf,
@@ -360,6 +406,23 @@ export default async (req) => {
         console.warn(`style-photo: ${id} ${panel} refunded its call — status ${err.status} never reached the model`);
       } catch (refundErr) {
         console.error(`style-photo: could not refund the call for ${id} ${panel}:`, refundErr.message);
+      }
+    }
+    /* The spend counters are handed back on exactly the same condition, and
+       each only if it was actually taken. An unbilled failure must not show up
+       in a visitor's 24-hour budget or in the day's total -- those numbers are
+       what the breaker and the limits are decided on, and an outage that
+       inflated them would pause a shop that had spent nothing. */
+    if (shouldRefund(err) && (visitorCharged || globalCharged)) {
+      try {
+        if (visitorCharged) await bumpVisitor(guard, guardKey, 'style', -1);
+        if (globalCharged) await bumpGlobal(guard, -1);
+        console.warn(
+          `spend-guard: refunded the call for ${id} ${panel} (${guardKey || 'no visitor key'}) — ` +
+          `status ${err.status} never reached the model`
+        );
+      } catch (refundErr) {
+        console.error(`spend-guard: could not refund the counters for ${id} ${panel}:`, refundErr.message);
       }
     }
     if (isId(id) && isPanel(panel)) await markFailed(id, panel, reason);

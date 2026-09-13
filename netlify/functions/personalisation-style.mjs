@@ -1,6 +1,11 @@
 import { createClient } from '@sanity/client';
 import { MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
+import {
+  guardStore, visitorKey, readVisitor, readGlobal,
+  MAX_VISITOR_STYLE_CALLS_PER_DAY, LIMIT_MESSAGE, BUSY_MESSAGE,
+} from './_shared/spend-guard.mjs';
+import { pausePanel } from './_shared/style-resume.mjs';
 
 /**
  * Re-style one panel:
@@ -38,7 +43,7 @@ const PRIVATE = {
 const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: PRIVATE });
 const notFound = () => reply({ error: 'Not found' }, 404);
 
-export default async (req) => {
+export default async (req, context) => {
   if (req.method !== 'POST') return reply({ error: 'Method not allowed' }, 405);
 
   const { pathname, searchParams } = new URL(req.url);
@@ -58,7 +63,7 @@ export default async (req) => {
   const retry = searchParams.get('retry') === '1';
 
   try {
-    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls }', { id });
+    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, guardKey }', { id });
     if (!doc) return notFound();
     const row = (doc.photos || []).find((p) => p.panel === panel);
     if (!row || !row.rawKey) return notFound();
@@ -87,6 +92,41 @@ export default async (req) => {
         console.log(`personalisation-style: dedupe hit — ${id} ${panel} reused the styled photo from ${twin.panel} (same sha256), no model call`);
         return reply({ id, panel, triggered: false, deduped: true, from: twin.panel });
       }
+    }
+
+    /* The same counters the upload path checks, because this is the same
+       money. Checked AFTER the dedupe above -- a retry that costs nothing
+       should not be refused for budget -- and before the per-design cap, which
+       has its own answer to give.
+
+       The DOCUMENT's key is preferred over this request's, so the counter that
+       is checked is the counter style-photo-background will bill: a retry from
+       a different address must not spend against a budget nobody is watching. */
+    const store = guardStore();
+    const gkey = doc.guardKey || visitorKey(req, context);
+    const spent = await readVisitor(store, gkey);
+    if (spent.styleCalls24h >= MAX_VISITOR_STYLE_CALLS_PER_DAY) {
+      console.warn(
+        `spend-guard: refused a retry of ${id} ${panel} from ${gkey} — ` +
+        `visitor-style-calls-24h (${spent.styleCalls24h} in 24h)`
+      );
+      return reply({
+        id, panel, triggered: false, reason: 'visitor-style-calls-24h',
+        limited: true, error: LIMIT_MESSAGE,
+      }, 429);
+    }
+
+    const breaker = await readGlobal(store);
+    if (breaker.tripped) {
+      await pausePanel(sanity, id, panel);
+      console.warn(
+        `spend-guard: paused a retry of ${id} ${panel} — site-wide limit reached ` +
+        `(${breaker.calls}/${breaker.max} today)`
+      );
+      /* 200, not an error: the request was understood and acted on. The panel
+         is now waiting on the breaker, the poll will report it as paused, and
+         style-resume will finish the job without anyone asking again. */
+      return reply({ id, panel, triggered: false, paused: true, message: BUSY_MESSAGE });
     }
 
     if ((doc.styleCalls || 0) >= MAX_STYLE_CALLS) {

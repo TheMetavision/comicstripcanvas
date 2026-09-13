@@ -281,6 +281,7 @@ export default defineType({
                   { title: 'Styling', value: 'styling' },
                   { title: 'Done', value: 'done' },
                   { title: 'Failed', value: 'failed' },
+                  { title: 'Paused (daily limit)', value: 'paused' },
                 ],
               },
             },
@@ -345,6 +346,18 @@ export default defineType({
         'Every model call this personalisation has made, retries included. Capped at 16 ' +
         'so a stuck retry loop cannot run up a bill; past the cap a panel is marked ' +
         'failed with reason "cap" rather than being called again.',
+    }),
+    defineField({
+      name: 'guardKey',
+      title: 'Spend Guard Key',
+      type: 'string',
+      readOnly: true,
+      description:
+        'Which rate-limit bucket this build spends from: a salted hash of the visitor ' +
+        'address, never the address itself. Written at the first upload and read by ' +
+        'the styling job, which is where a call is actually billed and therefore ' +
+        'where the count has to be kept. Two builds sharing a value came from the ' +
+        'same connection; nothing here can be turned back into an address.',
     }),
     defineField({
       name: 'customerNotes',

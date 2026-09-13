@@ -1039,6 +1039,26 @@ export function initProductBuilder() {
   const STYLE_STYLING = 'styling';
   const STYLE_DONE = 'done';
   const STYLE_FAILED = 'failed';
+  /* A FIFTH state, and the only one that is nobody's fault: the shop has hit
+     its daily styling limit, so the photograph is stored and queued and will be
+     styled when the counter resets. The server restarts it -- on the next
+     status poll, or from the hourly sweep if this tab is long closed -- so
+     there is nothing for the customer to do and nothing to retry. */
+  const STYLE_PAUSED = 'paused';
+
+  /* Both are the server's words, fetched from the status endpoint so the panel,
+     the Studio row and the email that goes to us cannot drift apart. These are
+     the fallbacks for a reply that predates them. */
+  let busyText = "We're unusually busy — your comic style will be applied shortly";
+  const CAP_TEXT = 'This design has reached its limit of photo changes — you can continue '
+    + 'with the photos you have, or start a new design';
+
+  /* What the server says this design has spent, from the last poll. The cap
+     itself comes from the server too rather than being copied into this bundle,
+     where it would drift the first time it changed. */
+  let styleCalls = 0, styleMax = 0;
+  /** At the cap, every replacement would be refused, so none is offered. */
+  const designAtCap = () => MODE === 'customer' && styleMax > 0 && styleCalls >= styleMax;
 
   /* Polling. 3s is brisk enough that a 36s generation feels watched; after two
      minutes something is wrong and there is no point asking twelve times a
@@ -1075,9 +1095,13 @@ export function initProductBuilder() {
      CUTOUT_GIVE_UP_MS, for the same reason. */
   const STYLE_GIVE_UP_MS = 240000;
 
+  /* Paused counts as waiting, which is what keeps Add to basket shut and the
+     poll running: the photograph is coming, just not yet. */
   const styleWaiting = () => styleable().filter(
     (s) => s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING
+      || s.styleState === STYLE_PAUSED
   ).length;
+  const stylePausedCount = () => styleable().filter((s) => s.styleState === STYLE_PAUSED).length;
   /* And the cutout, which is a SECOND wait after styling finishes -- the server
      writes it once the panel is already 'done'. Counting it separately is the
      whole point: styling being over does not mean there is nothing left to
@@ -1244,6 +1268,7 @@ export function initProductBuilder() {
     if (!s) return;
     s.uploadState = st;
     s.uploadError = st === FAILED ? (reason || "Upload failed") : null;
+    if (st !== FAILED) s.limited = false;
     // The styling clock starts when the server has the photo, because that is
     // when the server starts styling it.
     if (st === UPLOADED && !s.styleClockAt) s.styleClockAt = Date.now();
@@ -1276,8 +1301,12 @@ export function initProductBuilder() {
     else {
       if (s.uploadState === FAILED) {
         kind = 'bad';
-        lines = ['Upload failed', 'Tap to retry'];
-        tip = `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
+        /* A rate limit is not a failed upload and must not say "tap to retry":
+           the answer will be the same until the hour turns, and a customer
+           tapping a limit message is a customer being lied to. */
+        lines = s.limited ? ['Daily limit', 'reached'] : ['Upload failed', 'Tap to retry'];
+        tip = s.limited ? (s.uploadError || 'Daily limit reached')
+          : `Upload failed — tap to retry. ${s.uploadError || ''}`.trim();
       } else if (MODE === 'studio' && (s.uploadState === PENDING || s.uploadState === UPLOADING)) {
         /* A real percentage, not a spinner: this upload is a known number of
            chunks and the count is honest, which is exactly the thing the
@@ -1291,6 +1320,13 @@ export function initProductBuilder() {
           : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
             : ['Style not applied', 'Tap to try again'];
         tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
+      } else if (s.uploadState === UPLOADED && s.styleState === STYLE_PAUSED) {
+        /* Busy rather than bad: nothing has gone wrong, and the spinner is
+           honest -- the server really is going to do this without being asked
+           again. */
+        kind = 'busy';
+        lines = ['Unusually busy —', 'style coming soon'];
+        tip = busyText;
       } else if (s.uploadState === UPLOADED && !s.styled
         && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING)) {
         kind = 'busy';
@@ -1399,9 +1435,7 @@ export function initProductBuilder() {
     if (isSafetyReason(s.styleError)) {
       return "We couldn't apply the comic style to this photo — please try a different one";
     }
-    if (isCapReason(s.styleError)) {
-      return 'This build has used all its style attempts — please start a new one';
-    }
+    if (isCapReason(s.styleError)) return CAP_TEXT;
     return "The comic style didn't apply — tap to try again";
   }
 
@@ -1588,6 +1622,12 @@ export function initProductBuilder() {
        gate must not wait for one. Only an explicit false counts -- an older
        function that does not send the field at all leaves this alone. */
     if (payload.cutoutEnabled === false) cutoutEnabled = false;
+    /* The spend numbers and the wording that goes with them. Taken from the
+       reply rather than assumed, so an older function that sends neither leaves
+       the builder exactly as it was. */
+    if (typeof payload.styleCalls === 'number') styleCalls = payload.styleCalls;
+    if (typeof payload.styleMax === 'number') styleMax = payload.styleMax;
+    if (typeof payload.busyMessage === 'string' && payload.busyMessage) busyText = payload.busyMessage;
     const rows = Array.isArray(payload.photos) ? payload.photos : [];
     let touched = false;
     for (const row of rows) {
@@ -1605,8 +1645,16 @@ export function initProductBuilder() {
          retry, the gate never opening. A terminal answer is still worth
          having: if the styling does eventually land, we take it. */
       const reported = row.styleStatus || STYLE_PENDING;
-      const stillWorking = reported === STYLE_PENDING || reported === STYLE_STYLING;
+      const stillWorking = reported === STYLE_PENDING || reported === STYLE_STYLING
+        || reported === STYLE_PAUSED;
       if (s.styleGaveUp && stillWorking) continue;
+      /* The give-up clock does not run while the shop is paused. It is there to
+         catch a styling job that died without writing anything back, and a wait
+         for the daily counter to reset is neither dead nor ours to time out --
+         it can legitimately last until midnight. Pushing the clock forward on
+         every paused poll also means a panel resumed at 00:01 starts its four
+         minutes from the resume rather than from an upload made yesterday. */
+      if (reported === STYLE_PAUSED) s.styleClockAt = Date.now();
       s.styleGaveUp = false;
       s.styleState = reported;
       /* When the cutout's clock starts. The server writes the cutout after the
@@ -1846,7 +1894,12 @@ export function initProductBuilder() {
       const data = await res.json().catch(() => ({}));
       // A dedupe hit answers 200 with deduped:true and the panel already done;
       // the poll picks that up on its next pass like any other 'done'.
-      if (!res.ok && !data.deduped) throw new Error(data.reason || `HTTP ${res.status}`);
+      // A paused retry also answers 200: the server has queued it behind the
+      // daily limit and will finish it, so there is nothing to raise here --
+      // the next poll reports the panel as paused and the panel says so.
+      // data.error first: a spend refusal sends words meant for the customer,
+      // where data.reason is the short machine one meant for the log.
+      if (!res.ok && !data.deduped) throw new Error(data.error || data.reason || `HTTP ${res.status}`);
       ensureStylePoll();
       return true;
     } catch (e) {
@@ -2102,6 +2155,9 @@ export function initProductBuilder() {
       const before = state.get(id);
       if (!before || before.demo || before.uploadState !== PENDING) return;
       setUploadState(id, UPLOADING);
+      /* A refusal for spending, as opposed to a refusal for the file. Declared
+         out here because the catch below is what puts it on the slot. */
+      let limitedByServer = false;
       try {
         const sending = await encodeForUpload(file);
         const buildBody = () => {
@@ -2129,6 +2185,7 @@ export function initProductBuilder() {
             ({ res, data } = await postPhoto(buildBody()));
             if (res.ok && data.id) break;
             status = res.status;
+            if (res.status === 429 && data.limited) limitedByServer = true;
             // The function answers with a reason on every refusal. Carry it
             // through verbatim rather than flattening everything to "Upload
             // failed": "too large once encoded" and "unsupported file type"
@@ -2161,9 +2218,12 @@ export function initProductBuilder() {
         ensureStylePoll();
       } catch (e) {
         const reason = e.message || "Upload failed";
+        // Set before setUploadState, which is what redraws the slot.
+        const s = state.get(id);
+        if (s) s.limited = limitedByServer;
         // The slot's tooltip carries the reason too, but a tooltip is no use on
         // a phone -- which is where these failures actually happen.
-        console.warn(`[builder] upload failed for ${id}: ${reason}`);
+        console.warn(`[builder] upload ${limitedByServer ? 'refused' : 'failed'} for ${id}: ${reason}`);
         setUploadState(id, FAILED, reason);
       }
     };
@@ -2564,7 +2624,19 @@ export function initProductBuilder() {
     return false;
   }
 
-  function ask(id) { if (!hasConsent()) return; pickTarget = id; picker.click(); }
+  /* Every route to the file chooser comes through here -- the Replace button,
+     a tap on a filled panel, the keyboard. So the cap is enforced here rather
+     than on the button alone, and it says why instead of doing nothing. */
+  function ask(id) {
+    if (!hasConsent()) return;
+    if (designAtCap()) {
+      const up = $('uploadHint');
+      if (up) { up.classList.add('b-hint-bad'); up.hidden = false; up.textContent = CAP_TEXT; }
+      console.warn('[builder] replacement refused — this design has reached its style-call limit');
+      return;
+    }
+    pickTarget = id; picker.click();
+  }
   picker.addEventListener('change', () => {
     const files = [...picker.files].filter((f) => f.type.startsWith('image/'));
     if (pickTarget === '__logo__') {
@@ -2671,6 +2743,18 @@ export function initProductBuilder() {
       }
     }
 
+    /* At the cap there is nothing a replacement could do: the new photograph
+       would upload and then be refused a style, leaving the customer worse off
+       than the photograph they already have. A disabled button with the reason
+       on it beats a button that fails quietly. */
+    const replaceBtn = $('replace');
+    if (replaceBtn) {
+      const capped = designAtCap()
+        || (s.styleState === STYLE_FAILED && isCapReason(s.styleError));
+      replaceBtn.disabled = !!capped;
+      replaceBtn.title = capped ? CAP_TEXT : '';
+    }
+
     const swapBtn = $('swap');
     if (swapBtn) {
       swapBtn.textContent = swapFrom ? 'Cancel swap' : 'Swap';
@@ -2738,16 +2822,22 @@ export function initProductBuilder() {
 
     const st = s.uploadState;
     const styleFailed = st === UPLOADED && s.styleState === STYLE_FAILED;
+    const paused = st === UPLOADED && s.styleState === STYLE_PAUSED;
     const styling = st === UPLOADED && !s.styled
       && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING);
-    const cuttingOut = st === UPLOADED && !styling && !cutoutSettled(s);
+    const cuttingOut = st === UPLOADED && !styling && !paused && !cutoutSettled(s);
     up.classList.toggle('b-hint-bad', st === FAILED || styleFailed);
     up.hidden = !(st === PENDING || st === UPLOADING || st === FAILED || styling || styleFailed
-      || cuttingOut || s.styled);
+      || paused || cuttingOut || s.styled);
     up.textContent = st === PENDING ? 'Waiting to upload…'
       : st === UPLOADING ? 'Uploading this photo…'
-        : st === FAILED ? `Upload failed — tap the panel to retry. ${s.uploadError || ''}`.trim()
+        /* A limit is not a failure to retry: the server's sentence is the whole
+           message, and telling them to tap the panel would be telling them to
+           do something that cannot work until the hour turns. */
+        : st === FAILED ? (s.limited ? (s.uploadError || '')
+          : `Upload failed — tap the panel to retry. ${s.uploadError || ''}`.trim())
           : styleFailed ? styleFailureText(s)
+            : paused ? busyText
             : styling ? 'Applying comic style…'
               /* The cutout is still coming, so the panel is not finished and
                  must not say it is -- the overlay over the artwork says the
@@ -3041,6 +3131,10 @@ export function initProductBuilder() {
           : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`
             : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
               : styleFailedIdx >= 0 ? styleFailureText(state.get(T.panels[styleFailedIdx].id))
+                /* Ahead of the ordinary styling line: "X of Y ready" with
+                   nothing moving reads as a stall, and this is the one case
+                   where the honest answer is that nothing is moving yet. */
+                : stylePausedCount() > 0 ? busyText
                 : waiting > 0 ? `Applying your comic style — ${ready} of ${ready + waiting} ready`
                   : cutWaiting > 0 ? 'Cutting out the background…'
                   : real === total ? ''

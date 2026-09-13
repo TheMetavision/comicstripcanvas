@@ -18,6 +18,17 @@
 #                                    key, NOT another project's
 #   EMAIL_FROM                       e.g. "Comic Strip Canvas <orders@comicstripcanvas.co.uk>"
 #   TEAM_EMAIL                       where new-order notifications go
+#   STYLE_GUARD_SALT                 salts the hash of a visitor's IP address in
+#                                    the styling spend guards. Any long random
+#                                    string; it is not a secret that protects
+#                                    anything, but changing it resets every
+#                                    per-visitor counter, so change it rarely.
+#                                    A built-in fallback keeps the guards working
+#                                    if it is unset -- see _shared/spend-guard.mjs.
+#   STYLE_DAILY_MAX                  site-wide comic style calls per UTC day
+#                                    before the circuit breaker pauses new ones.
+#                                    Read per request, so raising it takes effect
+#                                    without a deploy. Default 300.
 #   PERSONALISATION_ACTION_SECRET    shared secret the Studio sends as
 #                                    X-CSC-Action-Secret on Approve / Hold /
 #                                    Re-render. The Studio side of the same value
@@ -135,6 +146,15 @@
 # matching how this project keeps function config out of the source files.
 [functions."retention"]
   schedule = "@daily"
+
+# Photos the circuit breaker paused, restarted once an hour. The status poll
+# already restarts a build the customer still has open; this is for the tab that
+# was closed before midnight. Hourly rather than daily because STYLE_DAILY_MAX
+# can be raised by hand, and a breaker reopened at lunchtime should clear within
+# the hour rather than at the next midnight. The sweep never spends more than
+# the budget it reads.
+[functions."style-resume"]
+  schedule = "@hourly"
 
 # The webhook posts to /api/render-personalisation. The function is a background
 # function, so its real name carries the -background suffix; this rewrite keeps

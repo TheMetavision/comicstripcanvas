@@ -1,5 +1,8 @@
 import { createClient } from '@sanity/client';
 import { cutoutConfigured } from './_shared/cutout.mjs';
+import { MAX_STYLE_CALLS } from './_shared/style-limits.mjs';
+import { BUSY_MESSAGE } from './_shared/spend-guard.mjs';
+import { pausedRows, resumeDocument, PAUSED } from './_shared/style-resume.mjs';
 
 /**
  * Styling progress: GET /api/personalisation-status/<id>
@@ -48,10 +51,35 @@ export default async (req) => {
   }
 
   try {
-    const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId }', { id }
+    let doc = await sanity.fetch(
+      '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey }', { id }
     );
     if (!doc) return notFound();
+
+    /* The poll is where a paused photograph comes back to life for a customer
+       who is still watching. Nothing is read from the counter store unless this
+       document actually has something paused, so the ordinary poll -- three
+       seconds apart, for the whole time a strip is styling -- costs exactly
+       what it did before.
+
+       The hourly sweep in style-resume covers everyone who closed the tab; this
+       is the path that gets the waiting customer moving within one poll of the
+       breaker reopening rather than within the hour. */
+    if (pausedRows(doc).length) {
+      const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+      try {
+        const { resumed } = await resumeDocument({ sanity, doc, origin });
+        if (resumed) {
+          doc = await sanity.fetch(
+            '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey }', { id }
+          ) || doc;
+        }
+      } catch (err) {
+        // A resume that fails leaves the panels paused and reports them as
+        // such; the sweep will try again. Never fatal to a status poll.
+        console.warn(`personalisation-status: could not resume ${id}: ${err.message}`);
+      }
+    }
 
     const photos = (doc.photos || []).map((p) => ({
       panel: p.panel,
@@ -84,6 +112,16 @@ export default async (req) => {
       anyFailed: photos.some((p) => p.styleStatus === 'failed'),
       styleSize: doc.styleSize || null,
       styleCalls: doc.styleCalls || 0,
+      /* The cap itself, so the builder can say "this design has reached its
+         limit" from the numbers rather than from a constant copied into the
+         bundle and left to drift. */
+      styleMax: MAX_STYLE_CALLS,
+      /* Waiting on the site-wide breaker rather than on the model. The builder
+         shows this message on those panels and keeps its gate shut; the wording
+         lives on the server so the panel, the Studio row and the email all say
+         the same thing. */
+      paused: photos.filter((p) => p.styleStatus === PAUSED).length,
+      busyMessage: BUSY_MESSAGE,
       templateId: doc.templateId || null,
       /* Whether a cutout is coming at all. Without this the builder cannot tell
          "not ready yet" from "this deployment has no cutout service", and its

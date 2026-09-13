@@ -1,6 +1,7 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { STUDIO_STORE, isUploadId } from './_shared/studio-uploads.mjs';
+import { sweepGuardCounters } from './_shared/spend-guard.mjs';
 
 /**
  * Photo retention. Runs daily (schedule lives in netlify.toml).
@@ -14,6 +15,10 @@ import { STUDIO_STORE, isUploadId } from './_shared/studio-uploads.mjs';
  * And one rule that is not about customers at all: a studio upload is swept
  * 24 hours after it was made unless a save is still waiting to render it. See
  * sweepStudioUploads.
+ *
+ * And one that is about neither: the spend-guard counters, which are keyed on
+ * the window they belong to and are deleted once that window is long past. See
+ * sweepGuardCounters in _shared/spend-guard.mjs.
  *
  * The first two walk documents and delete the blobs underneath them. The third
  * walks the blob store instead, because a blob whose document was never
@@ -417,6 +422,16 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
      these are the shop's prepared artwork, uploaded in chunks and consumed by
      the renderer -- but the same job is the right place for it. */
   report.studioUploads = await sweepStudioUploads({ dryRun, now, deps: { stores } });
+
+  /* The spend counters. Nothing to do with photographs at all -- they hold
+     hashed visitor keys and integers -- but they are blobs nobody else will
+     ever collect, and this is the job that collects blobs. */
+  try {
+    report.guardCounters = await sweepGuardCounters({ dryRun, now });
+  } catch (err) {
+    console.error('retention: spend-guard sweep failed:', err.message);
+    report.guardCounters = { error: err.message };
+  }
 
   return report;
 }

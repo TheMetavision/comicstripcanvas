@@ -93,8 +93,10 @@ const STYLE_SIZE_BY_TEMPLATE = {
 /** '2K' | '4K' for a template id; 2K for anything unrecognised. */
 export const styleSizeForTemplate = (templateId) => STYLE_SIZE_BY_TEMPLATE[templateId] || '2K';
 
-/** How many model calls one personalisation may ever make. */
-export const MAX_STYLE_CALLS = 16;
+/* The per-design cap lives in its own leaf module so a reader that only wants
+   the number does not pull the Gemini SDK in with it. Re-exported here because
+   this is where every existing caller imports it from. */
+export { MAX_STYLE_CALLS } from './style-limits.mjs';
 /** Aspect ratios the image config accepts; see ImageConfig in the typings. */
 export const SUPPORTED_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
 
