@@ -45,6 +45,23 @@ const TEMPLATE_WORD = {
   'icon-portrait': 'Comic icon', 'icon-landscape': 'Comic icon',
 };
 
+/* Shop-window names for the two cover variants, deliberately separate from
+   TEMPLATES[k].name: the internal names are what reach recipes, the basket and
+   Stripe (through TEMPLATE_WORD above), and this wording is free to change
+   without touching any saved order. */
+const SWITCH_LABEL = { cover: 'Classic cover', 'cover-fullbleed': 'Full bleed' };
+const SWITCH_HINT = {
+  cover: 'We cut your subject out of the photo and set them against a comic burst '
+    + 'background, framed by the masthead and captions. Best for one or two people.',
+  'cover-fullbleed': 'Your whole photo becomes the cover, edge to edge, with the masthead '
+    + 'and captions laid over it. Best for group shots, scenes and landscapes.',
+};
+
+/* Furniture the customer must not retype: the publisher stamp is our mark, not
+   theirs. Studio still gets every field. The barcode is not listed because it is
+   not a field at all -- it is painted into the cover overlay artwork. */
+const LOCKED_FOR_CUSTOMER = new Set(['publisher']);
+
 /** Assets, previously base64 blobs in the prototype's `A` object. */
 const ASSET = {
   cover_bg: '/builder/templates/comic-cover/background.png',
@@ -71,6 +88,9 @@ export function initProductBuilder() {
 
   /** "customer" | "studio" -- plumbed through; both behave identically today. */
   const MODE = root.dataset.mode === 'studio' ? 'studio' : 'customer';
+
+  /** A text field the customer may not edit or drag. Studio is unrestricted. */
+  const locked = (f) => MODE === 'customer' && LOCKED_FOR_CUSTOMER.has(f.id);
   const INITIAL = VARIANTS[root.dataset.template] ? root.dataset.template : 'cover';
 
   const $ = (id) => root.querySelector('#' + id);
@@ -281,9 +301,14 @@ export function initProductBuilder() {
   const sw = $('switch');
   VARIANTS[INITIAL].forEach((k) => {
     const b = document.createElement('button');
-    b.textContent = TEMPLATES[k].name; b.dataset.k = k; b.className = 'b-btn';
+    b.textContent = SWITCH_LABEL[k] || TEMPLATES[k].name; b.dataset.k = k; b.className = 'b-btn';
+    if (SWITCH_HINT[k]) { b.title = SWITCH_HINT[k]; b.setAttribute('aria-description', SWITCH_HINT[k]); }
     b.addEventListener('click', () => load(k)); sw.appendChild(b);
   });
+  /* Only the cover offers a choice that needs explaining; the icon's two
+     variants are portrait and landscape, which say what they are. */
+  const swHint = $('switchHint');
+  if (swHint) swHint.hidden = !(VARIANTS[INITIAL].length > 1 && VARIANTS[INITIAL].every((k) => SWITCH_HINT[k]));
 
   function load(key) {
     TK = key; T = TEMPLATES[key]; state = new Map(); selected = null; tint = { h: 0, s: 100 };
@@ -749,6 +774,7 @@ export function initProductBuilder() {
 
   /* ---------- moving text and boxes ---------- */
   function wireMove(f) {
+    if (locked(f)) return;
     const el = nodes['t-' + f.id]; let d = null;
     el.addEventListener('pointerdown', (e) => {
       if (!moveMode) return; e.stopPropagation();
@@ -768,7 +794,7 @@ export function initProductBuilder() {
   }
   $('reposition').addEventListener('click', (e) => {
     moveMode = !moveMode; e.target.setAttribute('aria-pressed', moveMode);
-    T.text.forEach((f) => nodes['t-' + f.id].classList.toggle('movable', moveMode));
+    T.text.forEach((f) => { if (!locked(f)) nodes['t-' + f.id].classList.toggle('movable', moveMode); });
     T.boxes.forEach((b) => nodes['b-' + b.id].g.classList.toggle('movable', moveMode));
     T.panels.forEach((p) => { if (nodes[p.id].hit) nodes[p.id].hit.style.pointerEvents = moveMode ? 'none' : ''; });
     drawHandles();   // the photo box would otherwise sit over the text being moved
@@ -2732,8 +2758,9 @@ export function initProductBuilder() {
   }
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
-    $('textBox').hidden = !T.text.length;
-    T.text.forEach((f) => {
+    const editable = T.text.filter((f) => !locked(f));
+    $('textBox').hidden = !editable.length;
+    editable.forEach((f) => {
       const w = document.createElement('div'); w.className = 'b-fld';
       const top = document.createElement('div'); top.className = 'b-fld-top';
       const lab = document.createElement('span'); lab.className = 'b-fld-lab'; lab.textContent = f.label || f.id;
