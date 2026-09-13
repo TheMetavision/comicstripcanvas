@@ -1,6 +1,8 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
+import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
+import { isArtKey } from './_shared/artwork-styles.mjs';
 
 /**
  * Render a paid personalisation to a print file and a proof.
@@ -10,7 +12,8 @@ import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/ren
  * and rendering swaps the tokens for full-resolution files and rasterises that
  * same document. Nothing is recalculated, so nothing can drift.
  *
- *   {{IMAGE:panel-01}}  the customer's photo for that panel
+ *   {{IMAGE:panel-01}}  the customer's photo for that panel, or -- on a
+ *                       customised stock design -- the shop's own artwork
  *   {{OVERLAY}}         template line art and furniture
  *   {{BACKGROUND}}      template background artwork
  *   {{LOGO}}            publisher logo
@@ -125,7 +128,28 @@ async function render(id, doc, req) {
   const rowFor = (panelId) => (doc.photos || []).find((p) => p.panel === panelId) || null;
   const recipePanel = (panelId) => (recipe.panels || []).find((p) => p.id === panelId) || null;
 
+  /* A customised stock design has no photographs and no styling: the panels are
+     the shop's own artwork, kept under the studio prefix by whichever render
+     made the product. The keys were resolved when the build was saved -- the
+     browser named a panel, never a key -- so they are read from the document
+     rather than worked out again here.
+
+     Nothing about the style pipeline applies: there is no styleStatus to wait
+     for, no cutout to choose between, and no model call was ever made. */
+  const customising = doc.kind === 'customise';
+  const studio = customising ? getStore(STUDIO_STORE) : null;
+  const artFor = async (panelId) => {
+    const row = (doc.artworkKeys || []).find((a) => a.panel === panelId);
+    if (!row || !isArtKey(row.key)) {
+      throw new Error(`No studio artwork recorded for panel ${panelId}`);
+    }
+    const buf = await studio.get(row.key, { type: 'arrayBuffer' });
+    if (!buf) throw new Error(`Studio artwork missing for panel ${panelId} (${row.key})`);
+    return dataUri(buf, row.key);
+  };
+
   const imageFor = async (panelId) => {
+    if (customising) return artFor(panelId);
     const row = rowFor(panelId);
     if (!row || row.styleStatus !== 'done' || !row.styledKey) {
       throw new UnstyledPanel(panelId, row?.styleStatus || 'missing', row?.styleError || null);
@@ -170,7 +194,7 @@ async function render(id, doc, req) {
   scene.cleanup();
 
   console.log(
-    `render-personalisation: ${id} ${scene.template} ` +
+    `render-personalisation: ${id} ${customising ? '[customise] ' : ''}${scene.template} ` +
     `${scene.fileInches[0]} x ${scene.fileInches[1]} in @ ${DPI}dpi -> ` +
     `print ${print.width} x ${print.height} px (${printPng.length} B), ` +
     `proof ${proof.width} x ${proof.height} px`

@@ -348,6 +348,73 @@ export default defineType({
         'failed with reason "cap" rather than being called again.',
     }),
     defineField({
+      name: 'kind',
+      title: 'Kind',
+      type: 'string',
+      readOnly: true,
+      options: {
+        list: [
+          { title: 'Personalised (customer photos)', value: 'personalised' },
+          { title: 'Customised stock design', value: 'customise' },
+        ],
+      },
+      description:
+        'What was built. "personalised" is the ordinary flow: the customer’s own photographs, ' +
+        'styled by the model. "customise" is a stock design reopened with the customer’s own ' +
+        'wording over the shop’s artwork — no photographs, no styling, no model calls, and ' +
+        'the artwork below belongs to the product rather than to this document. Absent means ' +
+        'personalised: everything built before this existed was.',
+    }),
+    defineField({
+      name: 'productId',
+      title: 'Customised Product',
+      type: 'string',
+      readOnly: true,
+      hidden: ({ document }: any) => document?.kind !== 'customise',
+      description: 'Which stock product’s design this is a version of.',
+    }),
+    defineField({
+      name: 'artworkStyle',
+      title: 'Artwork Style',
+      type: 'string',
+      readOnly: true,
+      hidden: ({ document }: any) => document?.kind !== 'customise',
+      description: 'Which of the product’s two styles was customised: classic or fullBleed.',
+    }),
+    defineField({
+      name: 'sceneId',
+      title: 'Scene Id',
+      type: 'string',
+      readOnly: true,
+      hidden: ({ document }: any) => document?.kind !== 'customise',
+      description: 'The studio scene the design came from; its artwork lives under studio/<this id>/.',
+    }),
+    defineField({
+      name: 'artworkKeys',
+      title: 'Artwork Keys',
+      type: 'array',
+      readOnly: true,
+      hidden: ({ document }: any) => document?.kind !== 'customise',
+      of: [
+        {
+          type: 'object',
+          name: 'artworkKey',
+          fields: [
+            { name: 'panel', title: 'Panel', type: 'string' },
+            { name: 'key', title: 'Blob key', type: 'string' },
+          ],
+          preview: {
+            select: { title: 'panel', subtitle: 'key' },
+          },
+        },
+      ],
+      description:
+        'Which blob fills each panel when this is rendered. Resolved on the server from the ' +
+        'product’s own scene at Add to basket — never sent by the browser — so a customer ' +
+        'cannot point a render at artwork that is not theirs to print. These belong to the ' +
+        'STUDIO store and outlive this document: retention must never follow them.',
+    }),
+    defineField({
       name: 'guardKey',
       title: 'Spend Guard Key',
       type: 'string',

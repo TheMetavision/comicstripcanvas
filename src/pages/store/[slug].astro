@@ -52,6 +52,18 @@ const mainImageUrl = hasImages && product.images[0]?.asset
    first, what the Open Graph image and the Product schema describe, and what
    the shopping feed lists -- the feed reads images[0] and knows nothing about
    this. */
+/* Which styles can be reopened in the builder. A design drawn in the studio
+   has a scene behind it; a hand-curated product has a photograph somebody
+   uploaded years ago and nothing to reopen, so it is offered nothing. */
+const customisable = {
+  classic: !!product.classicSceneId,
+  fullBleed: !!product.fullBleed?.sceneId,
+};
+const canCustomise = !product.isPersonalised && (customisable.classic || customisable.fullBleed);
+/* In pence on the document, because a £5 fee is honestly a whole number of
+   them, and checkout prices from the same field. */
+const customiseFee = typeof product.customiseFee === 'number' ? product.customiseFee : 500;
+
 const fullBleedImage = product.fullBleed?.listingImage?.asset
   ? urlFor(product.fullBleed.listingImage).width(800).url()
   : null;
@@ -270,6 +282,24 @@ const seoDesc = product.seo?.metaDescription || product.description;
             <button id="add-to-cart" class="btn-primary w-full text-xl text-center mb-4">
               ADD TO CART
             </button>
+
+            {canCustomise && (
+              <a
+                id="customise-link"
+                href={`/store/${product.slug}/customise`}
+                data-classic={customisable.classic ? '1' : ''}
+                data-full-bleed={customisable.fullBleed ? '1' : ''}
+                class="btn-secondary w-full text-lg text-center block mb-4"
+              >
+                ✏️ CUSTOMISE THIS DESIGN (+£{(customiseFee / 100).toFixed(2)})
+              </a>
+            )}
+            {canCustomise && (
+              <p class="font-source text-gray-400 text-xs mb-4">
+                Same artwork, your wording &mdash; the masthead, title, captions and colours.
+                You&rsquo;ll approve a proof before we print.
+              </p>
+            )}
             </Fragment>
           )}
 
@@ -440,6 +470,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
         if (!shot?.url) return;
         selectedStyle = key;
         activateBtn(styleBtns, btn, 'border-comic-yellow');
+        syncCustomiseLink();
         const mainImg = document.querySelector('#main-product-img') as HTMLImageElement;
         if (mainImg) { mainImg.src = shot.url; mainImg.alt = shot.alt || ''; }
         document.querySelectorAll('.thumb-btn').forEach(b =>
@@ -460,6 +491,21 @@ const seoDesc = product.seo?.metaDescription || product.description;
       if (qtyDisplay) qtyDisplay.textContent = String(quantity);
       updatePrice();
     });
+
+    /* The Customise link follows the style being shown: the two styles are two
+       different designs, and only one of them may have a scene to reopen. */
+    const customiseLink = document.getElementById('customise-link') as HTMLAnchorElement | null;
+    function syncCustomiseLink() {
+      if (!customiseLink) return;
+      const style = selectedStyle || 'classic';
+      const has = style === 'fullBleed'
+        ? !!customiseLink.dataset.fullBleed
+        : !!customiseLink.dataset.classic;
+      customiseLink.hidden = !has;
+      const base = customiseLink.getAttribute('href')?.split('?')[0] || '';
+      customiseLink.href = style === 'fullBleed' ? `${base}?style=fullbleed` : base;
+    }
+    syncCustomiseLink();
 
     if (styleBtns[0]) activateBtn(styleBtns, styleBtns[0], 'border-comic-yellow');
     if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');

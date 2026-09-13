@@ -221,6 +221,18 @@ export default defineType({
         'Artwork fee added on top of the print price for a personalised build. Read at checkout by netlify/functions/checkout.mjs -- changing it here changes what customers are charged, with no deploy.',
     }),
     defineField({
+      name: 'customiseFee',
+      title: 'Customise Fee (pence)',
+      type: 'number',
+      initialValue: 500,
+      validation: (Rule: any) => Rule.min(0).integer(),
+      description:
+        'What "Customise this design" costs on top of the print price, IN PENCE — 500 is £5. ' +
+        'Read at checkout by netlify/functions/checkout.mjs, so changing it changes what ' +
+        'customers are charged with no deploy. Only offered on a product whose artwork was ' +
+        'drawn in the studio, because only those have a scene to reopen.',
+    }),
+    defineField({
       name: 'sortOrder',
       title: 'Sort Order',
       type: 'number',

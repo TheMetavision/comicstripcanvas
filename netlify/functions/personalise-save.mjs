@@ -8,6 +8,9 @@ import {
 } from './_shared/spend-guard.mjs';
 import { pausePanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
+import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
+import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artwork-styles.mjs';
+import { moderate, MODERATION_MESSAGE } from './_shared/moderation.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -96,6 +99,11 @@ export default async (req, context) => {
 
     const thumb = form.get('thumb');
     if (thumb && typeof thumb !== 'string') return await saveThumb(form, thumb);
+
+    /* A customise build has no photograph at any point: the artwork is the
+       shop's and the customer only writes over it. So it arrives whole, once,
+       and this is the only shape that creates its own document. */
+    if ((form.get('kind') || '').toString() === 'customise') return await saveCustomise(form);
 
     const photo = form.get('photo');
     return photo && typeof photo !== 'string'
@@ -461,6 +469,182 @@ async function saveThumb(form, file) {
   });
 
   return json({ id, key });
+}
+
+/* ---------- a stock design with the customer's own wording ---------- */
+/**
+ * "Customise this design": the shop's artwork, the customer's text.
+ *
+ * Nothing is uploaded and nothing is styled, so this path creates the document
+ * in one request rather than growing it photo by photo. What arrives is a
+ * recipe and the scene the builder exported from it; what is NOT trusted is
+ * anything about the artwork. The panels are filled from the product's own
+ * stored scene, resolved here, so a crafted request cannot point a print at a
+ * blob that belongs to somebody else -- the browser names a PANEL, never a key.
+ *
+ * Three things are checked against that stored scene, because all three are
+ * meant to be locked and a browser is not where locks live:
+ *
+ *   the template   a cover recipe cannot be saved against an icon's artwork
+ *   the panels     same ids, same crop, same zoom -- the artwork does not move
+ *   the furniture  the publisher stamp is ours, not theirs
+ *
+ * And the words themselves go past the filter. That is a speed bump rather
+ * than a gate -- the gate is that a person approves the proof before anything
+ * prints -- but it is the difference between a customer finding out now and
+ * finding out after they have paid.
+ */
+const LOCKED_TEXT_IDS = new Set(['publisher']);
+
+/** Panel crop, to the precision the recipe records it at. */
+const sameTransform = (a, b) => {
+  const t = (v) => (v ? `${v.zoom}|${v.offsetX}|${v.offsetY}` : 'none');
+  return t(a) === t(b);
+};
+
+async function saveCustomise(form) {
+  const productId = (form.get('productId') || '').toString().trim();
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(productId) || productId.includes('..')) {
+    return json({ error: 'That product id is not well formed' }, 400);
+  }
+  const style = styleOr((form.get('style') || '').toString().trim().toLowerCase() === 'fullbleed'
+    ? FULL_BLEED : (form.get('style') || '').toString().trim());
+
+  let recipe;
+  try { recipe = JSON.parse((form.get('recipe') || '').toString()); }
+  catch { return json({ error: 'Recipe is not valid JSON' }, 400); }
+  if (!recipe || typeof recipe !== 'object' || !recipe.template) {
+    return json({ error: 'Recipe is missing its template' }, 400);
+  }
+  const { svg: sceneSvg, ...recipeRest } = recipe;
+  if (typeof sceneSvg !== 'string' || !sceneSvg.trim()) {
+    return json({ error: 'The recipe carries no scene' }, 400);
+  }
+  /* The same guard studio-save has, for the same reason: an inlined image is a
+     multi-megabyte request that the platform rejects with no body, and every
+     exporter here tokenises. */
+  if (/href\s*=\s*["']?\s*data:/i.test(sceneSvg)) {
+    return json({ error: 'The scene has an image inlined as data: — it must reference its panels by token.' }, 400);
+  }
+
+  /* ---- the words ---- */
+  const notes = str(form.get('notes'), 4000);
+  const verdict = moderate([
+    ...(recipe.text || []).map((t) => ({ id: t.id, value: t.value })),
+    { id: 'notes', value: notes },
+  ]);
+  if (!verdict.ok) {
+    console.warn(`personalise-save: customise refused for ${productId} — ` +
+      `blocked wording in ${verdict.fields.join(', ')} (${verdict.words.join(', ')})`);
+    return json({ error: MODERATION_MESSAGE, blocked: true, fields: verdict.fields }, 422);
+  }
+
+  /* ---- the design it claims to be a version of ---- */
+  const product = await sanity.fetch(
+    `*[_type == "product" && _id == $id][0]{ _id, title, "slug": slug.current, customiseFee,
+        classicSceneId, "fullBleedSceneId": fullBleed.sceneId }`,
+    { id: productId }
+  );
+  if (!product) return json({ error: 'Unknown product' }, 404);
+  const sceneId = style === FULL_BLEED ? product.fullBleedSceneId : product.classicSceneId;
+  if (!sceneId) return json({ error: 'This design cannot be customised' }, 404);
+
+  const studio = getStore(STUDIO_STORE);
+  const rawScene = await studio.get(sceneKey(sceneId, style), { type: 'text' });
+  if (!rawScene) return json({ error: 'This design cannot be customised' }, 404);
+  const source = JSON.parse(rawScene);
+
+  if (source.recipe?.template !== recipe.template) {
+    return json({
+      error: `This design is a ${source.recipe?.template || 'different'} layout, not ${recipe.template}`,
+    }, 400);
+  }
+
+  /* ---- the artwork, resolved here and nowhere else ---- */
+  const keys = source.images || {};
+  const tokens = [...new Set([...sceneSvg.matchAll(/\{\{IMAGE:([^}]+)\}\}/g)].map((m) => m[1]))];
+  if (!tokens.length) return json({ error: 'The scene has no panel to fill' }, 400);
+  const unknown = tokens.filter((t) => !keys[t]);
+  if (unknown.length) {
+    return json({ error: `This design has no artwork for ${unknown.join(', ')}` }, 400);
+  }
+  const artworkKeys = tokens.map((panel) => ({
+    _type: 'artworkKey', _key: `a-${panel}`, panel, key: keys[panel],
+  }));
+  if (!artworkKeys.every((a) => isArtKey(a.key))) {
+    /* A scene whose images still point at upload keys is one the renderer has
+       not finished with. Better to say so than to write a document that can
+       never be rendered. */
+    console.error(`personalise-save: customise refused — scene ${sceneId}/${style} has no durable artwork`);
+    return json({ error: 'This design is not ready to customise yet' }, 409);
+  }
+
+  /* ---- what may not have changed ---- */
+  const before = new Map((source.recipe?.text || []).map((t) => [t.id, t]));
+  const changedLocked = (recipe.text || [])
+    .filter((t) => LOCKED_TEXT_IDS.has(t.id))
+    .filter((t) => before.has(t.id) && String(before.get(t.id).value) !== String(t.value))
+    .map((t) => t.id);
+  if (changedLocked.length) {
+    console.warn(`personalise-save: customise refused for ${productId} — locked field(s) ${changedLocked.join(', ')} were changed`);
+    return json({ error: `That part of the design cannot be changed (${changedLocked.join(', ')})` }, 422);
+  }
+
+  const panelsBefore = new Map((source.recipe?.panels || []).map((p) => [p.id, p]));
+  const moved = (recipe.panels || [])
+    .filter((p) => panelsBefore.has(p.id))
+    .filter((p) => !sameTransform(panelsBefore.get(p.id).transform, p.transform))
+    .map((p) => p.id);
+  if (moved.length) {
+    console.warn(`personalise-save: customise refused for ${productId} — panel(s) ${moved.join(', ')} were moved`);
+    return json({ error: 'The artwork cannot be moved or resized on this design' }, 422);
+  }
+
+  /* ---- write it ---- */
+  const id = newId();
+  const out = recipe.output || {};
+  try {
+    await sanity.create({
+      _id: id,
+      _type: 'pendingPersonalisation',
+      kind: 'customise',
+      status: 'draft',
+      productId,
+      artworkStyle: style,
+      sceneId,
+      artworkKeys,
+      templateId: recipe.template,
+      printSize: out.faceInches ? `${out.faceInches[0]} × ${out.faceInches[1]} in` : '',
+      outputFormat: out.format || '',
+      recipe: JSON.stringify(recipeRest),
+      sceneSvg,
+      customerNotes: notes,
+      customerTitle: (recipe.text || []).find((t) => t.id === 'title')?.value || '',
+      /* Empty, and deliberately present: every reader of this document walks
+         these arrays, and absent is a different shape from empty. */
+      photoKeys: [],
+      styledKeys: [],
+      photos: [],
+      styleCalls: 0,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`personalise-save: could not create the customise document for ${productId}:`, err.message);
+    return json({ error: 'Could not save your design' }, 500);
+  }
+
+  console.log(
+    `personalise-save: customise ${id} from ${productId} (${style}, scene ${sceneId}) — ` +
+    `${artworkKeys.length} panel(s), template ${recipe.template}`
+  );
+  return json({
+    id,
+    kind: 'customise',
+    productId,
+    style,
+    sceneId,
+    customiseFee: typeof product.customiseFee === 'number' ? product.customiseFee : null,
+  });
 }
 
 /* ---------- the brief, once every panel is filled ---------- */

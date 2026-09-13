@@ -67,6 +67,16 @@ export default defineType({
                 'the second style existed, and every product that only has one, is Classic.',
             },
             {
+              name: 'buildKind',
+              type: 'string',
+              title: 'Built',
+              description:
+                'Set when this line is artwork a customer built rather than a stock design: ' +
+                '"personalised" (their photographs) or "customise" (their wording on ours). ' +
+                'Those are fulfilled from the proof they approved, under Personalisations — ' +
+                'which is why Print File below is empty on them.',
+            },
+            {
               name: 'printFile',
               type: 'url',
               title: 'Print File',

@@ -77,6 +77,7 @@ export const productBySlugQuery = `
     },
     "printFileUrl": printFile.asset->url,
     classicSceneId,
+    customiseFee,
     fullBleed {
       listingImage { asset-> { _id, url }, alt, "lqip": asset->metadata.lqip },
       "printFileUrl": printFile.asset->url,

@@ -386,6 +386,16 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
     try {
       // List rather than trusting photoKeys: a key that was written but never
       // recorded would otherwise be orphaned by the document's deletion.
+      /* TWO PREFIXES, and only these two: the customer's own photographs and
+         the renders made for them. Listing by prefix rather than reading keys
+         off the document is what keeps it that way.
+
+         It matters more than it used to. A customised stock design carries
+         artworkKeys pointing into the STUDIO store -- the shop's artwork, shared
+         by every customer who orders that design and by the product page itself
+         -- and following those would delete the product's artwork because one
+         customer's build aged out. Nothing here looks at them, and the guard
+         below means nothing here can start to by accident. */
       const keys = [];
       for (const [store, prefix] of [
         [PHOTO_STORE, `personalisation/${id}/`],
@@ -393,7 +403,10 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
       ]) {
         if (!isId(id)) continue;   // legacy ids never had blobs under these prefixes
         const { blobs } = await stores[store].list({ prefix });
-        for (const b of blobs) keys.push({ store, key: b.key });
+        for (const b of blobs) {
+          if (!b.key.startsWith(prefix)) continue;   // belt and braces; list() already scopes
+          keys.push({ store, key: b.key });
+        }
       }
 
       if (dryRun) {

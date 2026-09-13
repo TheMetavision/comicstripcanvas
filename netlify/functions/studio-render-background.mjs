@@ -7,6 +7,7 @@ import { WEB_MASTER, renderDerivative, setListingImage, recordDisplacedListing }
 import {
   CLASSIC, FULL_BLEED, styleOr, styleLabel,
   sceneKey, printKey, prevPrintKey, listingKey, legacySceneKey, legacyPrintKey,
+  artKey, artWebKey, isArtKey, ART_WEB_SIDE,
 } from './_shared/artwork-styles.mjs';
 
 /**
@@ -101,16 +102,28 @@ export default async (req) => {
        nobody chose. */
     const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
     const keys = job.images || {};
+    /* Kept, because this artwork is now wanted twice: once to compose the print
+       below, and again months later when a customer opens the same design in
+       the builder to put their own wording on it. The bytes are already in
+       hand here, so keeping them costs a write rather than a second read. */
+    const sources = new Map();
     const scene = await prepareScene({
       sceneSvg: job.svg,
       recipe: job.recipe || {},
       origin,
       imageFor: async (panelId) => {
         const key = keys[panelId];
-        if (!uploadIdFromKey(key)) throw new Error(`Panel ${panelId} has no upload key`);
+        /* Either shape: a fresh upload from a save, or the durable copy this
+           function wrote the last time it ran. A re-render of a product whose
+           uploads have long since been swept reads the second. */
+        if (!uploadIdFromKey(key) && !isArtKey(key)) {
+          throw new Error(`Panel ${panelId} has no usable artwork key`);
+        }
         const buf = await store.get(key, { type: 'arrayBuffer' });
-        if (!buf) throw new Error(`The upload for panel ${panelId} is gone from the store (${key})`);
-        return dataUri(Buffer.from(buf), key);
+        if (!buf) throw new Error(`The artwork for panel ${panelId} is gone from the store (${key})`);
+        const bytes = Buffer.from(buf);
+        sources.set(panelId, { bytes, key });
+        return dataUri(bytes, key);
       },
     });
     const svg = scene.svg;
@@ -272,17 +285,64 @@ export default async (req) => {
       console.error('studio-render: SANITY_WRITE_TOKEN is not set — the pictures exist but nothing was attached');
     }
 
-    /* LAST, and deliberately so. The handoff is what makes this job re-runnable
-       -- re-post the same id and it renders and attaches again -- so it must
-       outlive every step that can fail, the Sanity uploads included. Deleting
-       it before them, as this did, meant a Sanity outage cost the design.
-       The uploads go with it: the print master is the durable artefact, and a
-       second full-resolution copy under an upload id serves nothing. A delete
-       that fails is not worth failing a finished render over; retention sweeps
-       the prefix. */
-    await store.delete(sceneAt)
-      .catch((err) => console.warn(`studio-render: could not delete the scene for ${id}: ${err.message}`));
-    await Promise.all(Object.values(keys).map(
+    /* ---- the artwork, kept under the product rather than the upload ---- */
+    /* The upload keys are a transport buffer that retention sweeps a day later,
+       so a scene pointing at them is a scene that stops working. Each panel is
+       copied under the product's own prefix, at two sizes, and the scene is
+       rewritten to name the copies. Nothing sweeps this prefix.
+
+       The web copy exists so /api/customise-scene can stream something to a
+       phone without resizing anything at request time. It is made here because
+       sharp is already in this bundle and the pixels are already decoded. */
+    const durable = {};
+    for (const [panelId, src] of sources) {
+      const ext = (String(src.key).split('.').pop() || 'png').toLowerCase().slice(0, 5);
+      const full = artKey(id, style, panelId, ext);
+      const web = artWebKey(id, style, panelId);
+      if (src.key !== full) {
+        await store.set(full, src.bytes, {
+          metadata: { id, style, panel: panelId, kind: 'art', title },
+        });
+      }
+      try {
+        const small = await sharp(src.bytes)
+          .resize(ART_WEB_SIDE, ART_WEB_SIDE, { fit: 'inside', withoutEnlargement: true })
+          .png({ compressionLevel: 9 })
+          .toBuffer();
+        await store.set(web, small, {
+          metadata: { id, style, panel: panelId, kind: 'art-web', title, side: ART_WEB_SIDE },
+        });
+      } catch (err) {
+        /* A missing web copy costs the customise builder its picture, not this
+           render its print file. Say so and carry on. */
+        console.warn(`studio-render: no web copy of ${panelId} for ${id}: ${err.message}`);
+      }
+      durable[panelId] = full;
+    }
+
+    /* The scene is KEPT now, rewritten to point at the copies. It used to be
+       deleted the moment the print existed, because the print was the only
+       durable thing anybody wanted; the design itself is now a thing customers
+       reopen, so it stays. Re-running a render for the same id still works --
+       better than before, since it no longer depends on uploads that may have
+       been swept. */
+    await store.set(sceneKey(id, style), JSON.stringify({
+      ...job, id, docId, style, images: durable, renderedAt: new Date().toISOString(),
+    }), {
+      metadata: { id, docId, style, kind: 'scene', title, printWidth, dpi: DPI, rendered: 'true' },
+    });
+    /* The legacy path, if that is where this one was read from, does go: it is
+       the same scene at an older address and keeping both would leave two
+       answers to "which scene is this product's". */
+    if (sceneAt !== sceneKey(id, style)) {
+      await store.delete(sceneAt)
+        .catch((err) => console.warn(`studio-render: could not tidy ${sceneAt}: ${err.message}`));
+    }
+
+    /* The uploads go, as they always did. The print master and now the durable
+       artwork are what outlive the save; a third full-resolution copy under an
+       upload id serves nothing, and retention would sweep it anyway. */
+    await Promise.all(Object.values(keys).filter((key) => uploadIdFromKey(key)).map(
       (key) => store.delete(key).catch((err) => console.warn(`studio-render: could not delete ${key}: ${err.message}`))
     ));
 

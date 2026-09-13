@@ -21,13 +21,21 @@ import BOXES from '../data/builder/icon_boxes.json';
 import METRICS from '../data/builder/metrics.json';
 
 export type BuilderTemplate = 'strip' | 'cover' | 'icon-portrait';
-export type BuilderMode = 'customer' | 'studio';
+export type BuilderMode = 'customer' | 'studio' | 'customise';
 
 interface Props {
   /** Which template the builder opens on. Variants are switchable inside. */
   template: BuilderTemplate;
-  /** "customer" (default) or "studio". Both behave identically for now. */
+  /**
+   * "customer" (default), "studio", or "customise".
+   *
+   * The third is a stock design reopened so its wording can be changed: the
+   * artwork is the shop's and is fixed, and the builder loads it from
+   * /api/customise-scene rather than from anything the customer supplies.
+   */
   mode?: BuilderMode;
+  /** customise only: whose design this is. */
+  productId?: string;
   /**
    * The product's personalisation fee, in pounds, read from Sanity by the page.
    * Passed in rather than looked up here so the basket line, the product page
@@ -37,9 +45,14 @@ interface Props {
   personalisationFee?: number;
 }
 
-const { template, mode = 'customer', personalisationFee } = Astro.props;
+const { template, mode = 'customer', personalisationFee, productId } = Astro.props;
 
-// Only customer mode prices anything, so only customer mode needs the fee.
+if (mode === 'customise' && !productId) {
+  throw new Error('ProductBuilder: customise mode needs the productId whose design it is opening.');
+}
+
+// Only the personalised flow prices anything here; a customised design is
+// priced from the product's customiseFee, which the builder gets with the scene.
 if (mode === 'customer' && (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee))) {
   throw new Error(
     `ProductBuilder: personalisationFee must be a number (got ${JSON.stringify(personalisationFee)}). ` +
@@ -58,6 +71,7 @@ const builderData = JSON.stringify({
   class="csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]"
   data-mode={mode}
   data-template={template}
+  data-product-id={productId}
 >
   <!-- toolbar -->
   <header
@@ -218,7 +232,9 @@ const builderData = JSON.stringify({
       <section>
         <h3 class="b-h">Output</h3>
         <div class="b-stat"><span>Spec</span><span id="outSpec"></span></div>
-        <div class="b-stat"><span>Images placed</span><span id="filled"></span></div>
+        {mode !== 'customise' && (
+          <div class="b-stat"><span>Images placed</span><span id="filled"></span></div>
+        )}
         {mode === 'customer' && (
           <div class="b-stat"><span>Uploaded</span><span id="uploaded"></span></div>
         )}
@@ -236,9 +252,11 @@ const builderData = JSON.stringify({
         </p>
       </section>
 
-      {mode === 'customer' && (
+      {/* Both customer-facing modes buy something; only the consent box above
+          is about photographs, and a customised design has none. */}
+      {mode !== 'studio' && (
       <section id="basketBox">
-        <h3 class="b-h">Add to basket</h3>
+        <h3 class="b-h">{mode === 'customise' ? 'Add your version to the basket' : 'Add to basket'}</h3>
         <label for="notes" class="b-lab">Anything we should know?</label>
         <textarea id="notes" rows="3" maxlength="4000"
           class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"

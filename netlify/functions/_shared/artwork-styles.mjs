@@ -80,6 +80,34 @@ export const listingKey = (id, style) => `studio/${id}/${styleOr(style)}/listing
 export const legacySceneKey = (id) => `studio/${id}/scene.json`;
 export const legacyPrintKey = (id) => `studio/${id}/print.png`;
 
+/*
+ * The artwork itself, kept.
+ *
+ * The uploads a save arrives with are a transport buffer: retention sweeps them
+ * a day later, and the renderer deletes them as soon as the print exists. That
+ * was fine while the print master was the only thing anybody needed afterwards.
+ * "Customise this design" needs the SOURCE artwork again, months later, to put
+ * it back on a customer's screen with their own wording over it -- so the
+ * renderer now keeps a copy of its own under the product's prefix, where
+ * nothing sweeps it.
+ *
+ *   art/<panel>.<ext>      full resolution, what the print is composed from
+ *   art-web/<panel>.png    <= ART_WEB_SIDE, what the builder and the draft use
+ *
+ * Two sizes because they are read by different things for different reasons: a
+ * 20 MB transparent PNG is the right thing to print from and an absurd thing to
+ * send to a phone, and the endpoint that serves the browser copy should not
+ * have to resize anything at request time.
+ */
+export const ART_WEB_SIDE = 1600;
+export const artKey = (id, style, panel, ext = 'png') =>
+  `studio/${id}/${styleOr(style)}/art/${panel}.${ext}`;
+export const artWebKey = (id, style, panel) =>
+  `studio/${id}/${styleOr(style)}/art-web/${panel}.png`;
+/** Is this key one of ours, rather than something a caller made up? */
+export const isArtKey = (key) =>
+  typeof key === 'string' && /^studio\/[A-Za-z0-9._-]{1,120}\/(classic|fullBleed)\/art\/[A-Za-z0-9_-]{1,40}\.[a-z0-9]{1,5}$/.test(key);
+
 /** The Sanity paths each style writes to, for the renderer and for a reader. */
 export const IMAGE_FIELD = { [CLASSIC]: 'images', [FULL_BLEED]: 'fullBleed.listingImage' };
 export const PRINT_FIELD = { [CLASSIC]: 'printFile', [FULL_BLEED]: 'fullBleed.printFile' };

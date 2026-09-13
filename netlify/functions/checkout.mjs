@@ -111,6 +111,25 @@ export default async (req, context) => {
       feeBySlug = Object.fromEntries(rows.map((r) => [r.slug, r.personalisationFee]));
     }
 
+    /* WHICH KIND of build each line is, asked of the build itself.
+
+       A customised stock design and a personalised one both carry a pp- id on
+       the line, and they are priced from different fields -- £5 to put your own
+       wording on the shop's artwork, £10 for artwork made from your photographs.
+       The browser is not asked which: it would be the one number in the basket
+       a customer could choose for themselves. One query for the whole basket,
+       and the document says what it is. */
+    const buildIds = [...new Set(items.map((i) => i.personalisationId).filter(isPersonalisationId))];
+    let buildById = {};
+    if (buildIds.length) {
+      const rows = await sanity.fetch(
+        '*[_type == "pendingPersonalisation" && _id in $ids]{ _id, kind, productId, artworkStyle, ' +
+        '"customiseFee": *[_type == "product" && _id == ^.productId][0].customiseFee }',
+        { ids: buildIds }
+      );
+      buildById = Object.fromEntries(rows.map((r) => [r._id, r]));
+    }
+
     // Server-authoritative pricing (H1): never trust the client's unitPrice.
     // Each line's price comes from the PRICES table, looked up by format+size,
     // plus the artwork fee for a personalised build.
@@ -142,16 +161,34 @@ export default async (req, context) => {
             status: 400, headers: { 'Content-Type': 'application/json' },
           });
         }
-        const fee = feeBySlug[item.slug];
+        const build = buildById[item.personalisationId];
+        item.buildKind = build?.kind === 'customise' ? 'customise' : 'personalised';
+
+        /* A customised design is priced in PENCE on the product, because that
+           is the unit a £5 fee is honestly expressed in and the unit the rest
+           of this function works in. */
+        const fee = item.buildKind === 'customise'
+          ? (typeof build?.customiseFee === 'number' ? build.customiseFee / 100 : undefined)
+          : feeBySlug[item.slug];
+
         // Refuse rather than undercharge: a missing fee would silently sell
         // bespoke artwork at the plain print price.
         if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
-          console.error(`No personalisationFee on product "${item.slug}" — refusing to undercharge.`);
+          console.error(
+            item.buildKind === 'customise'
+              ? `No customiseFee on the product behind build ${item.personalisationId} — refusing to undercharge.`
+              : `No personalisationFee on product "${item.slug}" — refusing to undercharge.`
+          );
           return new Response(JSON.stringify({ error: 'This personalised product is not priced yet. Please contact us.' }), {
             status: 400, headers: { 'Content-Type': 'application/json' },
           });
         }
         item.fee = fee;
+        /* The style is the build's, not the browser's: a customised design was
+           made from one of the two styles and the order has to say which. */
+        if (item.buildKind === 'customise' && isStyle(build?.artworkStyle)) {
+          item.artworkStyle = build.artworkStyle;
+        }
       }
       if (
         typeof item.quantity !== 'number' ||
@@ -207,7 +244,9 @@ export default async (req, context) => {
           description: [
             `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
             hasFullBleed[item.slug] ? styleLabel(item.artworkStyle) : null,
-            item.fee ? `includes £${item.fee.toFixed(2)} personalisation` : null,
+            item.fee
+              ? `includes £${item.fee.toFixed(2)} ${item.buildKind === 'customise' ? 'customising' : 'personalisation'}`
+              : null,
           ].filter(Boolean).join(' — '),
           metadata: {
             productId: item.productId,
@@ -220,7 +259,12 @@ export default async (req, context) => {
             artworkStyle: item.artworkStyle,
             // the webhook reads this back to mark the build paid and render it
             ...(item.personalisationId
-              ? { personalisationId: item.personalisationId, personalisationFee: String(item.fee) }
+              ? {
+                personalisationId: item.personalisationId,
+                personalisationFee: String(item.fee),
+                // What the webhook needs to tell the two apart on the order.
+                buildKind: item.buildKind || 'personalised',
+              }
               : {}),
           },
         },

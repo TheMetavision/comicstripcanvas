@@ -62,6 +62,40 @@ const SWITCH_HINT = {
    not a field at all -- it is painted into the cover overlay artwork. */
 const LOCKED_FOR_CUSTOMER = new Set(['publisher']);
 
+/* The same word list netlify/functions/_shared/moderation.mjs holds, mirrored
+   here so a customer is told before they wait on a request -- the same
+   arrangement PRICES has between products.ts and catalog.mjs, and for the same
+   reason: two toolchains, one set of rules.
+
+   The browser copy is a courtesy. The server checks again on every save,
+   because a check that runs in the customer's own browser is not a check, and
+   nothing prints until a person has approved the proof either way. */
+const BLOCKED_WORDS = [
+  'fuck', 'shit', 'cunt', 'bastard', 'wanker', 'bollocks', 'prick', 'twat',
+  'arsehole', 'asshole', 'dickhead', 'motherfucker', 'bellend',
+  'nigger', 'nigga', 'faggot', 'tranny', 'retard', 'paki', 'chink', 'spastic',
+  'kike', 'gypo', 'gyppo', 'wog',
+  'zzblockme',
+];
+const MODERATION_MESSAGE = 'Sorry — we can’t print that wording. Please edit the text and try again, '
+  + 'or contact us if you think this is a mistake.';
+const LEET_MAP = { 4: 'a', 3: 'e', 1: 'i', 0: 'o', 5: 's', 7: 't', $: 's', '@': 'a', '!': 'i' };
+function foldForModeration(text) {
+  const folded = String(text || '').toLowerCase()
+    .replace(/[43105 7$@!]/g, (c) => (c === ' ' ? ' ' : LEET_MAP[c] ?? c))
+    .replace(/[^a-z ]+/g, ' ');
+  return folded.replace(/\b(?:[a-z] ){2,}[a-z]\b/g, (run) => run.replace(/ /g, ''))
+    .replace(/([a-z])\1{1,}/g, '$1').replace(/\s+/g, ' ').trim();
+}
+const BLOCKED_FOLDED = BLOCKED_WORDS.map(foldForModeration);
+/** Which fields, if any, a customer needs to edit before this can be sent. */
+function moderationFailures(fields) {
+  return (fields || []).filter(({ value }) => {
+    const hay = ` ${foldForModeration(value)} `;
+    return BLOCKED_FOLDED.some((w) => hay.includes(` ${w} `));
+  }).map(({ id }) => id);
+}
+
 /* The two artwork styles a stock product can be sold in, for the studio's
    Replace panel. The labels match SWITCH_LABEL above on purpose -- the operator
    is choosing the same two things there and here -- but these are the SLOT
@@ -95,11 +129,29 @@ export function initProductBuilder() {
 
   const { PATHS, COVER, CAPBOX, BOXES, METRICS, PERSONALISATION_FEE } = JSON.parse(dataEl.textContent);
 
-  /** "customer" | "studio" -- plumbed through; both behave identically today. */
-  const MODE = root.dataset.mode === 'studio' ? 'studio' : 'customer';
+  /** "customer" | "studio" | "customise". */
+  /* The third one is the shop's own artwork with the customer's wording over
+     it. Everything visual about the design is fixed -- the picture, where it
+     sits, how big it is -- and everything written is theirs. So it is the
+     customer builder with the whole photograph half taken out rather than a
+     builder of its own: same controls, same preview, same draft, same basket,
+     and nothing that uploads, styles or crops. */
+  const MODE = ['studio', 'customise'].includes(root.dataset.mode) ? root.dataset.mode : 'customer';
+  const CUSTOMISE = MODE === 'customise';
+  /* Which product's design, and in which of its two styles. Only set in
+     customise mode; the page reads them off the product it is showing. */
+  const CUSTOMISE_OF = root.dataset.productId || '';
+  /* The style comes off the link the customer followed. The page is static and
+     serves both styles, so the query string is where the choice lives; the data
+     attribute is here for anything that mounts the island directly. */
+  const CUSTOMISE_STYLE = (() => {
+    const asked = root.dataset.style
+      || new URLSearchParams(location.search).get('style') || '';
+    return String(asked).toLowerCase() === 'fullbleed' ? 'fullbleed' : 'classic';
+  })();
 
   /** A text field the customer may not edit or drag. Studio is unrestricted. */
-  const locked = (f) => MODE === 'customer' && LOCKED_FOR_CUSTOMER.has(f.id);
+  const locked = (f) => MODE !== 'studio' && LOCKED_FOR_CUSTOMER.has(f.id);
   const INITIAL = VARIANTS[root.dataset.template] ? root.dataset.template : 'cover';
 
   const $ = (id) => root.querySelector('#' + id);
@@ -306,6 +358,10 @@ export function initProductBuilder() {
 
   let T, TK, state, selected, pickTarget = null, bg, tint = { h: 0, s: 100 }, nodes = {}, moveMode = false;
   let fmt = 'poster';
+  /* Customise mode only: the design arrives over the network, so there is a
+     moment where the builder is mounted and has nothing to show. The gate
+     reads these, which is why they live out here with the rest of the state. */
+  let customiseReady = false, customiseError = null, customiseScene = null;
 
   const sw = $('switch');
   VARIANTS[INITIAL].forEach((k) => {
@@ -807,7 +863,13 @@ export function initProductBuilder() {
     moveMode = !moveMode; e.target.setAttribute('aria-pressed', moveMode);
     T.text.forEach((f) => { if (!locked(f)) nodes['t-' + f.id].classList.toggle('movable', moveMode); });
     T.boxes.forEach((b) => nodes['b-' + b.id].g.classList.toggle('movable', moveMode));
-    T.panels.forEach((p) => { if (nodes[p.id].hit) nodes[p.id].hit.style.pointerEvents = moveMode ? 'none' : ''; });
+    T.panels.forEach((p) => {
+      if (!nodes[p.id].hit) return;
+      /* In customise mode the panel never takes a pointer at all: there is
+         nothing to drag, and leaving it clickable would offer a file chooser
+         that ask() then refuses. */
+      nodes[p.id].hit.style.pointerEvents = (moveMode || CUSTOMISE) ? 'none' : '';
+    });
     drawHandles();   // the photo box would otherwise sit over the text being moved
   });
 
@@ -2255,6 +2317,7 @@ export function initProductBuilder() {
   }
 
   function place(id, file) {
+    if (CUSTOMISE) return;          // a dropped file has nowhere to go here
     if (!hasConsent()) {                // belt and braces: picker, panel drop, board drop
       // Keep only the newest file per slot, so dropping twice does not upload twice.
       pendingConsent = pendingConsent.filter((w) => w.id !== id).concat([{ id, file }]);
@@ -2465,7 +2528,7 @@ export function initProductBuilder() {
     };
 
     hit.addEventListener('pointerdown', (e) => {
-      if (moveMode) return;
+      if (moveMode || CUSTOMISE) return;   // the artwork does not pan or pinch
       touches.set(e.pointerId, e);
       if (touches.size === 2) {
         const s = state.get(id); if (!s || s.demo) return;
@@ -2639,6 +2702,9 @@ export function initProductBuilder() {
      a tap on a filled panel, the keyboard. So the cap is enforced here rather
      than on the button alone, and it says why instead of doing nothing. */
   function ask(id) {
+    /* The picture belongs to the product. There is no route to a file chooser
+       in this mode, and the panel is not a drop target either -- see place(). */
+    if (CUSTOMISE) return;
     if (!hasConsent()) return;
     if (designAtCap()) {
       const up = $('uploadHint');
@@ -2758,6 +2824,26 @@ export function initProductBuilder() {
        would upload and then be refused a style, leaving the customer worse off
        than the photograph they already have. A disabled button with the reason
        on it beats a button that fails quietly. */
+    if (CUSTOMISE) {
+      /* One row of controls is meaningless here and a dead control is worse
+         than none: the picture cannot be replaced, swapped out, removed or
+         re-cropped, and the print quality of artwork the shop drew is not the
+         customer's problem to read. */
+      for (const id of ['replace', 'swap', 'clear', 'reset']) {
+        const b = $(id);
+        if (b) { b.disabled = true; b.title = 'This design’s artwork is fixed — only the wording changes.'; }
+      }
+      const zoom = $('zoom');
+      if (zoom) zoom.disabled = true;
+      $('cutBox').hidden = true;
+      $('pDpi').textContent = 'set by the design';
+      flag.hidden = true;
+      up.hidden = true;
+      const vRow = $('variantRow');
+      if (vRow) vRow.hidden = true;
+      return;
+    }
+
     const replaceBtn = $('replace');
     if (replaceBtn) {
       const capped = designAtCap()
@@ -3099,7 +3185,10 @@ export function initProductBuilder() {
         : `${sz.label} · file ${sz.w} × ${sz.h} in`;
     }
     const real = mine().length;
-    $('filled').textContent = `${real} of ${T.panels.length}`;
+    /* Absent in customise mode: the artwork is the design's and "1 of 1" is a
+       count of something the customer cannot change. */
+    const filledEl = $('filled');
+    if (filledEl) filledEl.textContent = `${real} of ${T.panels.length}`;
     $('download').disabled = real === 0;
 
     // Sits beside "Images placed": placing a photo and getting it safely stored
@@ -3135,9 +3224,15 @@ export function initProductBuilder() {
          between two images, and offering checkout before the second one exists
          would settle that choice for them. Settled means arrived OR refused. */
       const cutWaiting = cutoutWaiting();
-      btn.disabled = basketBusy || busy > 0 || waiting > 0 || cutWaiting > 0
-        || !consented() || real !== total;
+      /* Nothing to upload and nothing to style, so the only thing to wait for
+         is the artwork arriving from the endpoint. Consent is about the
+         customer's own photographs and there are none. */
+      btn.disabled = CUSTOMISE
+        ? (basketBusy || !customiseReady)
+        : (basketBusy || busy > 0 || waiting > 0 || cutWaiting > 0
+          || !consented() || real !== total);
       $('basketHint').textContent = basketBusy ? ''
+        : CUSTOMISE ? (customiseReady ? '' : (customiseError || 'Loading the design…'))
         : !consented() ? 'Tick the consent box to get started.'
           : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`
             : failedIdx >= 0 ? `Photo ${failedIdx + 1} didn't upload — tap it to retry`
@@ -3289,6 +3384,11 @@ export function initProductBuilder() {
         id: f.id, value: f.value, colours: f.colours,
         keyLine: f.stroke || null, keyLineScale: f.strokeScale, sizeScale: f.sizeScale,
         offset: { x: Math.round(f.dx), y: Math.round(f.dy) },
+        /* Where the field ACTUALLY sits, which offset above has not described
+           since Move text started writing f.pos instead of f.dx. Recorded so a
+           design can be rebuilt exactly as it was drawn -- which is what
+           "Customise this design" does with it. */
+        pos: f.pos ? { x: Math.round(f.pos.x), y: Math.round(f.pos.y) } : null,
         resolvedFontSize: f.resolved, lines: f.lines, font: FONTOF(f.id), rotationDeg: f.rot || 0,
       })),
     };
@@ -3736,6 +3836,7 @@ export function initProductBuilder() {
   let studioMsg = null;
   on('addBasket', 'click', async () => {
     if (basketBusy) return;
+    if (CUSTOMISE) return addCustomiseToBasket();
     const filled = T.panels
       .map((p) => [p.id, state.get(p.id)])
       .filter(([, s]) => s && !s.demo && s.file);
@@ -3825,6 +3926,96 @@ export function initProductBuilder() {
       refresh();
     }
   });
+
+  /**
+   * Add a customised stock design to the basket.
+   *
+   * Shorter than the personalised path because everything that path spends its
+   * time on -- uploading photographs, waiting for the styling, choosing between
+   * a cutout and the full picture -- does not exist here. What is left is the
+   * same three steps: save the build, snapshot it, put a line in the basket.
+   *
+   * The fee is the product's customiseFee, in pence, handed over by the same
+   * endpoint the design came from. The server prices the line again from the
+   * same field at checkout, so the number shown and the number charged cannot
+   * drift apart.
+   */
+  async function addCustomiseToBasket() {
+    const btn = $('addBasket'), hint = $('basketHint');
+    if (!customiseReady || basketBusy) return;
+
+    /* The customer's own wording, checked here so they are told now rather
+       than after a round trip. The server checks again. */
+    const bad = moderationFailures([
+      ...T.text.filter((f) => !locked(f)).map((f) => ({ id: f.label || f.id, value: f.value })),
+      { id: 'notes', value: ($('notes') && $('notes').value) || '' },
+    ]);
+    if (bad.length) {
+      hint.textContent = `${MODERATION_MESSAGE} (${bad.join(', ')})`;
+      console.warn('[builder] customise: blocked wording in ' + bad.join(', '));
+      return;
+    }
+
+    basketBusy = true; btn.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Saving…';
+    hint.textContent = 'Saving your wording…';
+    try {
+      const fd = new FormData();
+      fd.append('kind', 'customise');
+      fd.append('productId', CUSTOMISE_OF);
+      fd.append('style', CUSTOMISE_STYLE);
+      fd.append('recipe', JSON.stringify(recipe()));
+      fd.append('notes', ($('notes') && $('notes').value) || '');
+
+      const res = await fetch('/api/personalise-save', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.id) throw new Error(data.error || 'Could not save your design');
+
+      hint.textContent = 'Saving your preview…';
+      const thumbUrl = await saveThumb(data.id);
+
+      const sizeIdx = Math.max(0, (T.sizes || []).indexOf(T.size));
+      const cartFormat = CART_FORMAT[fmt] || 'poster';
+      const cartSize = CART_SIZE[sizeIdx] || 'large';
+      const feePence = Number.isFinite(customiseScene?.customiseFee) ? customiseScene.customiseFee : 0;
+      const styleWord = CUSTOMISE_STYLE === 'fullbleed' ? 'Full bleed' : 'Classic cover';
+      const description = [styleWord, T.size ? T.size.label : '', FORMAT_WORD[fmt] || fmt, 'your wording']
+        .filter(Boolean).join(' · ');
+
+      const pd = document.getElementById('product-data');
+      const ds = (pd && pd.dataset) || {};
+      const { addToCart } = await import('../stores/cart');
+      addToCart({
+        productId: ds.productId || CUSTOMISE_OF,
+        slug: ds.productSlug || '',
+        title: ds.productTitle || customiseScene?.title || 'Customised design',
+        format: cartFormat,
+        size: cartSize,
+        quantity: 1,
+        unitPrice: (PRICES[cartFormat] || {})[cartSize] + feePence / 100,
+        accentColor: ds.productAccent || ACCENT[TK] || '#EC008C',
+        imageUrl: ds.productImage || '',
+        ...(thumbUrl ? { thumbUrl } : {}),
+        /* The same field a personalised build uses: from the basket onwards a
+           customised design IS a build, and everything downstream -- checkout,
+           the webhook, the render, the proof -- already knows what to do with
+           one. What it is a build OF is on the document. */
+        personalisationId: data.id,
+        artworkStyle: CUSTOMISE_STYLE === 'fullbleed' ? 'fullBleed' : 'classic',
+        description,
+      });
+      btn.textContent = 'Added to basket';
+      hint.textContent = 'Saved. We will email you a proof to approve before we print.';
+      setTimeout(() => { btn.textContent = label; }, 2000);
+    } catch (e) {
+      btn.textContent = label;
+      hint.textContent = e.message || 'Something went wrong saving your design.';
+      console.warn(`[builder] customise save failed: ${e.message}`);
+    } finally {
+      basketBusy = false;
+      refresh();
+    }
+  }
 
   /* ---------- studio: save as product ---------- */
   /* The photos have stayed in the browser up to this point. They are sent once,
@@ -4186,6 +4377,154 @@ export function initProductBuilder() {
 
   if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
 
+  /* ---------- customise: the shop's design, reopened ---------- */
+  /**
+   * Rebuild a stock design in the builder so its wording can be changed.
+   *
+   * It does NOT display the scene the studio exported. It rebuilds the design
+   * from the RECIPE, on the same template it was drawn on, and that is the
+   * whole trick: a rebuilt design is a live builder document, so every control
+   * already works on it -- the text fields, the colour pickers, the live
+   * preview, the draft with its watermark, the basket snapshot -- and the scene
+   * this builder exports at Add to basket is the same shape the renderer has
+   * always been handed. Nothing about the print path is new.
+   *
+   * What it takes from the server is the artwork itself, at screen size, and
+   * the numbers the design was drawn with. What it never takes is a blob key:
+   * panels are named, and personalise-save resolves the names against the same
+   * stored scene when the build is saved.
+   */
+  async function loadCustomise() {
+    const url = `/api/customise-scene/${encodeURIComponent(CUSTOMISE_OF)}?style=${CUSTOMISE_STYLE}`;
+    let data;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (e) {
+      customiseError = 'We could not open this design — please try again, or contact us.';
+      console.warn(`[builder] customise: ${url} failed: ${e.message}`);
+      refresh();
+      return;
+    }
+    customiseScene = data;
+
+    const key = VARIANTS[data.template] ? data.template
+      : (TEMPLATES[data.template] ? data.template : null);
+    if (!key || !TEMPLATES[key]) {
+      customiseError = 'We could not open this design — please contact us.';
+      console.warn(`[builder] customise: unknown template "${data.template}"`);
+      refresh();
+      return;
+    }
+    load(key);
+    applyRecipe(data.recipe || {});
+    await Promise.all(Object.entries(data.panels || {}).map(([panel, src]) => fillLocked(panel, src)));
+
+    customiseReady = true;
+    customiseError = null;
+    layoutAllText();
+    if (selected) syncPanel();
+    refresh();
+    console.log(`[builder] customise: ${data.productId} (${data.style}) on ${key}, ` +
+      `${Object.keys(data.panels || {}).length} panel(s)`);
+  }
+
+  /** Put the design's own numbers back on the loaded template. */
+  function applyRecipe(r) {
+    /* Output first: the size decides the canvas the rest is measured against. */
+    if (r.output) {
+      const want = String(r.output.format || 'poster');
+      if (CART_FORMAT[want]) { fmt = want; const sel = $('fmtSel'); if (sel) sel.value = fmt; }
+      const face = r.output.faceInches;
+      if (face && Array.isArray(T.sizes)) {
+        const match = T.sizes.find((z) => z.w === face[0] && z.h === face[1]);
+        if (match) T.size = match;
+      }
+      buildSizes();
+      sizeBoard();
+      svg.setAttribute('viewBox', viewBoxNow());
+    }
+
+    for (const t of r.text || []) {
+      const f = T.text.find((x) => x.id === t.id);
+      if (!f) continue;
+      if (typeof t.value === 'string') f.value = t.value;
+      if (Array.isArray(t.colours) && t.colours.length) f.colours = t.colours.slice();
+      if (t.keyLine !== undefined) f.stroke = t.keyLine;
+      if (typeof t.keyLineScale === 'number') f.strokeScale = t.keyLineScale;
+      if (typeof t.sizeScale === 'number') f.sizeScale = t.sizeScale;
+      if (typeof t.rotationDeg === 'number') f.rot = t.rotationDeg;
+      /* Only when the design recorded one. A design drawn before the recipe
+         carried positions has its fields where the template puts them, which
+         is where they were drawn. */
+      if (t.pos && Number.isFinite(t.pos.x) && Number.isFinite(t.pos.y)) f.pos = { x: t.pos.x, y: t.pos.y };
+    }
+
+    for (const b of r.boxes || []) {
+      const box = T.boxes.find((x) => x.id === b.id);
+      if (!box) continue;
+      if (b.offset) { box.dx = b.offset.x || 0; box.dy = b.offset.y || 0; }
+      if (b.fillColour) box.fillColour = b.fillColour;
+      if (b.keyLineColour) box.shadowColour = b.keyLineColour;
+    }
+
+    /* The burst colour, through the same setter the picker uses, so the swatch
+       row and the custom input agree with the artwork. setBg needs the scene
+       built first, because it paints a node. */
+    rail();
+    build();
+    if (r.background && r.background.colour && T.bg && T.bg.type === 'colour') {
+      setBg(r.background.colour);
+    }
+  }
+
+  /** One panel, filled with the product's artwork and pinned there. */
+  function fillLocked(panelId, src) {
+    return new Promise((resolve) => {
+      const p = T.panels.find((x) => x.id === panelId);
+      if (!p) return resolve();
+      const im = new Image();
+      /* Same origin -- it is served by /api/customise-scene -- so the canvas
+         the palette sampler and the draft exporter read stays untainted. */
+      im.onload = () => {
+        const shot = (customiseScene?.recipe?.panels || []).find((x) => x.id === panelId);
+        const tr = shot && shot.transform;
+        state.set(panelId, {
+          url: src, el: im, name: `${customiseScene?.title || 'design'} artwork`, file: null,
+          natW: im.naturalWidth, natH: im.naturalHeight,
+          zoom: tr && Number.isFinite(tr.zoom) ? tr.zoom : 1,
+          ox: tr && Number.isFinite(tr.offsetX) ? tr.offsetX : 0,
+          oy: tr && Number.isFinite(tr.offsetY) ? tr.offsetY : 0,
+          cut: false, tol: 34, feather: 2,
+          /* Already on the server and already final: there is nothing to
+             upload and nothing to style, and saying so is what keeps every
+             gate and every counter in this file honest without a special
+             case in each of them. */
+          uploadState: UPLOADED, uploadError: null, uploadPct: 100,
+          styleState: STYLE_DONE, styleError: null, styled: true,
+          serverPanel: panelId, locked: true,
+        });
+        const n = nodes[panelId];
+        if (n) {
+          if (n.img) { n.img.setAttribute('href', src); n.img.setAttribute('opacity', 1); }
+          if (n.num) n.num.setAttribute('opacity', 0);
+          if (n.plate) n.plate.setAttribute('opacity', 0);
+          if (n.hit) n.hit.classList.add('filled');
+        }
+        layout(panelId);
+        drawSlotFlag(panelId);
+        resolve();
+      };
+      im.onerror = () => {
+        customiseError = 'Part of this design would not load — please try again.';
+        console.warn(`[builder] customise: artwork for ${panelId} would not load`);
+        resolve();
+      };
+      im.src = src;
+    });
+  }
+
   /* ---------- ?probe ---------- */
   /* A readout of where a text field actually ENDED UP, for the case where a
      device disagrees with every other device and there is no debugger on it.
@@ -4245,7 +4584,9 @@ export function initProductBuilder() {
     setTimeout(probe, 1500);
     svg.addEventListener('click', probe);
   }
-  load(INITIAL);
+  /* Customise mode loads its template from the design rather than from the
+     page, so it does its own first load. */
+  if (CUSTOMISE) { load(INITIAL); loadCustomise(); } else load(INITIAL);
   try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }
 
   return { MODE };

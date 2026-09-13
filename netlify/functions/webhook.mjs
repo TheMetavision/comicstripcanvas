@@ -310,6 +310,12 @@ async function fulfilOrder(session) {
                on every line of a product that only has one. Classic either
                way -- that is what those orders were. */
             artworkStyle: styleOr(meta.artworkStyle),
+            /* A build id on the line means the artwork is the CUSTOMER'S, and
+               the print file for it is the one their own render produces --
+               not the stock product's, which is a different picture with the
+               shop's wording on it. */
+            personalisationId: meta.personalisationId || null,
+            buildKind: meta.buildKind || (meta.personalisationId ? 'personalised' : null),
           };
         });
 
@@ -342,8 +348,14 @@ async function fulfilOrder(session) {
         }
 
         lineItems = stdItems.map((item, idx) => {
-          const printFile = printBySlug[item.slug]?.[item.artworkStyle] || null;
-          if (!printFile) {
+          /* Only for a line that is selling the shop's own artwork. A
+             personalised or customised line is fulfilled from the render that
+             belongs to its build, and stamping the stock file here would put a
+             plausible, wrong picture in front of whoever prints it. */
+          const printFile = item.personalisationId
+            ? null
+            : (printBySlug[item.slug]?.[item.artworkStyle] || null);
+          if (!printFile && !item.personalisationId) {
             console.warn(
               `webhook: no ${item.artworkStyle} print file for "${item.slug}" — ` +
               'the order line will name the style but carry no file'
@@ -362,6 +374,7 @@ async function fulfilOrder(session) {
             unitPrice: item.unitPrice,
             artworkStyle: item.artworkStyle,
             ...(printFile ? { printFile } : {}),
+            ...(item.buildKind ? { buildKind: item.buildKind } : {}),
           };
         });
 

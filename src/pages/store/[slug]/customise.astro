@@ -1,0 +1,94 @@
+---
+/**
+ * Customise this design.
+ *
+ * The builder, opened on a stock product's own artwork so the customer can put
+ * their own wording on it. One page per product that has a studio scene to
+ * reopen; which of the two styles is being customised comes off the query
+ * string, because the page is static and serves both.
+ *
+ * Everything else -- the fee, the artwork, the design's own numbers -- is
+ * fetched by the builder from /api/customise-scene at mount. Deliberately not
+ * baked in here: the design can be redrawn in the studio at any time, and a
+ * page built last Tuesday would otherwise go on offering last Tuesday's
+ * picture until somebody rebuilt the site.
+ */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import ProductBuilder from '../../../components/ProductBuilder.astro';
+import { sanityClient, urlFor } from '../../../lib/sanity';
+
+export async function getStaticPaths() {
+  /* Only products with a scene. A hand-curated catalogue product has artwork
+     nobody can reopen -- there is no scene behind a photograph somebody
+     uploaded to Sanity years ago -- so it gets no page and no button. */
+  const products = await sanityClient.fetch(`
+    *[_type == "product" && (defined(classicSceneId) || defined(fullBleed.sceneId))]{
+      _id, title, "slug": slug.current, category, accentColor, customiseFee,
+      classicSceneId,
+      "fullBleedSceneId": fullBleed.sceneId,
+      "image": images[0]{ asset-> { url }, alt }
+    }
+  `);
+  return products.map((product: any) => ({
+    params: { slug: product.slug },
+    props: { product },
+  }));
+}
+
+const { product } = Astro.props;
+const fee = typeof product.customiseFee === 'number' ? product.customiseFee : 500;
+const imageUrl = product.image?.asset?.url || '';
+
+/* The cover templates are the only ones a stock design is drawn on today, and
+   the builder replaces this the moment the scene arrives -- it loads the
+   template the design was actually drawn on. This is only what it mounts with
+   while that request is in flight. */
+const template = 'cover' as const;
+---
+
+<BaseLayout
+  title={`Customise — ${product.title}`}
+  description={`Put your own wording on ${product.title}. The artwork stays as it is; the masthead, title and captions are yours.`}
+>
+  <section class="relative bg-charcoal py-8">
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
+        <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
+        <span>/</span>
+        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <span>/</span>
+        <a href={`/store/${product.slug}`} class="hover:text-comic-yellow transition-colors truncate">
+          {product.title}
+        </a>
+        <span>/</span>
+        <span class="text-off-white">Customise</span>
+      </nav>
+
+      <h1 class="font-bangers text-4xl lg:text-5xl text-off-white tracking-wide mb-3"
+          style="text-shadow: 3px 3px 0 rgba(0,0,0,0.4);">
+        Customise &mdash; {product.title}
+      </h1>
+      <p class="font-source text-gray-300 leading-relaxed text-base mb-2 max-w-2xl">
+        The artwork stays exactly as it is. The masthead, the title, the captions, the issue
+        number and date, the price and the colours are yours to change.
+      </p>
+      <p class="font-source text-gray-400 text-sm mb-8 max-w-2xl">
+        £{(fee / 100).toFixed(2)} on top of the print price. You&rsquo;ll get a proof by email to
+        approve before anything is printed.
+      </p>
+
+      <ProductBuilder template={template} mode="customise" productId={product._id} />
+    </div>
+  </section>
+
+  {/* The builder's basket line reads the product's identity from here, exactly
+      as it does on the product page. */}
+  <div id="product-data" class="hidden"
+    data-product-id={product._id}
+    data-product-slug={product.slug}
+    data-product-title={product.title}
+    data-product-accent={product.accentColor || '#EC008C'}
+    data-product-image={imageUrl ? urlFor(product.image).width(800).url() : ''}
+  ></div>
+</BaseLayout>
