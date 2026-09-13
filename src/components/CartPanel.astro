@@ -225,6 +225,15 @@
     large: 'Large (24x16")',
   };
 
+  /* The drawer is a plain <script> in an Astro island, so the labels are
+     written out here the same way the format and size ones are, rather than
+     imported from src/data/products.ts. Two strings; the definitive copy is
+     ARTWORK_STYLES there and in _shared/artwork-styles.mjs. */
+  const ARTWORK_STYLES: Record<string, string> = {
+    classic: 'Classic cover',
+    fullBleed: 'Full bleed',
+  };
+
   function renderCartItems(items: CartItem[]) {
     if (!cartList || !cartEmpty || !cartFooter || !clearBtn) return;
 
@@ -264,6 +273,9 @@
                 ? `<p class="font-source text-gray-400 text-xs mt-1">${item.description}</p>`
                 : `<p class="font-source text-gray-400 text-xs mt-1">${FORMAT_LABELS[item.format] || item.format}</p>
                    <p class="font-source text-gray-400 text-xs">${SIZE_LABELS[item.size] || item.size}</p>`}
+              ${item.artworkStyle
+                ? `<p class="font-source text-comic-yellow text-xs">${ARTWORK_STYLES[item.artworkStyle] || item.artworkStyle}</p>`
+                : ''}
               <div class="flex items-center justify-between mt-2">
                 <div class="flex items-center gap-2">
                   <button class="qty-btn w-6 h-6 bg-mid-grey text-off-white hover:bg-comic-red transition-colors text-sm font-bold flex items-center justify-center" data-action="dec" data-id="${item.id}">-</button>
@@ -373,6 +385,9 @@
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             imageUrl: item.imageUrl,
+            // Which artwork style, so checkout can stamp it on the Stripe line
+            // and the webhook can put the right print file on the order.
+            artworkStyle: item.artworkStyle,
             // checkout needs this to price the artwork fee and to stamp the
             // build onto the Stripe line so the webhook can find it again
             personalisationId: item.personalisationId,

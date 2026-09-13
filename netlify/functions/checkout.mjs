@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
+import { CLASSIC, FULL_BLEED, isStyle, styleLabel } from './_shared/artwork-styles.mjs';
 
 // Read-only: the dataset is public, so no token is needed here and none is
 // given. Fees are content, not code -- they live on the product document so
@@ -77,6 +78,24 @@ export default async (req, context) => {
       });
     }
 
+    /* Which artwork style each line is for, and whether the product actually
+       has it. The price is the same either way -- a full-bleed print is the
+       same paper and the same ink -- so this changes nothing about what is
+       charged. What it changes is which file gets printed, which is why it is
+       checked here against Sanity rather than believed: a line asking for a
+       style the product does not have would reach the webhook, find no print
+       file, and become an order nobody can fulfil. */
+    const styleSlugs = [...new Set(items.map((i) => i.slug).filter(Boolean))];
+    let hasFullBleed = {};
+    if (styleSlugs.length) {
+      const rows = await sanity.fetch(
+        '*[_type == "product" && slug.current in $slugs]{ "slug": slug.current, ' +
+        '"fullBleed": defined(fullBleed.printFile.asset) }',
+        { slugs: styleSlugs }
+      );
+      hasFullBleed = Object.fromEntries(rows.map((r) => [r.slug, !!r.fullBleed]));
+    }
+
     // A personalised line carries the id of the build it was made from. The
     // artwork fee for it comes off that product's document in Sanity, in one
     // query for the whole basket -- never from the client, and never hard-coded.
@@ -102,6 +121,17 @@ export default async (req, context) => {
         return new Response(JSON.stringify({ error: 'Invalid product format or size' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      /* Default Classic, always. Every line written before this existed says
+         nothing, and saying nothing has to keep meaning the style the product
+         has always been sold in. */
+      item.artworkStyle = isStyle(item.artworkStyle) ? item.artworkStyle : CLASSIC;
+      if (item.artworkStyle === FULL_BLEED && !hasFullBleed[item.slug]) {
+        console.warn(`checkout: refused a full-bleed line for "${item.slug}", which has no full-bleed print file`);
+        return new Response(JSON.stringify({ error: 'That artwork style is not available for this product' }), {
+          status: 400, headers: { 'Content-Type': 'application/json' },
         });
       }
 
@@ -168,14 +198,26 @@ export default async (req, context) => {
           ...(item.personalisationId
             ? { images: [`${siteUrl}/api/personalisation-thumb/${item.personalisationId}`] }
             : {}),
-          description: item.fee
-            ? `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size} — includes £${item.fee.toFixed(2)} personalisation`
-            : `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
+          /* The style is named on the Stripe page too, not just in metadata.
+             It is the one thing about the line a customer cannot infer from
+             the title, and the last screen before they pay is where a wrong
+             choice is still cheap to fix. Only when there is a choice to
+             have got wrong: "Classic cover" on the 292 products that have no
+             second style is noise. */
+          description: [
+            `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
+            hasFullBleed[item.slug] ? styleLabel(item.artworkStyle) : null,
+            item.fee ? `includes £${item.fee.toFixed(2)} personalisation` : null,
+          ].filter(Boolean).join(' — '),
           metadata: {
             productId: item.productId,
             slug: item.slug,
             format: item.format,
             size: item.size,
+            /* Read back by the webhook, which resolves it to the print file
+               that goes on the order. Stamped on every line, including the
+               Classic ones, so an order never has to guess what a blank means. */
+            artworkStyle: item.artworkStyle,
             // the webhook reads this back to mark the build paid and render it
             ...(item.personalisationId
               ? { personalisationId: item.personalisationId, personalisationFee: String(item.fee) }

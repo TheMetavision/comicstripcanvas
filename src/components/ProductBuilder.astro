@@ -260,7 +260,23 @@ const builderData = JSON.stringify({
         <button id="replaceOpen" class="b-btn mt-3 w-full">Replace artwork on existing product&hellip;</button>
 
         <div id="replaceBox" class="mt-3 border-[3px] border-black bg-dark-grey p-2.5" hidden>
-          <label for="replaceSearch" class="b-lab">Find the product</label>
+          {/* Which of the product's two artwork slots this save writes to.
+              Defaulted from the template being built -- full bleed for the
+              full-bleed cover, classic for everything else -- and overridable,
+              because the template is how a design is DRAWN and the slot is
+              where it is FILED, and those are not always the same answer. */}
+          <p class="b-lab">Style</p>
+          <div class="b-row mt-1" id="replaceStyle">
+            <button type="button" class="b-btn flex-1" data-style="classic" aria-pressed="true">
+              Classic cover
+            </button>
+            <button type="button" class="b-btn flex-1" data-style="fullBleed" aria-pressed="false">
+              Full bleed
+            </button>
+          </div>
+          <p class="b-hint" id="replaceStyleHint"></p>
+
+          <label for="replaceSearch" class="b-lab mt-3 block">Find the product</label>
           <input id="replaceSearch" type="search" maxlength="80" autocomplete="off"
             class="mt-2 w-full border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black"
             placeholder="Title or slug&hellip;" />
@@ -273,7 +289,7 @@ const builderData = JSON.stringify({
               <figure class="m-0 min-w-0 flex-1">
                 <img id="replaceCurrent" alt="The product's current image"
                   class="block w-full border-2 border-black bg-black" />
-                <figcaption class="b-hint mt-1">Now</figcaption>
+                <figcaption class="b-hint mt-1" id="replaceCurrentCap">Now</figcaption>
               </figure>
               <figure class="m-0 min-w-0 flex-1">
                 <img id="replaceNext" alt="The design you have just built"

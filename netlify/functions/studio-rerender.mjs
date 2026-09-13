@@ -1,11 +1,13 @@
 import { getStore } from '@netlify/blobs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { startRender } from './_shared/studio-render-trigger.mjs';
+import { STYLES, isStyle, sceneKey, printKey, legacySceneKey, legacyPrintKey, styleOr } from './_shared/artwork-styles.mjs';
 
 /**
  * Run a studio render again, from the scene already in the store.
  *
  *     POST /api/studio-render/<productId>     X-CSC-Action-Secret: <secret>
+ *     POST /api/studio-render/<productId>?style=fullBleed
  *
  * A save writes three things: the draft, the scene, and the request that starts
  * the renderer. The first two are durable; the third is a network call, and a
@@ -65,25 +67,50 @@ export default async (req) => {
     return json({ error: 'POST /api/studio-render/<productId> — the product id is missing or not well formed' }, 400);
   }
 
+  /* Which style to re-run. ?style= names it; without one, look for whichever
+     scene is actually there -- a repair is usually somebody reacting to a save
+     that just failed, and making them remember which slot it was for is asking
+     the machine's question rather than theirs. The legacy path is last: it is
+     where every scene written before the styles existed still lives. */
+  const asked = (new URL(req.url).searchParams.get('style') || '').trim();
+  if (asked && !isStyle(asked)) {
+    return json({ error: `Unknown artwork style "${asked}" — use one of ${STYLES.join(', ')}` }, 400);
+  }
+
   const store = getStore(STUDIO_STORE);
-  const raw = await store.get(`studio/${id}/scene.json`, { type: 'text' }).catch(() => null);
+  const candidates = asked
+    ? [[asked, sceneKey(id, asked)]]
+    : [...STYLES.map((s) => [s, sceneKey(id, s)]), [null, legacySceneKey(id)]];
+
+  let raw = null, style = null, sceneAt = null;
+  for (const [s, key] of candidates) {
+    raw = await store.get(key, { type: 'text' }).catch(() => null);
+    if (raw) { style = s; sceneAt = key; break; }
+  }
+
   if (!raw) {
     /* Tell them WHICH of the two it is. A finished render leaves a print
        master behind; a design that was never saved, or was swept, leaves
        nothing at all. */
-    const done = await store.getMetadata(`studio/${id}/print.png`).catch(() => null);
+    const done = (await Promise.all([
+      ...STYLES.map((s) => store.getMetadata(printKey(id, s)).catch(() => null)),
+      store.getMetadata(legacyPrintKey(id)).catch(() => null),
+    ])).some(Boolean);
     return json({
       error: done
         ? `Nothing to re-run for ${id}: the render already finished and the print master is in the store. ` +
           `If the product still has no images, the Sanity write is what failed — save it again.`
         : `No stored scene for ${id}. Either the id is wrong, or the design was never saved.`,
-      id, rendered: !!done,
+      id, rendered: done,
     }, 404);
   }
 
   let job;
   try { job = JSON.parse(raw); }
   catch (err) { return json({ error: `The stored scene for ${id} is not readable: ${err.message}`, id }, 500); }
+  /* The scene says which slot it was for; the path only says where it was
+     found, and a legacy scene has no style segment at all. */
+  style = styleOr(job.style || style);
 
   /* docId has been in the scene since this bug was fixed. Older scenes predate
      it, and for those the draft is the only place a save has ever written --
@@ -93,18 +120,18 @@ export default async (req) => {
   const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
 
   const trigger = await startRender({
-    origin, id, docId,
+    origin, id, docId, style,
     title: job.title || '(untitled)',
     printWidth: job.printWidth,
     replacing: !!job.replacing,
   });
 
-  console.log(`studio-rerender: ${id} -> ${docId}; render trigger POST ${trigger.url} -> ` +
+  console.log(`studio-rerender: ${id} [${style}] from ${sceneAt} -> ${docId}; render trigger POST ${trigger.url} -> ` +
     (trigger.ok ? `${trigger.status}` : `FAILED (${trigger.status || trigger.error})`));
 
   if (!trigger.ok) {
     return json({
-      ok: false, id, docId,
+      ok: false, id, docId, style,
       error: `The renderer would not start (${trigger.status ? `HTTP ${trigger.status}` : trigger.error}). ` +
         `The scene is still stored, so this can be tried again.`,
       trigger: { url: trigger.url, status: trigger.status || null },
@@ -112,7 +139,7 @@ export default async (req) => {
   }
 
   return json({
-    ok: true, id, docId,
+    ok: true, id, docId, style,
     title: job.title || null,
     savedAt: job.savedAt || null,
     print: { width: job.printWidth || null, status: 'rendering' },

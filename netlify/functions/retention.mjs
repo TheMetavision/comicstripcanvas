@@ -271,7 +271,12 @@ export async function sweepStudioUploads({ dryRun = false, now = new Date(), dep
     if (m && isUploadId(m[1])) {
       if (!byId.has(m[1])) byId.set(m[1], []);
       byId.get(m[1]).push(b.key);
-    } else if (/^studio\/[^/]+\/scene\.json$/.test(b.key)) {
+    } else if (/^studio\/[^/]+(\/[^/]+)?\/scene\.json$/.test(b.key)) {
+      /* Two shapes on purpose: studio/<id>/<style>/scene.json is where a save
+         writes now, and studio/<id>/scene.json is where every save written
+         before the second artwork style existed put it. Missing either one
+         means sweeping the uploads out from under a save that is still
+         waiting to render. */
       scenes.push(b.key);
     }
   }

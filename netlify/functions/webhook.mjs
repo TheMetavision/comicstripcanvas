@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { emailHeader } from './_shared/email.mjs';
+import { FULL_BLEED, styleOr, styleLabel } from './_shared/artwork-styles.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -305,24 +306,74 @@ async function fulfilOrder(session) {
             size: meta.size || '',
             quantity: li.quantity || 1,
             unitPrice: (li.price?.unit_amount || 0) / 100,
+            /* Absent on anything ordered before the second style existed, and
+               on every line of a product that only has one. Classic either
+               way -- that is what those orders were. */
+            artworkStyle: styleOr(meta.artworkStyle),
           };
         });
 
-        lineItems = stdItems.map((item, idx) => ({
-          _type: 'object',
-          _key: `${item.slug || 'item'}-${item.format}-${item.size}-${idx}`,
-          productTitle: item.title,
-          format: FORMAT_LABELS[item.format] || item.format,
-          size: SIZE_LABELS[item.size] || item.size,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-        }));
+        /* Resolve the print file for each line NOW, while the order is being
+           written, and store the URL on it.
+
+           A reference would be tidier and would be wrong: the product's artwork
+           can be replaced next week, and an order that points at "whatever this
+           product's print file is today" would quietly start describing a
+           different picture from the one somebody paid for. The URL is a
+           snapshot of what was bought. Sanity keeps the asset either way, so
+           the link stays good.
+
+           One query for the whole order. A failure here must not fail the
+           order: the line is still correct about its style, and a picker can
+           open the product. */
+        const printBySlug = {};
+        try {
+          const slugs = [...new Set(stdItems.map((i) => i.slug).filter(Boolean))];
+          if (slugs.length) {
+            const rows = await sanity.fetch(
+              '*[_type == "product" && slug.current in $slugs]{ "slug": slug.current, ' +
+              '"classic": printFile.asset->url, "fullBleed": fullBleed.printFile.asset->url }',
+              { slugs }
+            );
+            for (const r of rows) printBySlug[r.slug] = r;
+          }
+        } catch (err) {
+          console.error('webhook: could not resolve print files for the order:', err.message);
+        }
+
+        lineItems = stdItems.map((item, idx) => {
+          const printFile = printBySlug[item.slug]?.[item.artworkStyle] || null;
+          if (!printFile) {
+            console.warn(
+              `webhook: no ${item.artworkStyle} print file for "${item.slug}" — ` +
+              'the order line will name the style but carry no file'
+            );
+          }
+          return {
+            _type: 'object',
+            /* The style is part of the key: two lines of the same product in
+               the same format and size are now a real possibility, and they
+               are different orders to fulfil. */
+            _key: `${item.slug || 'item'}-${item.artworkStyle}-${item.format}-${item.size}-${idx}`,
+            productTitle: item.title,
+            format: FORMAT_LABELS[item.format] || item.format,
+            size: SIZE_LABELS[item.size] || item.size,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            artworkStyle: item.artworkStyle,
+            ...(printFile ? { printFile } : {}),
+          };
+        });
 
         itemRows = stdItems
           .map(
             (item) =>
               `<tr>
-                <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${item.title}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${item.title}${
+                  item.artworkStyle === FULL_BLEED
+                    ? `<br><span style="font-size: 12px; color: #777;">${styleLabel(item.artworkStyle)}</span>`
+                    : ''
+                }</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${FORMAT_LABELS[item.format] || item.format}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${SIZE_LABELS[item.size] || item.size}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>

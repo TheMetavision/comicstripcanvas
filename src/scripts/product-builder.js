@@ -62,6 +62,15 @@ const SWITCH_HINT = {
    not a field at all -- it is painted into the cover overlay artwork. */
 const LOCKED_FOR_CUSTOMER = new Set(['publisher']);
 
+/* The two artwork styles a stock product can be sold in, for the studio's
+   Replace panel. The labels match SWITCH_LABEL above on purpose -- the operator
+   is choosing the same two things there and here -- but these are the SLOT
+   names the server knows, and they are mirrored in
+   netlify/functions/_shared/artwork-styles.mjs. */
+const ARTWORK_STYLE_LABEL = { classic: 'Classic cover', fullBleed: 'Full bleed' };
+/* Which slot a template writes to unless the operator says otherwise. */
+const styleForTemplate = (k) => (k === 'cover-fullbleed' ? 'fullBleed' : 'classic');
+
 /** Assets, previously base64 blobs in the prototype's `A` object. */
 const ASSET = {
   cover_bg: '/builder/templates/comic-cover/background.png',
@@ -322,6 +331,8 @@ export function initProductBuilder() {
     });
     bg = T.bg && T.bg.type === 'colour' ? T.bg.value : null;
     [...sw.children].forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === key));
+    replaceStyle = styleForTemplate(key);
+    syncReplaceStyle();
     const ac = ACCENT[key] || '#EC008C';
     root.style.setProperty('--b-accent', ac);
     root.style.setProperty('--b-on-accent', onDark(ac));
@@ -3157,6 +3168,19 @@ export function initProductBuilder() {
         // Typed searches, not a request per keystroke.
         searchTimer = setTimeout(() => replaceSearch(term), 250);
       });
+      const styleRow = $('replaceStyle');
+      if (styleRow) {
+        styleRow.addEventListener('click', (e) => {
+          const b = e.target.closest('button[data-style]');
+          if (!b) return;
+          replaceStyle = b.dataset.style === 'fullBleed' ? 'fullBleed' : 'classic';
+          syncReplaceStyle();
+          /* The comparison is about one slot, so changing the slot redraws it:
+             the "Now" pane has to show what is actually about to be replaced. */
+          if (replaceTarget) showComparison(replaceTarget);
+        });
+        syncReplaceStyle();
+      }
       $('replaceConfirm').addEventListener('click', replaceArtwork);
       $('replaceCancel').addEventListener('click', () => { $('replaceBox').hidden = true; replaceReset(); });
     }
@@ -3814,6 +3838,26 @@ export function initProductBuilder() {
      titles in a catalogue this size are not distinctive enough to trust. */
   let replaceTarget = null;
   let replaceBusy = false;
+  /* Which slot the next replace writes to. Re-defaulted whenever the template
+     changes, because switching to the full-bleed cover is the clearest possible
+     statement of intent -- and still overridable afterwards. */
+  let replaceStyle = styleForTemplate(INITIAL);
+
+  /** Paint the Style buttons and say what the chosen one will do. */
+  function syncReplaceStyle() {
+    const row = $('replaceStyle');
+    if (!row) return;
+    [...row.querySelectorAll('button[data-style]')].forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.style === replaceStyle));
+    });
+    const hint = $('replaceStyleHint');
+    if (hint) {
+      hint.textContent = replaceStyle === 'fullBleed'
+        ? 'Writes the full-bleed version. The product image, the gallery and the '
+          + 'classic print file are left exactly as they are.'
+        : 'Replaces the product image and the print file — the way this has always worked.';
+    }
+  }
 
   function replaceReset() {
     replaceTarget = null;
@@ -3932,8 +3976,18 @@ export function initProductBuilder() {
   async function showComparison(p) {
     const cur = $('replaceCurrent'), next = $('replaceNext'), box = $('replaceCompare');
     if (!cur || !next || !box) return;
-    cur.src = p.image || '';
-    cur.style.visibility = p.image ? 'visible' : 'hidden';
+    /* "Now" means the slot being written, not the product's front image. On a
+       full-bleed replace the classic picture is not what is about to change,
+       and showing it would be the panel lying about what the button does. */
+    const nowUrl = replaceStyle === 'fullBleed' ? (p.fullBleedImage || '') : (p.image || '');
+    cur.src = nowUrl;
+    cur.style.visibility = nowUrl ? 'visible' : 'hidden';
+    const cap = $('replaceCurrentCap');
+    if (cap) {
+      cap.textContent = nowUrl
+        ? `Now — ${ARTWORK_STYLE_LABEL[replaceStyle]}`
+        : `Now — ${ARTWORK_STYLE_LABEL[replaceStyle]}: none yet`;
+    }
     try {
       const blob = await snapshotThumb();
       next.src = URL.createObjectURL(blob);
@@ -3976,13 +4030,23 @@ export function initProductBuilder() {
       /* Only when there is actually something to displace. A product with no
          images at all also has no listing entry, and telling somebody their
          current product image is about to be replaced when the "Now" pane is
-         empty is worse than saying nothing. */
-      const displaces = p.hasListing === false && !!p.image;
+         empty is worse than saying nothing.
+
+         And only for a classic replace: a full-bleed save writes its own slot
+         and never touches images[], so there is nothing to take over. What is
+         worth saying there is whether this product has a full-bleed version at
+         all, because creating the first one is what puts a Style selector on
+         the product page. */
+      const displaces = replaceStyle === 'classic' && p.hasListing === false && !!p.image;
+      const firstFullBleed = replaceStyle === 'fullBleed' && !p.hasFullBleed;
       takeover.textContent = displaces
         ? 'This will replace the current product image (the other gallery images stay). '
           + "You'll review the draft before publishing."
-        : '';
-      takeover.hidden = !displaces;
+        : firstFullBleed
+          ? 'This product has no full-bleed version yet. Saving one adds a Style choice '
+            + 'to its product page, at the same price.'
+          : '';
+      takeover.hidden = !(displaces || firstFullBleed);
     }
     $('replaceWarn').textContent = p.draft
       ? 'This product is a draft. The change is written straight to it.'
@@ -4009,6 +4073,7 @@ export function initProductBuilder() {
       const r = recipe();
       const fd = new FormData();
       fd.append('productId', replaceTarget._id);
+      fd.append('style', replaceStyle);
       fd.append('sceneSvg', r.svg || '');
       const rest = Object.assign({}, r); delete rest.svg;
       fd.append('recipe', JSON.stringify(rest));
@@ -4026,8 +4091,9 @@ export function initProductBuilder() {
       }
       if (!res.ok || !data.ok) throw new Error(reasonFrom(res, data, text, 'Could not replace the artwork'));
       studioMsg = {
-        text: `Artwork replaced — ${data.wrote}. The print master, listing and web ` +
-              `master are rendering now and will attach themselves in a minute or two. `,
+        text: `${ARTWORK_STYLE_LABEL[data.style] || 'Artwork'} replaced — ${data.wrote}. ` +
+              `The print master and the listing image are rendering now and will attach ` +
+              `themselves in a minute or two. `,
         href: data.studioUrl,
         label: `Open "${data.title}" in the Studio`,
       };

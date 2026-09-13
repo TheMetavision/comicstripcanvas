@@ -1,6 +1,6 @@
 import { atom, computed } from 'nanostores';
 import { persistentAtom } from '@nanostores/persistent';
-import type { ProductFormat, ProductSize } from '../data/products';
+import type { ArtworkStyle, ProductFormat, ProductSize } from '../data/products';
 import { PRICES } from '../data/products';
 
 export interface CartItem {
@@ -14,6 +14,16 @@ export interface CartItem {
   unitPrice: number;
   accentColor: string;
   imageUrl?: string;
+  /**
+   * Which of the product's artwork styles this line is for.
+   *
+   * Set only by a product that HAS a choice: absent means the product has one
+   * style, which is Classic, and the line is displayed and priced exactly as it
+   * always was. The price is the same either way -- the same paper, the same
+   * ink -- so this never touches unitPrice. What it decides is which print file
+   * fulfilment takes, which is why it travels all the way to the order.
+   */
+  artworkStyle?: ArtworkStyle;
   /** pendingPersonalisation._id, when this line was built in the product builder. */
   personalisationId?: string;
   /**
@@ -63,6 +73,9 @@ export function addToCart(item: Omit<CartItem, 'id'>) {
   const current = cartItems.get();
   // Every personalised build is unique -- two covers at the same size and format
   // are different artwork -- so those lines must never merge into one another.
+  /* Two styles of one product at the same size and format are two different
+     things to print, so they are two lines. Merging them would hand fulfilment
+     a quantity of two and one file to guess from. */
   const existing = item.personalisationId
     ? undefined
     : current.find(
@@ -70,7 +83,8 @@ export function addToCart(item: Omit<CartItem, 'id'>) {
           !i.personalisationId &&
           i.productId === item.productId &&
           i.format === item.format &&
-          i.size === item.size
+          i.size === item.size &&
+          (i.artworkStyle || 'classic') === (item.artworkStyle || 'classic')
       );
   if (existing) {
     cartItems.set(
@@ -81,7 +95,7 @@ export function addToCart(item: Omit<CartItem, 'id'>) {
   } else {
     const id = item.personalisationId
       ? `${item.personalisationId}`
-      : `${item.productId}-${item.format}-${item.size}-${Date.now()}`;
+      : `${item.productId}-${item.artworkStyle || 'classic'}-${item.format}-${item.size}-${Date.now()}`;
     cartItems.set([...current, { ...item, id }]);
   }
   cartOpen.set(true);

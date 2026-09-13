@@ -25,13 +25,13 @@
  * @returns {{ok: boolean, status: number, url: string, error: string|null}}
  *          Never throws: the caller decides what a failed trigger means.
  */
-export async function startRender({ origin, id, docId, title, printWidth, replacing }) {
+export async function startRender({ origin, id, docId, title, printWidth, replacing, style }) {
   const url = `${origin}/api/studio-render`;
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, docId, title, printWidth, replacing }),
+      body: JSON.stringify({ id, docId, title, printWidth, replacing, style }),
     });
     return { ok: res.ok, status: res.status, url, error: null };
   } catch (err) {

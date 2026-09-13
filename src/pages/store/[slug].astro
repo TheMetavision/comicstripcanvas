@@ -2,7 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
-import { PRICES, FORMAT_LABELS, SIZES } from '../../data/products';
+import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
 import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
@@ -39,6 +39,30 @@ const hasImages = product.images && product.images.length > 0;
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
+
+/* A SECOND artwork style, when the product has one.
+
+   images[0] is the Classic style and always has been -- there is no classic
+   object on the document, because every product predates the idea. The second
+   style is an optional fullBleed slot, and a product without one shows no
+   choice at all: 292 of them have exactly one style and a selector offering a
+   choice of one is worse than no selector.
+
+   Classic stays the default everywhere it matters. It is what the page renders
+   first, what the Open Graph image and the Product schema describe, and what
+   the shopping feed lists -- the feed reads images[0] and knows nothing about
+   this. */
+const fullBleedImage = product.fullBleed?.listingImage?.asset
+  ? urlFor(product.fullBleed.listingImage).width(800).url()
+  : null;
+const hasStyleChoice = !!fullBleedImage && !product.isPersonalised;
+const styleImages = {
+  classic: { url: mainImageUrl, alt: product.images?.[0]?.alt || product.title },
+  fullBleed: {
+    url: fullBleedImage,
+    alt: product.fullBleed?.listingImage?.alt || `${product.title} — full bleed`,
+  },
+};
 
 // The three personalised products each open the builder on their own template.
 // Orientation and full-bleed variants are switches inside the builder itself.
@@ -170,6 +194,26 @@ const seoDesc = product.seo?.metaDescription || product.description;
              purchase block here would let one be bought with no layout and no fee. */}
           {!product.isPersonalised && (
             <Fragment>
+            {hasStyleChoice && (
+              <div class="mb-6">
+                <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Style</h3>
+                <div class="grid grid-cols-2 gap-2">
+                  {(Object.entries(ARTWORK_STYLES) as [string, string][]).map(([key, label]) => (
+                    <button
+                      class="style-btn border-4 border-black bg-panel-dark py-3 px-2 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
+                      data-style={key}
+                      style="box-shadow: 2px 2px 0 #000;">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p class="font-source text-gray-400 text-xs mt-2">
+                  Two versions of the same artwork, same price. Classic is framed by the masthead
+                  and captions; full bleed runs the picture edge to edge.
+                </p>
+              </div>
+            )}
+
             <!-- Format Selector -->
             <div class="mb-6">
               <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Print Format</h3>
@@ -305,6 +349,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     data-product-title={product.title}
     data-product-accent={product.accentColor || '#EC008C'}
     data-product-image={mainImageUrl || ''}
+    data-style-images={hasStyleChoice ? JSON.stringify(styleImages) : ''}
   ></div>
 
   <script>
@@ -325,10 +370,21 @@ const seoDesc = product.seo?.metaDescription || product.description;
     let selectedSize = 'small';
     let quantity = 1;
 
+    /* Which artwork style is showing. Empty when the product has only one, and
+       that emptiness is carried all the way to the cart line: a line with no
+       style is a product with no choice, which is what every existing line and
+       every existing order means. */
+    const styleImages = (() => {
+      try { return JSON.parse(dataEl?.dataset.styleImages || 'null'); }
+      catch (e) { return null; }
+    })();
+    let selectedStyle = styleImages ? 'classic' : '';
+
     const priceEl = document.getElementById('current-price');
     const qtyDisplay = document.getElementById('qty-display');
     const formatBtns = document.querySelectorAll('.format-btn');
     const sizeBtns = document.querySelectorAll('.size-btn');
+    const styleBtns = document.querySelectorAll('.style-btn');
 
     function updatePrice() {
       const price = PRICES[selectedFormat]?.[selectedSize] || 9.99;
@@ -360,6 +416,25 @@ const seoDesc = product.seo?.metaDescription || product.description;
       });
     });
 
+    /* Switching styles swaps the MAIN image and nothing else. The thumbnails
+       below it are the gallery -- lifestyle mockups, detail shots, whatever
+       somebody curated -- and they belong to the product rather than to either
+       style, so they stay exactly where they are. The price does not move
+       either: the two styles cost the same. */
+    styleBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = (btn as HTMLElement).dataset.style || 'classic';
+        const shot = styleImages?.[key];
+        if (!shot?.url) return;
+        selectedStyle = key;
+        activateBtn(styleBtns, btn, 'border-comic-yellow');
+        const mainImg = document.querySelector('#main-product-img') as HTMLImageElement;
+        if (mainImg) { mainImg.src = shot.url; mainImg.alt = shot.alt || ''; }
+        document.querySelectorAll('.thumb-btn').forEach(b =>
+          b.classList.replace('border-comic-yellow', 'border-gray-700'));
+      });
+    });
+
     document.getElementById('qty-dec')?.addEventListener('click', () => {
       if (quantity > 1) {
         quantity--;
@@ -374,6 +449,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
       updatePrice();
     });
 
+    if (styleBtns[0]) activateBtn(styleBtns, styleBtns[0], 'border-comic-yellow');
     if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');
     if (sizeBtns[0]) activateBtn(sizeBtns, sizeBtns[0], 'border-comic-yellow');
     // updatePrice() exists to reflect the selected format and size. Personalised
@@ -393,7 +469,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
         quantity,
         unitPrice,
         accentColor: productAccent,
-        imageUrl: productImage,
+        // The basket shows the style that was chosen, not the product's default.
+        imageUrl: (selectedStyle && styleImages?.[selectedStyle]?.url) || productImage,
+        ...(selectedStyle ? { artworkStyle: selectedStyle as any } : {}),
       });
     });
 

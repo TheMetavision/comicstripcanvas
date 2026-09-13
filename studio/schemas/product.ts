@@ -1,5 +1,48 @@
 import { defineType, defineField } from 'sanity';
 
+/**
+ * One entry in an artwork history: what was replaced, when, and by what.
+ *
+ * Defined once and used twice -- the product's own history, and the full-bleed
+ * slot's. Two copies of this would be two shapes the moment one of them gained
+ * a field, and the thing they record is a rollback path.
+ */
+const artworkChange = {
+  type: 'object',
+  name: 'artworkChange',
+  fields: [
+    { name: 'at', title: 'When', type: 'datetime' },
+    { name: 'sceneId', title: 'Scene / product id', type: 'string' },
+    { name: 'by', title: 'By', type: 'string' },
+    { name: 'template', title: 'Template', type: 'string' },
+    {
+      name: 'prevPrintFileAssetId',
+      title: 'Previous print file asset',
+      type: 'string',
+      description: 'What printFile pointed at before this redraw — the way back if it was wrong.',
+    },
+    {
+      name: 'prevListingAssetId',
+      title: 'Previous product image asset',
+      type: 'string',
+      description:
+        'What images[0] pointed at before this change took that slot. Set when a render ' +
+        'or a web-versions upload replaces a product image somebody else chose — the ' +
+        'hand-curated catalogue products keep their gallery, but their first image is ' +
+        'taken over, and this is the way back to it.',
+    },
+  ],
+  preview: {
+    select: { at: 'at', by: 'by', template: 'template' },
+    prepare({ at, by, template }: any) {
+      return {
+        title: at ? new Date(at).toLocaleString('en-GB') : 'unknown date',
+        subtitle: [by, template].filter(Boolean).join(' · '),
+      };
+    },
+  },
+};
+
 export default defineType({
   name: 'product',
   title: 'Product',
@@ -68,49 +111,71 @@ export default defineType({
         'or its product image was taken over by a render or a web-versions upload. ' +
         'Written by studio-save and the renderer; the previous print master is kept in the ' +
         'studio blob store as print-prev.png for one rollback.',
-      of: [
-        {
-          type: 'object',
-          name: 'artworkChange',
-          fields: [
-            { name: 'at', title: 'When', type: 'datetime' },
-            { name: 'sceneId', title: 'Scene / product id', type: 'string' },
-            { name: 'by', title: 'By', type: 'string' },
-            { name: 'template', title: 'Template', type: 'string' },
-            {
-              name: 'prevPrintFileAssetId',
-              title: 'Previous print file asset',
-              type: 'string',
-              description: 'What printFile pointed at before this redraw — the way back if it was wrong.',
-            },
-            {
-              name: 'prevListingAssetId',
-              title: 'Previous product image asset',
-              type: 'string',
-              description:
-                'What images[0] pointed at before this change took that slot. Set when a render ' +
-                'or a web-versions upload replaces a product image somebody else chose — the ' +
-                'hand-curated catalogue products keep their gallery, but their first image is ' +
-                'taken over, and this is the way back to it.',
-            },
-          ],
-          preview: {
-            select: { at: 'at', by: 'by', template: 'template' },
-            prepare({ at, by, template }: any) {
-              return {
-                title: at ? new Date(at).toLocaleString('en-GB') : 'unknown date',
-                subtitle: [by, template].filter(Boolean).join(' · '),
-              };
-            },
-          },
-        },
-      ],
+      of: [artworkChange],
     }),
     defineField({
       name: 'printFile',
       title: 'High-Res Print File',
       type: 'file',
       description: 'The production-quality file used for printing. Not shown on the frontend.',
+    }),
+    defineField({
+      name: 'classicSceneId',
+      title: 'Classic Scene Id',
+      type: 'string',
+      readOnly: true,
+      description:
+        'Which studio scene produced the Classic artwork above. The print master for it is ' +
+        'kept at studio/<this id>/classic/print.png in the blob store.',
+    }),
+    defineField({
+      name: 'fullBleed',
+      title: 'Full Bleed Style',
+      type: 'object',
+      description:
+        'A SECOND artwork style for this product, sold at the same price. Optional and ' +
+        'absent on almost everything: a product without it simply has one style, and the ' +
+        'product page shows no choice. images[] and printFile above are the Classic style ' +
+        'and are never touched by a full-bleed save. Written by the studio builder’s ' +
+        '“Replace artwork on existing product…” with Style set to Full bleed.',
+      options: { collapsible: true, collapsed: true },
+      fields: [
+        {
+          name: 'listingImage',
+          title: 'Product Image',
+          type: 'image',
+          options: { hotspot: true },
+          fields: [{ name: 'alt', title: 'Alt Text', type: 'string' }],
+          description: 'Shown as the main product image when the customer picks Full bleed.',
+        },
+        {
+          name: 'printFile',
+          title: 'High-Res Print File',
+          type: 'file',
+          description: 'What fulfilment prints for a Full bleed order. Never the Classic file.',
+        },
+        {
+          name: 'sceneId',
+          title: 'Scene Id',
+          type: 'string',
+          readOnly: true,
+          description: 'Print master at studio/<this id>/fullBleed/print.png.',
+        },
+        {
+          name: 'artworkHistory',
+          title: 'Artwork History',
+          type: 'array',
+          readOnly: true,
+          of: [artworkChange],
+          description: 'The last five times the full-bleed artwork was replaced.',
+        },
+      ],
+      preview: {
+        select: { media: 'listingImage', scene: 'sceneId' },
+        prepare({ media, scene }: any) {
+          return { title: 'Full bleed', subtitle: scene || 'no artwork yet', media };
+        },
+      },
     }),
     defineField({
       name: 'accentColor',

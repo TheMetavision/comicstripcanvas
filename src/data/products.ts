@@ -38,6 +38,25 @@ export const FORMAT_LABELS: Record<ProductFormat, string> = {
   'canvas-gallery': 'Canvas (Gallery Frame)',
 };
 
+export type ArtworkStyle = 'classic' | 'fullBleed';
+
+/**
+ * The two artwork styles a stock product can be sold in.
+ *
+ * A product's images[] and printFile are the Classic style; an optional
+ * fullBleed object on the document holds the other. Most products have only
+ * the first, and a product with one style shows no choice at all.
+ *
+ * KEEP IN SYNC with netlify/functions/_shared/artwork-styles.mjs, which is the
+ * copy the functions bundle -- the same arrangement PRICES has with
+ * _shared/catalog.mjs, and for the same reason: two toolchains, one set of
+ * strings, and these two decide which file gets printed.
+ */
+export const ARTWORK_STYLES: Record<ArtworkStyle, string> = {
+  classic: 'Classic cover',
+  fullBleed: 'Full bleed',
+};
+
 export const products: Product[] = [
   {
     id: '1',

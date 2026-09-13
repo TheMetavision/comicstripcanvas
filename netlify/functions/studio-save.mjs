@@ -3,6 +3,7 @@ import { getStore } from '@netlify/blobs';
 import { DPI, printGeometry } from './_shared/scene.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { startRender } from './_shared/studio-render-trigger.mjs';
+import { CLASSIC, FULL_BLEED, isStyle, styleForTemplate, sceneKey, styleLabel } from './_shared/artwork-styles.mjs';
 
 /**
  * Turn a design built in the Studio-mode builder into a draft catalogue product.
@@ -33,7 +34,13 @@ import { startRender } from './_shared/studio-render-trigger.mjs';
  * It also REPLACES the artwork on a product that already exists. Pass a
  * productId and it writes to that product instead of creating one, touching
  * only artworkHistory here and, through the renderer, images[_key="listing"]
- * and printFile. Title, slug, price, description,
+ * and printFile.
+ *
+ * A replace also chooses WHICH ARTWORK STYLE it is replacing. Classic is the
+ * product's images[] and printFile -- the way it has always worked. Full bleed
+ * writes the optional fullBleed object beside them instead, leaving the main
+ * image, the gallery and the print file exactly as they are, so one product can
+ * be sold in two styles at one price. Title, slug, price, description,
  * SEO, category, tags and everything else are left exactly as they are -- the
  * point of the mode is that a design can be redrawn without re-entering the
  * shop's own copy.
@@ -135,6 +142,11 @@ export default async (req) => {
        somebody chose, and the render takes that slot. The picker warns before
        the button is pressed rather than after.
 
+       fullBleedImage and hasFullBleed are the same question asked of the other
+       style: the confirm panel's "Now" pane shows whichever style is about to
+       be written, and "none yet" is a perfectly ordinary answer for a product
+       that has never had a full-bleed version.
+
        category comes back so the picker can tell two products of the same
        subject apart -- "Bruce Lee" exists as a Cover and as an Icon, and by
        title alone those two rows are the same row twice.
@@ -160,7 +172,9 @@ export default async (req) => {
            _id, title, "slug": slug.current, category,
            "draft": _originalId in path("drafts.**"),
            "image": images[0].asset->url, "updatedAt": _updatedAt,
-           "hasListing": count(images[_key == "listing"]) > 0
+           "hasListing": count(images[_key == "listing"]) > 0,
+           "fullBleedImage": fullBleed.listingImage.asset->url,
+           "hasFullBleed": defined(fullBleed.printFile.asset)
          }`,
       { m: `*${q}*` },
       /* Per REQUEST, never on the client: the same client does getDocument,
@@ -188,6 +202,24 @@ export default async (req) => {
   if (!replacing && !title) return json({ error: 'A product title is required' }, 400);
   if (replacing && !/^(drafts\.)?[A-Za-z0-9._-]{1,120}$/.test(productId)) {
     return json({ error: 'That product id is not well formed' }, 400);
+  }
+
+  /* WHICH ARTWORK SLOT this save writes to.
+
+     Only a replace may choose. A new product's first artwork is its images[]
+     and its printFile -- that IS the Classic style, by definition -- and a
+     fullBleed object on a product with no main image would be a product the
+     shop cannot sell. Refused rather than quietly corrected: the builder never
+     sends it, so a request that does is a caller with the wrong idea. */
+  const style = (form.get('style') || '').toString().trim() || CLASSIC;
+  if (!isStyle(style)) {
+    return json({ error: `Unknown artwork style "${style}"` }, 400);
+  }
+  if (!replacing && style !== CLASSIC) {
+    return json({
+      error: "A new product's first artwork is always the Classic style. " +
+        'Save it, then replace its artwork with Style set to Full bleed.',
+    }, 400);
   }
 
   const sceneSvg = (form.get('sceneSvg') || '').toString();
@@ -300,7 +332,8 @@ export default async (req) => {
     /* Whatever printFile pointed at BEFORE this redraw, recorded now while it is
        still true. The renderer is about to overwrite it, and this reference is
        the only way back to the file the shop was fulfilling from. */
-    const prevPrintFile = replacing ? (target.doc.printFile?.asset?._ref || null) : null;
+    const slot = style === FULL_BLEED ? target?.doc?.fullBleed : target?.doc;
+    const prevPrintFile = replacing ? (slot?.printFile?.asset?._ref || null) : null;
 
     const entry = {
       _type: 'artworkChange', _key: `h-${Date.now().toString(36)}`,
@@ -322,12 +355,22 @@ export default async (req) => {
       }
       docId = target.docId;
       const current = await sanity.getDocument(docId);
-      const history = [entry, ...(Array.isArray(current?.artworkHistory) ? current.artworkHistory : [])]
+      /* Each style keeps its own history, because each has its own print file
+         to roll back to. A full-bleed redraw has nothing to say about the
+         classic artwork and must not push its entry off the front of the
+         list. */
+      const existingHistory = style === FULL_BLEED
+        ? current?.fullBleed?.artworkHistory
+        : current?.artworkHistory;
+      const history = [entry, ...(Array.isArray(existingHistory) ? existingHistory : [])]
         .slice(0, HISTORY_LIMIT);
       /* ONLY the history. The pictures are the renderer's to write, and the
          shop's own words -- title, slug, price, description, SEO, tags,
          category, variants -- are nobody's to rewrite here. */
-      await sanity.patch(docId).set({ artworkHistory: history }).commit();
+      await sanity.patch(docId)
+        .setIfMissing(style === FULL_BLEED ? { fullBleed: {} } : {})
+        .set(style === FULL_BLEED ? { 'fullBleed.artworkHistory': history } : { artworkHistory: history })
+        .commit();
       wrote = target.needsDraftFrom ? 'created a draft from the published product'
         : (target.wasPublished ? 'updated the existing draft of a published product'
           : 'updated the draft (never published)');
@@ -363,13 +406,17 @@ export default async (req) => {
        render re-runnable, and a re-run has to know where to attach the pictures.
        Writing it first meant that a failed document write left a scene nothing
        sweeps, pinning its uploads in the store for ever. */
-    await store.set(`studio/${id}/scene.json`, JSON.stringify({
-      id, docId, replacing, title: name, svg: sceneSvg, recipe,
+    /* Keyed by style as well as by product. Two styles of one product are two
+       scenes, two print masters and two rollbacks, and before the style segment
+       existed the second save would have overwritten the first one's handoff --
+       and its print file with it. */
+    await store.set(sceneKey(id, style), JSON.stringify({
+      id, docId, replacing, style, title: name, svg: sceneSvg, recipe,
       images: Object.fromEntries(uploads),
       printWidth, dpi: DPI,
       savedAt: new Date().toISOString(),
     }), {
-      metadata: { id, docId, kind: 'scene', title: name, printWidth, dpi: DPI },
+      metadata: { id, docId, style, kind: 'scene', title: name, printWidth, dpi: DPI },
     });
 
     /* Start the renderer, and WAIT for the platform to accept the job.
@@ -386,17 +433,18 @@ export default async (req) => {
 
        It costs almost nothing: a background function answers 202 as soon as the
        platform has taken the job, not when the render finishes. */
-    const trigger = await startRender({ origin, id, docId, title: name, printWidth, replacing });
+    const trigger = await startRender({ origin, id, docId, title: name, printWidth, replacing, style });
 
     console.log(
-      `studio-save: ${replacing ? 'replacing artwork on' : 'created'} ${docId} ("${name}") — ${wrote}; ` +
+      `studio-save: ${replacing ? 'replacing artwork on' : 'created'} ${docId} ("${name}") ` +
+      `[${styleLabel(style)}] — ${wrote}; ` +
       `scene stored, print ${printWidth}px; render trigger POST ${trigger.url} -> ` +
       (trigger.ok ? `${trigger.status}` : `FAILED (${trigger.status || trigger.error})`)
     );
 
     const body = {
       mode: replacing ? 'replace' : 'create',
-      id, docId, wrote, title: name,
+      id, docId, wrote, title: name, style,
       category: replacing ? undefined : category,
       studioUrl: `${STUDIO_HOST}/intent/edit/id=${replacing ? target.base : id};type=product/`,
       trigger: { url: trigger.url, status: trigger.status || null },
@@ -422,7 +470,7 @@ export default async (req) => {
       ok: true,
       artwork: { status: 'rendering' },
       print: { width: printWidth, status: 'rendering' },
-      rollback: `studio/${id}/print-prev.png`,
+      rollback: `studio/${id}/${style}/print-prev.png`,
     });
   } catch (err) {
     console.error('studio-save: failed:', err.message);

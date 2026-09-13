@@ -4,6 +4,10 @@ import sharp from 'sharp';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { WEB_MASTER, renderDerivative, setListingImage, recordDisplacedListing } from './_shared/derivatives.mjs';
+import {
+  CLASSIC, FULL_BLEED, styleOr, styleLabel,
+  sceneKey, printKey, prevPrintKey, listingKey, legacySceneKey, legacyPrintKey,
+} from './_shared/artwork-styles.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
@@ -54,19 +58,32 @@ export default async (req) => {
        being killed for allocating -- there is no exception to catch when that
        happens, so the size it had has to be written down before the work
        starts or it cannot be read afterwards. */
-    console.log(`studio-render: invoked for ${id || '(no id)'} ("${title}") — ${memoryNote()}`);
+    console.log(`studio-render: invoked for ${id || '(no id)'} ("${title}") ` +
+      `[${styleLabel(body.style)}] — ${memoryNote()}`);
     if (!isId(id)) {
       console.error('studio-render: bad or missing id', JSON.stringify(body).slice(0, 200));
       return new Response('Bad id', { status: 400 });
     }
 
     const store = getStore(STUDIO_STORE);
-    const raw = await store.get(`studio/${id}/scene.json`, { type: 'text' });
+    /* The trigger says which slot; the scene says so too. Either will do, and
+       the legacy path is the third answer: a save that was in flight when this
+       deploy landed wrote studio/<id>/scene.json with no style in it, and that
+       is a Classic save by definition -- it predates there being another. */
+    const asked = styleOr(body.style);
+    let sceneAt = sceneKey(id, asked);
+    let raw = await store.get(sceneAt, { type: 'text' });
     if (!raw) {
-      console.error(`studio-render: no scene stored for ${id} — nothing to render`);
+      sceneAt = legacySceneKey(id);
+      raw = await store.get(sceneAt, { type: 'text' });
+      if (raw) console.log(`studio-render: ${id} read a pre-styles scene at ${sceneAt}`);
+    }
+    if (!raw) {
+      console.error(`studio-render: no scene stored for ${id} (${asked}) — nothing to render`);
       return new Response('No scene', { status: 404 });
     }
     const job = JSON.parse(raw);
+    const style = styleOr(job.style || body.style);
 
     const printWidth = Number(body.printWidth || job.printWidth) || 0;
     if (!printWidth) {
@@ -107,17 +124,26 @@ export default async (req) => {
        only full-resolution copy of what the shop sells, and a redraw that turns
        out wrong is otherwise a door with no handle on the inside. A brand new
        product has no print.png yet, so this costs it nothing. */
-    const previous = await store.get(`studio/${id}/print.png`, { type: 'arrayBuffer' }).catch(() => null);
+    /* The Classic slot also looks at the pre-styles path, because that is
+       where every product rendered before today has its print master -- and a
+       redraw with no rollback copy is exactly the case this exists for. */
+    const printAt = printKey(id, style);
+    let previousAt = printAt;
+    let previous = await store.get(printAt, { type: 'arrayBuffer' }).catch(() => null);
+    if (!previous && style === CLASSIC) {
+      previousAt = legacyPrintKey(id);
+      previous = await store.get(previousAt, { type: 'arrayBuffer' }).catch(() => null);
+    }
     if (previous) {
-      const prevMeta = await store.getMetadata(`studio/${id}/print.png`).catch(() => null);
-      await store.set(`studio/${id}/print-prev.png`, previous, {
-        metadata: { ...(prevMeta?.metadata || {}), kind: 'print-prev', supersededAt: new Date().toISOString() },
+      const prevMeta = await store.getMetadata(previousAt).catch(() => null);
+      await store.set(prevPrintKey(id, style), previous, {
+        metadata: { ...(prevMeta?.metadata || {}), kind: 'print-prev', style, supersededAt: new Date().toISOString() },
       });
-      console.log(`studio-render: kept the previous print master as studio/${id}/print-prev.png`);
+      console.log(`studio-render: kept the previous print master as ${prevPrintKey(id, style)}`);
     }
 
-    await store.set(`studio/${id}/print.png`, printPng, {
-      metadata: { id, kind: 'print', title, width: print.width, height: print.height, dpi: DPI },
+    await store.set(printAt, printPng, {
+      metadata: { id, style, kind: 'print', title, width: print.width, height: print.height, dpi: DPI },
     });
 
     /* ---- the picture the shop actually shows ---- */
@@ -153,8 +179,8 @@ export default async (req) => {
        whatever resvg fell back to. */
     cleanupFonts(); cleanupFonts = null;
 
-    await store.set(`studio/${id}/listing.jpg`, listingJpeg, {
-      metadata: { id, kind: 'listing', title, width: listingInfo.width, height: listingInfo.height },
+    await store.set(listingKey(id, style), listingJpeg, {
+      metadata: { id, style, kind: 'listing', title, width: listingInfo.width, height: listingInfo.height },
     });
 
     /* ---- attach them ---- */
@@ -189,23 +215,58 @@ export default async (req) => {
          Whatever was in that slot is written into the history entry studio-save
          already made, so there is a way back to it. */
       const current = await sanity.getDocument(docId);
-      const listing = setListingImage(current?.images, listingAsset._id, `${title} — Comic Strip Canvas`);
-      const history = recordDisplacedListing(current?.artworkHistory, listing.displaced, {
-        by: 'studio', ownEntry: true,
-      });
+      const alt = `${title} — Comic Strip Canvas`;
+      const printRef = { _type: 'file', asset: { _type: 'reference', _ref: printAsset._id } };
 
-      const patch = {
-        images: listing.images,
-        printFile: { _type: 'file', asset: { _type: 'reference', _ref: printAsset._id } },
-      };
-      if (history.recorded) patch.artworkHistory = history.history;
-      await sanity.patch(docId).set(patch).commit();
+      if (style === FULL_BLEED) {
+        /* A slot of its own, and nothing else on the document is touched.
+           images[] stays exactly as it is -- that array IS the Classic style
+           and its gallery -- so a full-bleed redraw cannot displace a curated
+           picture, and there is no images[0] surgery to do. What it can
+           displace is the previous full-bleed image, so that is what gets
+           recorded for the rollback. */
+        const displaced = current?.fullBleed?.listingImage?.asset?._ref || null;
+        const history = recordDisplacedListing(current?.fullBleed?.artworkHistory, displaced, {
+          by: 'studio', ownEntry: true,
+        });
+        const patch = {
+          'fullBleed.listingImage': {
+            _type: 'image', asset: { _type: 'reference', _ref: listingAsset._id }, alt,
+          },
+          'fullBleed.printFile': printRef,
+          'fullBleed.sceneId': id,
+        };
+        if (history.recorded) patch['fullBleed.artworkHistory'] = history.history;
+        await sanity.patch(docId).setIfMissing({ fullBleed: {} }).set(patch).commit();
+        attached = `${docId} (fullBleed.listingImage ${displaced ? 'replaced' : 'set'}, fullBleed.printFile set)`;
+      } else {
+        /* This is also the migration, in two directions. A product rendered before
+           the keys were collapsed carries a near-identical "web-master" entry and
+           setListingImage drops it; a hand-curated product has no listing entry at
+           all, and its images[0] -- the picture the whole site shows -- is taken
+           over rather than appended after, because appending would leave the old
+           one on display and the new render invisible at the end of the array.
+           Whatever was in that slot is written into the history entry studio-save
+           already made, so there is a way back to it. */
+        const listing = setListingImage(current?.images, listingAsset._id, alt);
+        const history = recordDisplacedListing(current?.artworkHistory, listing.displaced, {
+          by: 'studio', ownEntry: true,
+        });
 
-      attached = `${docId} (images[0] ${listing.mode === 'displaced' ? 'TAKEN OVER from a curated image' : listing.mode === 'first' ? 'added' : 'replaced'}` +
-        `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;
-      if (listing.mode === 'displaced') {
-        console.warn(`studio-render: ${docId} had no listing entry — images[0] (${listing.displaced}) ` +
-          `is no longer the product image; recorded as prevListingAssetId for rollback`);
+        const patch = {
+          images: listing.images,
+          printFile: printRef,
+          classicSceneId: id,
+        };
+        if (history.recorded) patch.artworkHistory = history.history;
+        await sanity.patch(docId).set(patch).commit();
+
+        attached = `${docId} (images[0] ${listing.mode === 'displaced' ? 'TAKEN OVER from a curated image' : listing.mode === 'first' ? 'added' : 'replaced'}` +
+          `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;
+        if (listing.mode === 'displaced') {
+          console.warn(`studio-render: ${docId} had no listing entry — images[0] (${listing.displaced}) ` +
+            `is no longer the product image; recorded as prevListingAssetId for rollback`);
+        }
       }
     } else if (docId) {
       console.error('studio-render: SANITY_WRITE_TOKEN is not set — the pictures exist but nothing was attached');
@@ -219,15 +280,15 @@ export default async (req) => {
        second full-resolution copy under an upload id serves nothing. A delete
        that fails is not worth failing a finished render over; retention sweeps
        the prefix. */
-    await store.delete(`studio/${id}/scene.json`)
+    await store.delete(sceneAt)
       .catch((err) => console.warn(`studio-render: could not delete the scene for ${id}: ${err.message}`));
     await Promise.all(Object.values(keys).map(
       (key) => store.delete(key).catch((err) => console.warn(`studio-render: could not delete ${key}: ${err.message}`))
     ));
 
     console.log(
-      `studio-render: "${title}" ${id} -> print ${print.width} x ${print.height} px ` +
-      `(${printPng.length} B) @ ${DPI}dpi, listing ${listingInfo.width}x${listingInfo.height} ` +
+      `studio-render: "${title}" ${id} [${styleLabel(style)}] -> print ${print.width} x ${print.height} px ` +
+      `(${printPng.length} B) @ ${DPI}dpi -> ${printAt}, listing ${listingInfo.width}x${listingInfo.height} ` +
       `(${listingJpeg.length} B jpeg) -> ${attached}`
     );
     return new Response('Rendered', { status: 200 });

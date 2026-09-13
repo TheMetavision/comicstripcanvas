@@ -76,6 +76,12 @@ export const productBySlugQuery = `
       "lqip": asset->metadata.lqip
     },
     "printFileUrl": printFile.asset->url,
+    classicSceneId,
+    fullBleed {
+      listingImage { asset-> { _id, url }, alt, "lqip": asset->metadata.lqip },
+      "printFileUrl": printFile.asset->url,
+      sceneId
+    },
     accentColor,
     tags,
     featured,

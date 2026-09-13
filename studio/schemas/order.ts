@@ -59,6 +59,23 @@ export default defineType({
             { name: 'quantity', type: 'number', title: 'Qty' },
             { name: 'unitPrice', type: 'number', title: 'Unit Price (£)' },
             {
+              name: 'artworkStyle',
+              type: 'string',
+              title: 'Artwork Style',
+              description:
+                'Which of the product’s artwork styles was bought. Anything ordered before ' +
+                'the second style existed, and every product that only has one, is Classic.',
+            },
+            {
+              name: 'printFile',
+              type: 'url',
+              title: 'Print File',
+              description:
+                'THE FILE TO PRINT for this line, resolved for its style when the order was ' +
+                'paid. A snapshot on purpose: the product’s artwork can be replaced later, ' +
+                'and what was bought is what gets printed.',
+            },
+            {
               name: 'productRef',
               title: 'Product Reference',
               type: 'reference',
@@ -72,11 +89,16 @@ export default defineType({
               size: 'size',
               qty: 'quantity',
               price: 'unitPrice',
+              style: 'artworkStyle',
             },
-            prepare({ title, format, size, qty, price }) {
+            prepare({ title, format, size, qty, price, style }) {
+              /* The style goes in the SUBTITLE, where a picker sees it without
+                 opening the line. A two-style product is two orders that look
+                 identical until you read which file to print. */
+              const styleName = style === 'fullBleed' ? 'Full bleed' : 'Classic';
               return {
                 title: `${title}`,
-                subtitle: `${format} / ${size} × ${qty} — £${((price || 0) * (qty || 1)).toFixed(2)}`,
+                subtitle: `${styleName} · ${format} / ${size} × ${qty} — £${((price || 0) * (qty || 1)).toFixed(2)}`,
               };
             },
           },
