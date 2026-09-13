@@ -362,9 +362,16 @@ export function initProductBuilder() {
      moment where the builder is mounted and has nothing to show. The gate
      reads these, which is why they live out here with the rest of the state. */
   let customiseReady = false, customiseError = null, customiseScene = null;
+  let artworkFailed = false;
 
   const sw = $('switch');
-  VARIANTS[INITIAL].forEach((k) => {
+  /* No style switcher when the style is not the customer's to change: a
+     customised design IS one of the two styles, fixed by the scene that was
+     retained for it, and the other one is a different design with its own
+     artwork. Offering the switch would offer to throw their wording at a
+     picture they did not choose. */
+  if (CUSTOMISE) sw.hidden = true;
+  (CUSTOMISE ? [] : VARIANTS[INITIAL]).forEach((k) => {
     const b = document.createElement('button');
     b.textContent = SWITCH_LABEL[k] || TEMPLATES[k].name; b.dataset.k = k; b.className = 'b-btn';
     if (SWITCH_HINT[k]) { b.title = SWITCH_HINT[k]; b.setAttribute('aria-description', SWITCH_HINT[k]); }
@@ -3177,6 +3184,9 @@ export function initProductBuilder() {
     drawSwatches();
   }
   function refresh() {
+    /* Customise mode has no template until its design arrives, and the veil is
+       what the customer is looking at until then. Everything below reads T. */
+    if (!T) return;
     const w = wrapIn(), sz = T.size;
     if (sz) {
       const outW = (sz.w + 2 * w), outH = (sz.h + 2 * w);
@@ -4377,7 +4387,41 @@ export function initProductBuilder() {
 
   if (new URLSearchParams(location.search).has('dev')) $('copy').hidden = false;
 
-  /* ---------- customise: the shop's design, reopened ---------- */
+  /* ---------- customise: the veil ---------- */
+  /**
+   * What the customer looks at until the design is in, and instead of it if it
+   * never arrives.
+   *
+   * Rendered by the component and visible from the first paint, so there is no
+   * moment where the blank builder underneath is on screen -- and none where it
+   * can be clicked, because this sits over the whole island.
+   */
+  function veil(state, detail) {
+    const box = $('customiseVeil');
+    if (!box) return;
+    if (state === 'gone') { box.remove(); return; }
+    const title = $('customiseVeilTitle'), body = $('customiseVeilBody'), back = $('customiseVeilBack');
+    if (state === 'error') {
+      if (title) title.textContent = "This design can't be customised right now";
+      if (body) {
+        body.textContent = detail
+          || 'Something went wrong opening it. Please try again, or contact us and we will sort it out.';
+      }
+      if (back) {
+        /* Back to the product they came from, which is the one thing they can
+           usefully do from here. The page publishes its own identity for the
+           basket line; this reads the same block. */
+        const pd = document.getElementById('product-data');
+        const slug = (pd && pd.dataset && pd.dataset.productSlug) || '';
+        back.href = slug ? `/store/${slug}` : '/store';
+        back.hidden = false;
+      }
+      const add = $('addBasket');
+      if (add) add.disabled = true;
+    }
+  }
+
+  /* ---------- customise: the shop's design, reopened ---------- */  /* ---------- customise: the shop's design, reopened ---------- */
   /**
    * Rebuild a stock design in the builder so its wording can be changed.
    *
@@ -4404,7 +4448,9 @@ export function initProductBuilder() {
     } catch (e) {
       customiseError = 'We could not open this design — please try again, or contact us.';
       console.warn(`[builder] customise: ${url} failed: ${e.message}`);
-      refresh();
+      /* No load(), so there is no blank template to fall back to and nothing
+         underneath to interact with -- only the veil, saying so. */
+      veil('error');
       return;
     }
     customiseScene = data;
@@ -4414,17 +4460,24 @@ export function initProductBuilder() {
     if (!key || !TEMPLATES[key]) {
       customiseError = 'We could not open this design — please contact us.';
       console.warn(`[builder] customise: unknown template "${data.template}"`);
-      refresh();
+      veil('error');
       return;
     }
     load(key);
     applyRecipe(data.recipe || {});
     await Promise.all(Object.entries(data.panels || {}).map(([panel, src]) => fillLocked(panel, src)));
+    if (artworkFailed) {
+      /* The design loaded but its picture did not, which is the same thing from
+         where the customer is sitting: there is nothing to put wording on. */
+      veil('error', 'We could not load the artwork for this design. Please try again, or contact us.');
+      return;
+    }
 
     customiseReady = true;
     customiseError = null;
     layoutAllText();
     if (selected) syncPanel();
+    veil('gone');
     refresh();
     console.log(`[builder] customise: ${data.productId} (${data.style}) on ${key}, ` +
       `${Object.keys(data.panels || {}).length} panel(s)`);
@@ -4519,6 +4572,7 @@ export function initProductBuilder() {
       im.onerror = () => {
         customiseError = 'Part of this design would not load — please try again.';
         console.warn(`[builder] customise: artwork for ${panelId} would not load`);
+        artworkFailed = true;
         resolve();
       };
       im.src = src;
@@ -4584,9 +4638,11 @@ export function initProductBuilder() {
     setTimeout(probe, 1500);
     svg.addEventListener('click', probe);
   }
-  /* Customise mode loads its template from the design rather than from the
-     page, so it does its own first load. */
-  if (CUSTOMISE) { load(INITIAL); loadCustomise(); } else load(INITIAL);
+  /* Customise mode loads the template the DESIGN was drawn on, which is not
+     known until the scene arrives -- so it loads nothing until then. Loading
+     the default first, as this did, is what put a fully interactive blank
+     cover on screen whenever a design failed to open. */
+  if (CUSTOMISE) loadCustomise(); else load(INITIAL);
   try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }
 
   return { MODE };

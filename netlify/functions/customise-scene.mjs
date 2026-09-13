@@ -2,7 +2,7 @@ import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import {
-  CLASSIC, FULL_BLEED, STYLES, styleOr, sceneKey, artWebKey,
+  CLASSIC, FULL_BLEED, STYLES, styleOr, sceneKey, artWebKey, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
 
 /**
@@ -150,9 +150,12 @@ export default async (req) => {
       recipe: job.recipe || null,
       sceneSvg: job.svg || null,
       panels,
-      /* In pence, as it is stored. The page and the basket both read this one
-         number so a displayed price and a charged one cannot drift. */
-      customiseFee: typeof product.customiseFee === 'number' ? product.customiseFee : null,
+      /* In pence, RESOLVED here rather than handed over raw: almost no product
+         carries a customiseFee of its own, and a null would leave the builder
+         to invent a price or charge nothing. Checkout resolves the same field
+         through the same function, so what the basket shows and what the card
+         is charged come from one rule. */
+      customiseFee: resolveCustomiseFee(product.customiseFee).pence,
     });
   } catch (err) {
     console.error(`customise-scene: ${productId} (${style}) failed:`, err.message);

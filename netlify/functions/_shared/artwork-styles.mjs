@@ -31,6 +31,45 @@ export const STYLE_LABEL = {
 /** Anything off the wire has to be one of exactly these two. */
 export const isStyle = (s) => STYLES.includes(s);
 
+/* ------------------------------------------------------------------ the fee */
+
+/**
+ * What "Customise this design" costs, in PENCE, when the product does not say.
+ *
+ * Every product predates the customiseFee field, so almost none of them carry
+ * one and a page that waited for the field would offer the button and then
+ * refuse the payment. The default is the answer to "what does it cost" for a
+ * product nobody has priced individually; a number ON the product overrides it
+ * and is how one ever gets priced differently.
+ *
+ * ONE source, used by the product page's label, by the endpoint that hands the
+ * builder its price, and by checkout -- so what a customer is shown and what
+ * they are charged come from the same line of code.
+ */
+export const CUSTOMISE_FEE_DEFAULT = 500;
+
+/**
+ * The fee to charge for a build, in pence.
+ *
+ * A product's own value wins when it is a whole number of pence above zero.
+ * Anything else -- absent, null, a string, a fraction, zero, negative -- is not
+ * a price, and the honest reading of "not a price" for a field nobody has
+ * filled in is the default rather than a refusal. A value that is PRESENT and
+ * nonsense is a different matter: that is somebody having typed something, and
+ * the caller is told so it can refuse rather than guess.
+ *
+ * @returns {{ pence: number, source: 'product'|'default', bad: boolean }}
+ */
+export function resolveCustomiseFee(value) {
+  if (value === undefined || value === null || value === '') {
+    return { pence: CUSTOMISE_FEE_DEFAULT, source: 'default', bad: false };
+  }
+  const ok = typeof value === 'number' && Number.isInteger(value) && value > 0;
+  return ok
+    ? { pence: value, source: 'product', bad: false }
+    : { pence: CUSTOMISE_FEE_DEFAULT, source: 'default', bad: true };
+}
+
 /**
  * A style off the wire, or Classic.
  *

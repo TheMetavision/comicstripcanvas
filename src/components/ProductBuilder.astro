@@ -68,11 +68,36 @@ const builderData = JSON.stringify({
 
 <div
   id="csc-builder-root"
-  class="csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]"
+  class={`csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]${mode === 'customise' ? ' relative' : ''}`}
   data-mode={mode}
   data-template={template}
   data-product-id={productId}
 >
+  {/* Customise mode opens covered.
+
+      The design has to be fetched before there is anything to show, and what
+      is underneath until then is the ordinary blank builder -- an example
+      photo, a "drop yours here", a template switcher. A customer who came to
+      change the wording on a cover they were looking at should never see that,
+      and should certainly never be able to use it, so the builder starts
+      behind this and only comes out from behind it when the design is in.
+
+      Rendered server-side and visible by default: a veil that JavaScript has
+      to put up is a veil that is not there for the first paint, which is
+      exactly the moment the blank builder would show through. */}
+  {mode === 'customise' && (
+    <div
+      id="customiseVeil"
+      class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-charcoal p-8 text-center"
+    >
+      <p id="customiseVeilTitle" class="m-0 font-bangers text-3xl uppercase tracking-wide text-comic-yellow">
+        Opening your design&hellip;
+      </p>
+      <p id="customiseVeilBody" class="b-hint max-w-md">One moment &mdash; fetching the artwork.</p>
+      <a id="customiseVeilBack" class="btn-primary mt-2" href="/store" hidden>Back to the product</a>
+    </div>
+  )}
+
   <!-- toolbar -->
   <header
     class="flex flex-wrap items-center gap-3 border-b-4 border-black bg-panel-dark px-4 py-3"

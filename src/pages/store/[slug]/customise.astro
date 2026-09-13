@@ -16,6 +16,7 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import ProductBuilder from '../../../components/ProductBuilder.astro';
 import { sanityClient, urlFor } from '../../../lib/sanity';
+import { CUSTOMISE_FEE_DEFAULT } from '../../../../netlify/functions/_shared/artwork-styles.mjs';
 
 export async function getStaticPaths() {
   /* Only products with a scene. A hand-curated catalogue product has artwork
@@ -36,7 +37,17 @@ export async function getStaticPaths() {
 }
 
 const { product } = Astro.props;
-const fee = typeof product.customiseFee === 'number' ? product.customiseFee : 500;
+/* Absent on almost every product, so the shared default is the ordinary
+   answer -- and the same one /api/customise-scene hands the builder and
+   checkout charges. */
+const fee = typeof product.customiseFee === 'number' && product.customiseFee > 0
+  ? product.customiseFee
+  : CUSTOMISE_FEE_DEFAULT;
+/* Which styles this product actually has a design for. The page is static and
+   serves both, so the query string decides which one is opened -- and a query
+   string is the easiest thing in the world to arrive with the wrong value in. */
+const hasClassic = !!product.classicSceneId;
+const hasFullBleed = !!product.fullBleedSceneId;
 const imageUrl = product.image?.asset?.url || '';
 
 /* The cover templates are the only ones a stock design is drawn on today, and
@@ -79,6 +90,27 @@ const template = 'cover' as const;
       </p>
 
       <ProductBuilder template={template} mode="customise" productId={product._id} />
+
+      {/* Before the builder asks for a design that is not there.
+
+          A link from the product page always names a style this product has,
+          but a typed, shared or bookmarked URL need not -- and asking for the
+          style with no scene is a guaranteed error state. If the other style
+          has one, this sends them there instead of to a dead end; if neither
+          does, it leaves the builder to say so. Inline so it runs before the
+          island's bundle rather than after it. */}
+      <script is:inline define:vars={{ hasClassic, hasFullBleed, slug: product.slug }}>
+        (() => {
+          const asked = new URLSearchParams(location.search).get('style') === 'fullbleed'
+            ? 'fullBleed' : 'classic';
+          const has = asked === 'fullBleed' ? hasFullBleed : hasClassic;
+          if (has) return;
+          const other = asked === 'fullBleed' ? hasClassic : hasFullBleed;
+          if (!other) return;
+          const to = `/store/${slug}/customise${asked === 'fullBleed' ? '' : '?style=fullbleed'}`;
+          location.replace(to);
+        })();
+      </script>
     </div>
   </section>
 

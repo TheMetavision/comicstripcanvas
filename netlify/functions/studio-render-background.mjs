@@ -7,7 +7,7 @@ import { WEB_MASTER, renderDerivative, setListingImage, recordDisplacedListing }
 import {
   CLASSIC, FULL_BLEED, styleOr, styleLabel,
   sceneKey, printKey, prevPrintKey, listingKey, legacySceneKey, legacyPrintKey,
-  artKey, artWebKey, isArtKey, ART_WEB_SIDE,
+  artKey, artWebKey, isArtKey, ART_WEB_SIDE, CUSTOMISE_FEE_DEFAULT,
 } from './_shared/artwork-styles.mjs';
 
 /**
@@ -250,7 +250,12 @@ export default async (req) => {
           'fullBleed.sceneId': id,
         };
         if (history.recorded) patch['fullBleed.artworkHistory'] = history.history;
-        await sanity.patch(docId).setIfMissing({ fullBleed: {} }).set(patch).commit();
+        /* A product that has just gained a scene has just become customisable,
+           so it needs a price for it. setIfMissing, never set: a product priced
+           by hand keeps its number, and this only fills the blank. */
+        await sanity.patch(docId)
+          .setIfMissing({ fullBleed: {}, customiseFee: CUSTOMISE_FEE_DEFAULT })
+          .set(patch).commit();
         attached = `${docId} (fullBleed.listingImage ${displaced ? 'replaced' : 'set'}, fullBleed.printFile set)`;
       } else {
         /* This is also the migration, in two directions. A product rendered before
@@ -272,7 +277,11 @@ export default async (req) => {
           classicSceneId: id,
         };
         if (history.recorded) patch.artworkHistory = history.history;
-        await sanity.patch(docId).set(patch).commit();
+        // Same here: a scene is what makes a product customisable, so this is
+        // the moment it needs a fee. An existing one is left alone.
+        await sanity.patch(docId)
+          .setIfMissing({ customiseFee: CUSTOMISE_FEE_DEFAULT })
+          .set(patch).commit();
 
         attached = `${docId} (images[0] ${listing.mode === 'displaced' ? 'TAKEN OVER from a curated image' : listing.mode === 'first' ? 'added' : 'replaced'}` +
           `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;

@@ -3,6 +3,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
 import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
+/* The one place the customise fee is decided. Imported across the src/netlify
+   line on purpose: this module is plain constants with no imports of its own,
+   and a second copy of a PRICE is how a displayed number and a charged one
+   come to disagree. */
+import { CUSTOMISE_FEE_DEFAULT } from '../../../netlify/functions/_shared/artwork-styles.mjs';
 import ProductBuilder from '../../components/ProductBuilder.astro';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
@@ -60,9 +65,25 @@ const customisable = {
   fullBleed: !!product.fullBleed?.sceneId,
 };
 const canCustomise = !product.isPersonalised && (customisable.classic || customisable.fullBleed);
+/* WHICH style the link opens, decided here rather than left to the browser.
+
+   The button is offered when EITHER style has a scene, and the two are not
+   interchangeable: this product may have been drawn full bleed and never
+   classic. So the server-rendered href names a style that actually has a scene
+   -- classic when there is one, full bleed otherwise -- and a customer who
+   never touches the style buttons cannot be sent to a design that does not
+   exist. Before this it always opened classic, which for a full-bleed-only
+   product is a guaranteed blank builder. */
+const customiseStyle = customisable.classic ? 'classic' : (customisable.fullBleed ? 'fullBleed' : null);
+const customiseHref = customiseStyle
+  ? `/store/${product.slug}/customise${customiseStyle === 'fullBleed' ? '?style=fullbleed' : ''}`
+  : null;
 /* In pence on the document, because a £5 fee is honestly a whole number of
-   them, and checkout prices from the same field. */
-const customiseFee = typeof product.customiseFee === 'number' ? product.customiseFee : 500;
+   them. Absent on almost everything, so the shared default is the ordinary
+   answer -- and it is the same one checkout resolves to. */
+const customiseFee = typeof product.customiseFee === 'number' && product.customiseFee > 0
+  ? product.customiseFee
+  : CUSTOMISE_FEE_DEFAULT;
 
 const fullBleedImage = product.fullBleed?.listingImage?.asset
   ? urlFor(product.fullBleed.listingImage).width(800).url()
@@ -286,7 +307,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
             {canCustomise && (
               <a
                 id="customise-link"
-                href={`/store/${product.slug}/customise`}
+                href={customiseHref}
                 data-classic={customisable.classic ? '1' : ''}
                 data-full-bleed={customisable.fullBleed ? '1' : ''}
                 class="btn-secondary w-full text-lg text-center block mb-4"
@@ -295,7 +316,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
               </a>
             )}
             {canCustomise && (
-              <p class="font-source text-gray-400 text-xs mb-4">
+              <p id="customise-note" class="font-source text-gray-400 text-xs mb-4">
                 Same artwork, your wording &mdash; the masthead, title, captions and colours.
                 You&rsquo;ll approve a proof before we print.
               </p>
@@ -495,6 +516,20 @@ const seoDesc = product.seo?.metaDescription || product.description;
     /* The Customise link follows the style being shown: the two styles are two
        different designs, and only one of them may have a scene to reopen. */
     const customiseLink = document.getElementById('customise-link') as HTMLAnchorElement | null;
+    const customiseNote = document.getElementById('customise-note') as HTMLElement | null;
+    /* The two styles are two different designs and only one of them may have a
+       scene, so the link follows the style being shown -- and is HIDDEN rather
+       than repointed when the shown style has none. Sending somebody to the
+       other style's design because this one cannot be customised would open a
+       picture they were not looking at.
+
+       Hidden with an inline display, not the hidden attribute: this element
+       carries Tailwind's `block`, and `[hidden]` and `.block` have the same
+       specificity, so which wins is decided by the order Tailwind happens to
+       emit them in. (It is .hidden at byte 13265 against .block at 13067 in
+       today's build, but that is a fact about a build, not a rule.) An inline
+       style beats both, whatever the stylesheet does next. The attribute is set
+       as well, for anything reading the page rather than painting it. */
     function syncCustomiseLink() {
       if (!customiseLink) return;
       const style = selectedStyle || 'classic';
@@ -502,6 +537,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
         ? !!customiseLink.dataset.fullBleed
         : !!customiseLink.dataset.classic;
       customiseLink.hidden = !has;
+      customiseLink.style.display = has ? '' : 'none';
+      if (customiseNote) customiseNote.style.display = has ? '' : 'none';
+      if (!has) return;
       const base = customiseLink.getAttribute('href')?.split('?')[0] || '';
       customiseLink.href = style === 'fullBleed' ? `${base}?style=fullbleed` : base;
     }

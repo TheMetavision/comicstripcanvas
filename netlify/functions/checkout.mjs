@@ -1,7 +1,9 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
-import { CLASSIC, FULL_BLEED, isStyle, styleLabel } from './_shared/artwork-styles.mjs';
+import {
+  CLASSIC, FULL_BLEED, isStyle, styleLabel, resolveCustomiseFee,
+} from './_shared/artwork-styles.mjs';
 
 // Read-only: the dataset is public, so no token is needed here and none is
 // given. Fees are content, not code -- they live on the product document so
@@ -164,24 +166,39 @@ export default async (req, context) => {
         const build = buildById[item.personalisationId];
         item.buildKind = build?.kind === 'customise' ? 'customise' : 'personalised';
 
-        /* A customised design is priced in PENCE on the product, because that
-           is the unit a £5 fee is honestly expressed in and the unit the rest
-           of this function works in. */
-        const fee = item.buildKind === 'customise'
-          ? (typeof build?.customiseFee === 'number' ? build.customiseFee / 100 : undefined)
-          : feeBySlug[item.slug];
+        /* A customised design is priced in PENCE on the product, and almost no
+           product carries a value of its own -- the field arrived with the
+           feature and nobody has filled it in. An ABSENT fee is therefore the
+           ordinary case and resolves to the shared default; a PRESENT one that
+           is not a whole number of pence above zero is somebody having typed
+           something wrong, and that is still refused rather than guessed at.
 
-        // Refuse rather than undercharge: a missing fee would silently sell
-        // bespoke artwork at the plain print price.
-        if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
-          console.error(
-            item.buildKind === 'customise'
-              ? `No customiseFee on the product behind build ${item.personalisationId} — refusing to undercharge.`
-              : `No personalisationFee on product "${item.slug}" — refusing to undercharge.`
-          );
-          return new Response(JSON.stringify({ error: 'This personalised product is not priced yet. Please contact us.' }), {
-            status: 400, headers: { 'Content-Type': 'application/json' },
-          });
+           The endpoint that priced the basket line resolves the same field
+           through the same function, so the two cannot disagree. */
+        let fee;
+        if (item.buildKind === 'customise') {
+          const resolved = resolveCustomiseFee(build?.customiseFee);
+          if (resolved.bad) {
+            console.error(
+              `customiseFee on the product behind build ${item.personalisationId} is ` +
+              `${JSON.stringify(build?.customiseFee)}, which is not a price — refusing.`
+            );
+            return new Response(JSON.stringify({ error: 'This product is not priced yet. Please contact us.' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          fee = resolved.pence / 100;
+        } else {
+          fee = feeBySlug[item.slug];
+          // Refuse rather than undercharge: a missing fee would silently sell
+          // bespoke artwork at the plain print price. There is no default for
+          // this one -- a personalisation fee is set on all three products.
+          if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
+            console.error(`No personalisationFee on product "${item.slug}" — refusing to undercharge.`);
+            return new Response(JSON.stringify({ error: 'This personalised product is not priced yet. Please contact us.' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
         }
         item.fee = fee;
         /* The style is the build's, not the browser's: a customised design was
