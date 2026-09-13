@@ -56,6 +56,17 @@ const fullBleedImage = product.fullBleed?.listingImage?.asset
   ? urlFor(product.fullBleed.listingImage).width(800).url()
   : null;
 const hasStyleChoice = !!fullBleedImage && !product.isPersonalised;
+/* What each style does to the photograph, on the buttons themselves.
+
+   Page-local rather than in ARTWORK_STYLES: that map is the two NAMES, which
+   the cart drawer and the functions share, and this is a sentence about the
+   artwork that only the product page has room for. The builder's own switcher
+   says the same thing in its own words for someone who is making one. */
+const STYLE_HINTS: Record<string, string> = {
+  classic: 'Cut-out figure on a comic burst background, framed by the masthead and captions',
+  fullBleed: 'Edge-to-edge artwork with the masthead and captions laid over it',
+};
+
 const styleImages = {
   classic: { url: mainImageUrl, alt: product.images?.[0]?.alt || product.title },
   fullBleed: {
@@ -202,14 +213,15 @@ const seoDesc = product.seo?.metaDescription || product.description;
                     <button
                       class="style-btn border-4 border-black bg-panel-dark py-3 px-2 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
                       data-style={key}
+                      title={STYLE_HINTS[key]}
+                      aria-description={STYLE_HINTS[key]}
                       style="box-shadow: 2px 2px 0 #000;">
                       {label}
                     </button>
                   ))}
                 </div>
                 <p class="font-source text-gray-400 text-xs mt-2">
-                  Two versions of the same artwork, same price. Classic is framed by the masthead
-                  and captions; full bleed runs the picture edge to edge.
+                  Available in two styles &mdash; pick the one that suits your wall.
                 </p>
               </div>
             )}
