@@ -397,7 +397,21 @@ export async function upscaleTo4K(inPath, outPath, { upscaler, spawnSync, sharpF
    canonical comparison is the URL. */
 const invokedDirectly = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (invokedDirectly) {
+  /* process.exitCode, not process.exit(). The tools hold live handles when they
+     finish -- undici's keep-alive sockets from the API call, sharp's worker
+     threads -- and killing the loop out from under a handle that is already
+     closing is what produced
+
+       Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c
+
+     after a perfectly good summary had already printed. Setting the code and
+     letting the loop drain says the same thing to the shell without racing
+     anything. unref'd handles do not hold it open, so it still exits promptly.
+
+     The catch still exits hard: something has already gone wrong enough to
+     reach here, and getting the non-zero code out matters more than a tidy
+     shutdown. */
   run(process.argv.slice(2))
-    .then((code) => process.exit(code))
+    .then((code) => { process.exitCode = code; })
     .catch((err) => { console.error('\n  cutout.mjs failed:', err.message, '\n'); process.exit(1); });
 }

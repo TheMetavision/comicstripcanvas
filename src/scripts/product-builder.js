@@ -26,6 +26,16 @@
  */
 
 import { PRICES } from '../data/products';
+/* How a photograph is prepared before it goes up to be styled. Shared with
+   tools/builder/style.mjs, because the two had drifted: a 5302px photograph
+   the shop styles happily came back from the CLI as "the model returned no
+   image", the CLI having sent the original bytes this ladder exists to avoid
+   sending. The module is pure policy and imports nothing, so it bundles into
+   this script as cheaply as a literal would. */
+import {
+  STUDIO_MAX_BYTES, STUDIO_SENDS_AS_IS, QUALITY_FLOOR,
+  BLANK_FALLBACK_SIDES, fitWithin, ladderFor, targetBytesFor, stepQuality,
+} from '../../netlify/functions/_shared/photo-input.mjs';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -1079,28 +1089,13 @@ export function initProductBuilder() {
      blank canvas, which then encodes to a small, plausible-looking, entirely
      white JPEG. So: start lower, keep ONE canvas for every rung, and check
      that the draw actually produced something. */
-  /* Pixels are cheaper to lose than quality: below about 0.75 JPEG artefacts
-     start to show, and the comic styling applied later amplifies them. So give
-     up resolution first and only trade quality once the pixel steps run out. */
-  const ENCODE_LADDER = [[4000, 0.9], [4000, 0.82], [3000, 0.82]];
-  // Aim under 4 MiB. The function hard-rejects above 5.5 MiB, and anything that
-  // still misses that after the ladder surfaces as a per-panel upload error.
-  const UPLOAD_TARGET_BYTES = 4 * 1024 * 1024;
-  /* Studio artwork has no request to fit inside -- it goes up in chunks, see
-     putChunks -- so its ceiling is the file itself. 4000px is a transport
-     limit, and applying it to the shop's own prepared artwork would quietly
-     throw away resolution nobody asked it to lose: the studio's source IS the
-     print. The rest of the ladder still applies underneath, unchanged, for a
-     file so large it genuinely has to come down. */
-  const STUDIO_MAX_BYTES = 60 * 1024 * 1024;
-  /* Already in a format the renderer reads, so there is nothing a canvas
-     round-trip could add -- only a re-compression the shop did not ask for and
-     a 138 MB backing store for a 4800 x 7200 PNG. */
-  const SENDS_AS_IS = /^image\/(png|jpeg)$/;
-  const QUALITY_FLOOR = 0.6;                      // last resort, visibly soft
-  const QUALITY_STEP = 0.06;
-  // Rungs to fall back to when a draw comes back blank, longest side in px.
-  const BLANK_FALLBACK_SIDES = [2400, 1600, 1000];
+  /* The ladder, the byte ceilings, the quality floor and the never-upscale rule
+     all live in _shared/photo-input.mjs now, imported at the top of this file.
+     They are not duplicated here: the catalogue CLI reads the same values, and
+     the whole point is that the two cannot disagree again.
+
+     What stays here is the part only a browser has: the canvas, the blank-draw
+     guard that iOS Safari needs, and the File the upload wants back. */
   let saveId = null;                 // pendingPersonalisation._id, set by the first upload
 
   /* Per-slot upload lifecycle. Previously two loose flags (s.uploading and
@@ -1245,7 +1240,7 @@ export function initProductBuilder() {
   async function encodeForUpload(file) {
     // Studio artwork that is already a PNG or a JPEG goes up exactly as it is:
     // byte for byte what the shop prepared, at whatever size it prepared it.
-    if (MODE === 'studio' && SENDS_AS_IS.test(file.type || '') && file.size <= STUDIO_MAX_BYTES) return file;
+    if (MODE === 'studio' && STUDIO_SENDS_AS_IS.test(file.type || '') && file.size <= STUDIO_MAX_BYTES) return file;
     // ONE canvas for the whole ladder. Resizing it reuses the same element and
     // lets the previous backing store go, instead of holding four at once.
     const cv = document.createElement("canvas");
@@ -1268,9 +1263,9 @@ export function initProductBuilder() {
       const MIME = keepAlpha ? "image/png" : "image/jpeg";
       /** Draw at this longest side; false if the canvas came back blank. */
       const drawAt = (maxSide) => {
-        const k = Math.min(1, maxSide / Math.max(w0, h0));   // never upscale
-        cv.width = Math.max(1, Math.round(w0 * k));
-        cv.height = Math.max(1, Math.round(h0 * k));
+        const box = fitWithin(w0, h0, maxSide);   // never upscales; see the module
+        cv.width = box.width;
+        cv.height = box.height;
         g.clearRect(0, 0, cv.width, cv.height);
         g.drawImage(im, 0, 0, cv.width, cv.height);
         return canvasDrewSomething(g, cv.width, cv.height);
@@ -1278,10 +1273,8 @@ export function initProductBuilder() {
 
       /* Studio starts at the source's own size; customer mode starts at the
          transport ceiling. Both fall through the same rungs below it. */
-      const ladder = MODE === 'studio'
-        ? [[Math.max(w0, h0), 0.95], ...ENCODE_LADDER]
-        : ENCODE_LADDER;
-      const targetBytes = MODE === 'studio' ? STUDIO_MAX_BYTES : UPLOAD_TARGET_BYTES;
+      const ladder = ladderFor(MODE, w0, h0);
+      const targetBytes = targetBytesFor(MODE);
 
       let blob = null, q = 0, drew = false, blankAt = null;
       for (const [side, quality] of ladder) {
@@ -1325,7 +1318,7 @@ export function initProductBuilder() {
          Clamping makes 0.60 the last quality actually used. */
       // Quality is a JPEG idea; there is nothing left to trade on a PNG.
       while (!keepAlpha && blob.size > targetBytes && q > QUALITY_FLOOR) {
-        q = Math.max(QUALITY_FLOOR, Math.round((q - QUALITY_STEP) * 100) / 100);
+        q = stepQuality(q);
         const encoded = await toBlob(cv, q, MIME);
         if (!encoded) break;
         blob = encoded;

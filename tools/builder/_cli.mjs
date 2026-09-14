@@ -247,7 +247,23 @@ export function classifyFailure(err) {
   const message = String(err?.message || err || '');
   const status = typeof err?.status === 'number' ? err.status : null;
 
-  const blocked = err?.blockReason || err?.finishReason || null;
+  /* A blockReason at all means the request was declined, whatever word it uses
+     for it. Matching on a list of words let blockReason "OTHER" -- which is
+     what Google actually returned for a photograph of a public figure -- fall
+     all the way through to "failed", so a refusal was reported as a fault and
+     the run exited non-zero over a decision nothing could change. */
+  if (err?.blockReason) {
+    const why = String(err.blockReason);
+    return {
+      kind: 'refused',
+      reason: /SAFETY|PROHIBITED|RECITATION|SPII/i.test(why)
+        ? `safety: ${why.toLowerCase()}`
+        : `blocked: ${why.toLowerCase()}`,
+    };
+  }
+  /* finishReason is a weaker signal -- STOP and MAX_TOKENS are not refusals --
+     so only the words that name one count here. */
+  const blocked = err?.finishReason || null;
   if (blocked && /SAFETY|PROHIBITED|BLOCK|RECITATION|SPII/i.test(String(blocked))) {
     return { kind: 'refused', reason: `safety: ${String(blocked).toLowerCase()}` };
   }

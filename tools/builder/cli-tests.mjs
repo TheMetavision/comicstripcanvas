@@ -17,7 +17,11 @@ import {
   classifyFailure, withRetry, pool, MAX_CONCURRENCY, DEFAULT_CONCURRENCY,
   slugForArtwork, styledName, STYLED_NAMES,
 } from './_cli.mjs';
-import { run as styleRun, contactSheet, HELP as STYLE_HELP } from './style.mjs';
+import { run as styleRun, contactSheet, refusalDetail, HELP as STYLE_HELP } from './style.mjs';
+import {
+  normaliseWithSharp, fitWithin, plannedSize, stepQuality, ladderFor, targetBytesFor,
+  ENCODE_LADDER, UPLOAD_TARGET_BYTES, QUALITY_FLOOR,
+} from '../../netlify/functions/_shared/photo-input.mjs';
 import {
   run as cutoutRun, findUpscaler, transparencyOf, postCutout, HELP as CUTOUT_HELP,
   UPSCALER_MISSING,
@@ -153,10 +157,20 @@ say('\n5. WHAT IS WORTH RETRYING\n');
     [new Error('read ECONNRESET'), 'transient', 'a dropped socket'],
     [new Error('fetch failed'), 'transient', 'a failed fetch'],
     [new Error('No such file'), 'failed', 'a missing file'],
+    /* What Google actually answered for a photograph of a public figure. It is
+       a refusal with an unhelpful name, and matching on a word list used to
+       drop it through to "failed". */
+    [styleErr({ blockReason: 'OTHER' }), 'refused', 'a block that will not say why'],
+    [styleErr({ finishReason: 'STOP' }), 'failed', 'a plain STOP, which refuses nothing'],
   ];
   for (const [err, want, what] of cases) {
     ok(classifyFailure(err).kind === want, `${what} -> ${want}`, classifyFailure(err).kind);
   }
+  ok(classifyFailure(styleErr({ blockReason: 'OTHER' })).reason === 'blocked: other',
+    'and it is called a block rather than a safety refusal it is not',
+    classifyFailure(styleErr({ blockReason: 'OTHER' })).reason);
+  ok(classifyFailure(styleErr({ blockReason: 'SAFETY' })).reason === 'safety: safety',
+    'while a real safety block still says safety');
 }
 
 say('\n6. BACKOFF\n');
@@ -649,6 +663,211 @@ say('\n13. SLUGS INSIDE A STYLED BATCH\n');
 
   delete process.env.CUTOUT_SERVICE_URL;
   delete process.env.CUTOUT_TOKEN;
+}
+
+/* ------------------------------ 14. the input a photograph arrives at the model as */
+
+say('\n14. INPUT NORMALISATION\n');
+{
+  /* The shop never sends a customer's photograph at its original size: the
+     browser re-encodes it to 4000px on the longest side, under 4 MiB, first.
+     The CLI sent the original bytes, and a 5302 x 2758 JPEG that styles fine
+     through the builder came back from it with no image at all. Both paths
+     read the rules out of _shared/photo-input.mjs now, so these are the rules
+     rather than one implementation of them. */
+
+  const jpegOf = (w, h) => sharp({
+    create: { width: w, height: h, channels: 3, background: { r: 90, g: 40, b: 120 } },
+  }).jpeg().toBuffer();
+
+  /* (1) the exact photograph that failed, and one far too small to touch */
+  const big = await normaliseWithSharp(await jpegOf(5302, 2758), { sharp });
+  ok(big.width === 4000 && big.height === 2081,
+    '5302x2758 goes to 4000x2081 — 4000 on the longest side',
+    `${big.width}x${big.height}`);
+  ok(big.originalWidth === 5302 && big.originalHeight === 2758,
+    'and remembers what it was', `${big.originalWidth}x${big.originalHeight}`);
+  ok(big.mimeType === 'image/jpeg' && big.quality === 0.9,
+    'as a JPEG at the ladder\u2019s first quality', `${big.mimeType} q${big.quality}`);
+  ok(big.buffer.length <= UPLOAD_TARGET_BYTES, 'inside the 4 MiB the upload aims at',
+    `${Math.round(big.buffer.length / 1024)} KB`);
+
+  const small = await normaliseWithSharp(await jpegOf(280, 362), { sharp });
+  ok(small.width === 280 && small.height === 362,
+    '280x362 is left at 280x362 — nothing is ever upscaled',
+    `${small.width}x${small.height}`);
+  ok(small.resized === false, 'and says it was not resized');
+
+  /* (2) every shape through the same rule */
+  const shapes = [
+    ['portrait', 2758, 5302, 2081, 4000],
+    ['landscape', 5302, 2758, 4000, 2081],
+    ['square, too big', 6000, 6000, 4000, 4000],
+    ['square, already inside', 3000, 3000, 3000, 3000],
+    ['very wide', 9000, 1000, 4000, 444],
+    ['exactly at the ceiling', 4000, 2500, 4000, 2500],
+  ];
+  for (const [what, w, h, ew, eh] of shapes) {
+    const r = await normaliseWithSharp(await jpegOf(w, h), { sharp });
+    ok(r.width === ew && r.height === eh, `${what}: ${w}x${h} -> ${ew}x${eh}`,
+      `${r.width}x${r.height}`);
+    /* And the pure maths agrees with what sharp actually produced, so the
+       browser -- which has only the maths -- cannot land somewhere else. */
+    const planned = plannedSize(w, h);
+    ok(planned.width === r.width && planned.height === r.height,
+      `  and plannedSize said so before anything was encoded`,
+      `${planned.width}x${planned.height}`);
+  }
+
+  ok(fitWithin(5302, 2758, 4000).width === 4000 && fitWithin(100, 50, 4000).width === 100,
+    'fitWithin never enlarges');
+  ok(stepQuality(0.64) === QUALITY_FLOOR, 'the quality step lands ON the floor, not below it',
+    String(stepQuality(0.64)));
+  ok(ladderFor('customer', 9, 9).length === ENCODE_LADDER.length
+    && ladderFor('studio', 9000, 9000)[0][0] === 9000,
+    'studio starts at the source\u2019s own size, customer at the ceiling');
+  ok(targetBytesFor('studio') > targetBytesFor('customer'), 'and has its own ceiling');
+
+  /* (3) style.mjs sends the prepared bytes, not the file */
+  const NORM = path.join(TMP, 'norm-src');
+  fs.mkdirSync(NORM, { recursive: true });
+  fs.writeFileSync(path.join(NORM, 'george-michael.jpg'), await jpegOf(5302, 2758));
+  const styledPng = await sharp({ create: { width: 8, height: 12, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+    .png().toBuffer();
+
+  let sent = null;
+  await styleRun(['--in', NORM, '--out', path.join(TMP, 'norm-out')], {
+    styleImage: async (args) => {
+      sent = { ...args, px: await sharp(args.buffer).metadata() };
+      return { buffer: styledPng, mimeType: 'image/png', width: 100, height: 150, model: 'stub', ms: 5 };
+    },
+    sleep: async () => {}, log: quiet, error: quiet,
+  });
+  ok(sent && sent.px.width === 4000 && sent.px.height === 2081,
+    'the model is shown 4000x2081, not 5302x2758',
+    sent ? `${sent.px.width}x${sent.px.height}` : 'nothing was sent');
+  ok(sent.mimeType === 'image/jpeg', 'as a JPEG', sent && sent.mimeType);
+  ok(sent.aspectRatio === '16:9', 'at the ratio read off what is being sent', sent && sent.aspectRatio);
+  const nMeta = JSON.parse(fs.readFileSync(path.join(TMP, 'norm-out', 'george-michael', 'meta.json'), 'utf8'));
+  ok(nMeta.sourcePx.join('x') === '5302x2758', 'meta.json records the original size',
+    nMeta.sourcePx.join('x'));
+  ok(nMeta.sentPx.join('x') === '4000x2081', 'and the size actually sent', nMeta.sentPx.join('x'));
+  ok(nMeta.sentMimeType === 'image/jpeg' && nMeta.sentQuality === 0.9 && nMeta.sentBytes > 0,
+    'and how it was encoded', `${nMeta.sentMimeType} q${nMeta.sentQuality} ${nMeta.sentBytes}B`);
+
+  /* (4) a batch where everything fails still reports */
+  const THREE = path.join(TMP, 'three-src');
+  fs.mkdirSync(THREE, { recursive: true });
+  for (const n of ['one', 'two', 'three']) {
+    fs.writeFileSync(path.join(THREE, `${n}.jpg`), await jpegOf(600, 400));
+  }
+  const allFailOut = path.join(TMP, 'all-fail');
+  const failLines = [];
+  let thrown = null;
+  let code = null;
+  try {
+    code = await styleRun(['--in', THREE, '--out', allFailOut, '--concurrency', '1'], {
+      styleImage: async () => { throw new Error('the wheels came off'); },
+      sleep: async () => {},
+      log: (l) => failLines.push(String(l)), error: (l) => failLines.push(String(l)),
+    });
+  } catch (e) { thrown = e; }
+  const failText = failLines.join('\n');
+  ok(thrown === null, 'three failures out of three does not throw',
+    thrown ? `${thrown.code || ''} ${thrown.message}` : '');
+  ok(!/ENOENT/.test(failText + String(thrown && thrown.message)),
+    'nothing goes looking for a folder that was never created');
+  ok(code === 1, 'and the run exits non-zero', String(code));
+  ok(/0 succeeded, 0 skipped, 0 refused, 3 failed/.test(failText), 'the summary is still printed',
+    (failText.match(/Styling: .*/) || [''])[0]);
+  ok(fs.existsSync(allFailOut), 'the output folder exists even though nothing was written to it');
+  const failRuns = fs.readdirSync(path.join(allFailOut, '_runs'));
+  ok(failRuns.length === 1, 'and the run log was written', failRuns.join(','));
+  const failLog = JSON.parse(fs.readFileSync(path.join(allFailOut, '_runs', failRuns[0]), 'utf8'));
+  ok(failLog.rows.length === 3 && failLog.rows.every((r) => r.result === 'failed'),
+    'with all three failures in it', failLog.rows.map((r) => r.result).join(','));
+  ok(/Nothing styled yet/.test(fs.readFileSync(path.join(allFailOut, '_contact-sheet.html'), 'utf8')),
+    'the contact sheet says so rather than dying on the empty folder');
+
+  /* (5) one of three fails; the other two are written and counted */
+  const mixedOut = path.join(TMP, 'one-fail');
+  const mixedLines = [];
+  let n = 0;
+  const mixedCode = await styleRun(['--in', THREE, '--out', mixedOut, '--concurrency', '1'], {
+    styleImage: async () => {
+      n++;
+      if (n === 2) throw new Error('just this one');
+      return { buffer: styledPng, mimeType: 'image/png', width: 100, height: 150, model: 'stub', ms: 5 };
+    },
+    sleep: async () => {},
+    log: (l) => mixedLines.push(String(l)), error: (l) => mixedLines.push(String(l)),
+  });
+  const mixedText = mixedLines.join('\n');
+  ok(mixedCode === 1, 'one failure still makes the run non-zero', String(mixedCode));
+  ok(/2 succeeded, 0 skipped, 0 refused, 1 failed/.test(mixedText), 'and the counts are right',
+    (mixedText.match(/Styling: .*/) || [''])[0]);
+  const written = fs.readdirSync(mixedOut).filter((d) => !d.startsWith('_'));
+  ok(written.length === 2, 'the two that worked are on disk', written.join(', '));
+  ok(written.every((d) => fs.existsSync(path.join(mixedOut, d, 'styled-2k.png'))),
+    'each with its picture');
+
+  /* (6) a refusal says what the model actually said */
+  const refusedOut = path.join(TMP, 'refused-detail');
+  const refLines = [];
+  let refCalls = 0;
+  const refCode = await styleRun(['--in', NORM, '--out', refusedOut], {
+    styleImage: async () => {
+      refCalls++;
+      throw Object.assign(new Error('The model returned no image'), {
+        finishReason: 'IMAGE_SAFETY',
+        finishMessage: 'Generation stopped by the image safety filter',
+        blockReason: 'PROHIBITED_CONTENT',
+        safetyRatings: [
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' },
+        ],
+        modelText: "I can't create images that depict a real person.",
+      });
+    },
+    sleep: async () => {}, log: (l) => refLines.push(String(l)), error: (l) => refLines.push(String(l)),
+  });
+  const refText = refLines.join('\n');
+  ok(refCalls === 1, 'a refusal is asked exactly once — it is an answer, not a wobble',
+    String(refCalls));
+  ok(refCode === 0, 'and a refused batch is not a failed run', String(refCode));
+  const refRuns = fs.readdirSync(path.join(refusedOut, '_runs'));
+  const refLog = JSON.parse(fs.readFileSync(path.join(refusedOut, '_runs', refRuns[0]), 'utf8'));
+  const err = refLog.rows[0].error;
+  ok(refLog.rows[0].result === 'refused', 'recorded as a refusal', refLog.rows[0].result);
+  ok(err.finishReason === 'IMAGE_SAFETY', 'the run log keeps the finishReason', err.finishReason);
+  ok(err.blockReason === 'PROHIBITED_CONTENT', 'and the block reason', err.blockReason);
+  ok(err.finishMessage === 'Generation stopped by the image safety filter', 'and the finish message');
+  ok(err.safety.join(' | ') === 'HARM_CATEGORY_DANGEROUS_CONTENT: HIGH (blocked)',
+    'and the rating that tripped, without the four that did not', err.safety.join(' | '));
+  ok(/real person/.test(err.modelText || ''), 'and what the model said instead of drawing',
+    err.modelText);
+  ok(/IMAGE_SAFETY/.test(refText) && /PROHIBITED_CONTENT/.test(refText),
+    'the short form is on screen too',
+    (refText.match(/.*finish=.*/) || [''])[0].trim());
+
+  /* An empty response is a different thing from a refusal, and must not read
+     like one. */
+  const empty = refusalDetail(new Error('The model returned no image'));
+  ok(/empty response/.test(empty.short), 'nothing at all says so in as many words', empty.short);
+
+  /* (7) a genuine wobble is still retried */
+  const flakyOut = path.join(TMP, 'flaky-norm');
+  let tries = 0;
+  const flakyCode = await styleRun(['--in', NORM, '--out', flakyOut], {
+    styleImage: async () => {
+      tries++;
+      if (tries < 3) throw Object.assign(new Error('upstream wobble'), { status: 503 });
+      return { buffer: styledPng, mimeType: 'image/png', width: 100, height: 150, model: 'stub', ms: 5 };
+    },
+    sleep: async () => {}, log: quiet, error: quiet,
+  });
+  ok(tries === 3, 'a 503 is tried again until it works', String(tries));
+  ok(flakyCode === 0, 'and the run comes out clean', String(flakyCode));
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });
