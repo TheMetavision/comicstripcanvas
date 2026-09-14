@@ -139,6 +139,35 @@ async function savePhoto(form, file, req, context) {
   const creating = !given;
   const id = creating ? newId() : given;
 
+  /* ---- what the request says ----
+     Every field read off the form, in one place, before anything acts on any of
+     it. These used to be scattered down the function, each one declared just
+     above the first thing that wanted it -- which reads naturally right up to
+     the moment a second reader appears higher up, and then it is a temporal
+     dead zone rather than a mistake anyone can see. Reading the request, then
+     deciding, then storing, in that order, is what makes that impossible
+     rather than merely absent. */
+
+  /* The template decides the style size, and it is not known here: the builder
+     posts the recipe at Add to basket, long after the first photo goes up. An
+     optional templateId on the upload lets it be right from the first call;
+     without one this defaults to 2K and finalise() corrects the field later.
+
+     It is also STORED, not just read. Styling starts within seconds of this
+     upload and the cutout step asks the document which template it is for --
+     so a templateId that only appears at Add to basket arrives long after the
+     answer was needed, and every cover quietly skipped its cutout.
+
+     And it decides which daily allowance this build spends from: a cover and a
+     strip are not the same amount of work, so they do not share a counter. */
+  const templateId = str(form.get('templateId'), 40) || null;
+
+  const consentRaw = form.get('consentAt');
+  const consentAt =
+    typeof consentRaw === 'string' && !Number.isNaN(Date.parse(consentRaw))
+      ? new Date(consentRaw).toISOString()
+      : new Date().toISOString();
+
   /* Per-visitor spend guards, before a byte is stored. Checked here rather than
      at the styling trigger because the upload is the thing being asked for: a
      photograph stored and then refused a style is a build the customer cannot
@@ -220,23 +249,6 @@ async function savePhoto(form, file, req, context) {
      into several panels of a strip is one model call, not twelve -- which on a
      12-panel strip is the difference between 36 seconds and seven minutes. */
   const sha256 = crypto.createHash('sha256').update(Buffer.from(buf)).digest('hex');
-
-  /* The template decides the style size, and it is not known here: the builder
-     posts the recipe at Add to basket, long after the first photo goes up. An
-     optional templateId on the upload lets it be right from the first call;
-     without one this defaults to 2K and finalise() corrects the field later.
-
-     It is also STORED, not just read. Styling starts within seconds of this
-     upload and the cutout step asks the document which template it is for --
-     so a templateId that only appears at Add to basket arrives long after the
-     answer was needed, and every cover quietly skipped its cutout. */
-  const templateId = str(form.get('templateId'), 40) || null;
-
-  const consentRaw = form.get('consentAt');
-  const consentAt =
-    typeof consentRaw === 'string' && !Number.isNaN(Date.parse(consentRaw))
-      ? new Date(consentRaw).toISOString()
-      : new Date().toISOString();
 
   /* The blob goes up before the document, and if the document write fails the
      blob is taken back down again.
