@@ -1042,6 +1042,124 @@ say('\n17. STYLING: THE REQUESTS THAT GO NOWHERE\n');
   ok(res.status === 404, 'a panel that does not exist on it is a 404', String(res.status));
 }
 
+/* ================================================ replacing a panel's photo */
+
+say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
+{
+  /* The behaviour that looks like data loss and is not.
+   *
+   * A customer who tries five photographs on one cover produces ONE build with
+   * ONE row and ONE blob per key, overwritten each time -- not five of
+   * anything. That is deliberate (the key is deterministic per panel, and the
+   * patch unsets the row before appending it), but it is invisible from
+   * outside, and looking for the last two generations after five of them and
+   * finding a single record dated to the first is exactly how it reads as
+   * nothing having been saved.
+   *
+   * Nothing asserted this. Section 1 uploads once, section 2 uploads to two
+   * DIFFERENT panels. So the one case that actually surprises anybody was the
+   * one case with no test, and a change that made replacement accumulate --
+   * dropping the unset, say -- would have gone out green.
+   *
+   * This runs the whole loop the customer runs: upload, style, replace, style.
+   */
+  resetAll();
+  genaiStub.setImage(STYLED_PNG);
+
+  const first = await upload({ templateId: 'cover', panelId: 'art' });
+  ok(first.status === 200, 'the first photo is accepted', String(first.status));
+  const id = first.body.id;
+
+  genaiStub.willReturnImage();
+  let styled = await runStyle(id, 'art');
+  ok(styled.status === 200, 'and styled', `${styled.status} ${styled.text}`);
+  ok(sanityStub.docs.get(id).styleCalls === 1, 'one style call so far',
+    String(sanityStub.docs.get(id).styleCalls));
+
+  const afterFirst = {
+    keys: Object.keys(blobStub.dump('personalisation')).sort(),
+    raw: blobStub.dump('personalisation')[`personalisation/${id}/art.jpg`],
+    row: panelOf(id, 'art'),
+  };
+
+  /* The same panel again, on the same build -- which is what Replace does. */
+  const second = await upload({ templateId: 'cover', panelId: 'art', id });
+  ok(second.status === 200, 'the replacement is accepted', String(second.status));
+  ok(second.body.id === id, 'on the same build, not a new one', second.body.id);
+
+  genaiStub.willReturnImage();
+  styled = await runStyle(id, 'art');
+  ok(styled.status === 200, 'and is styled too', `${styled.status} ${styled.text}`);
+
+  const doc = sanityStub.docs.get(id) || {};
+
+  /* ---- ONE of everything ---- */
+  ok(doc.photos?.length === 1, 'the document still has ONE photos row',
+    `${doc.photos?.length} — ${(doc.photos || []).map((p) => p.panel).join(', ')}`);
+  ok(doc.photos?.[0]?.panel === 'art', 'and it is the panel that was replaced',
+    doc.photos?.[0]?.panel);
+  ok(doc.photoKeys?.length === 1, 'and ONE photoKey', String(doc.photoKeys?.length));
+  ok(doc.photoKeys?.[0] === `personalisation/${id}/art.jpg`,
+    'which is the deterministic key for that panel', doc.photoKeys?.[0]);
+
+  const keysNow = Object.keys(blobStub.dump('personalisation')).sort();
+  ok(keysNow.length === afterFirst.keys.length,
+    'the blob store holds no more keys than it did before the replacement',
+    `${afterFirst.keys.length} -> ${keysNow.length}`);
+  ok(keysNow.join(',') === afterFirst.keys.join(','),
+    'and exactly the same ones', keysNow.join(', '));
+  ok(keysNow.filter((k) => k === `personalisation/${id}/art.jpg`).length === 1,
+    'one raw photo key, not two');
+  ok(keysNow.filter((k) => k.includes('styled-')).length === 1,
+    'and one styled key', keysNow.filter((k) => k.includes('styled-')).join(', '));
+
+  /* ---- but the CONTENT was replaced, not left alone ---- */
+  ok(blobStub.dump('personalisation')[`personalisation/${id}/art.jpg`] !== undefined,
+    'the raw photo is still there');
+  ok(panelOf(id, 'art').styleStatus === 'done',
+    'the row is done again after the second styling', panelOf(id, 'art').styleStatus);
+
+  /* ---- and the spend is counted TWICE, because it was two generations ---- */
+  ok(doc.styleCalls === 2, 'styleCalls counted both generations — overwriting is not free',
+    String(doc.styleCalls));
+  ok(genaiStub.calls.length === 2, 'the model really was called twice',
+    String(genaiStub.calls.length));
+
+  const counters = blobStub.dump('spend-guard');
+  const coverCounter = Object.keys(counters).find((k) => k.includes('/style-covers.json'));
+  const spent = coverCounter
+    ? Object.values(JSON.parse(counters[coverCounter]).hours || {}).reduce((a, b) => a + b, 0)
+    : 0;
+  ok(spent === 2, "and both came out of the visitor's cover allowance", String(spent));
+
+  /* ---- a THIRD, to be sure it is not a two-only accident ---- */
+  await upload({ templateId: 'cover', panelId: 'art', id });
+  genaiStub.willReturnImage();
+  await runStyle(id, 'art');
+  const after3 = sanityStub.docs.get(id);
+  ok(after3.photos.length === 1 && after3.photoKeys.length === 1,
+    'a third replacement is still one row and one key',
+    `${after3.photos.length} / ${after3.photoKeys.length}`);
+  ok(after3.styleCalls === 3, 'with three calls counted', String(after3.styleCalls));
+  ok(Object.keys(blobStub.dump('personalisation')).length === keysNow.length,
+    'and still the same blob keys', String(Object.keys(blobStub.dump('personalisation')).length));
+
+  /* ---- replacing one panel of a strip leaves the others alone ---- */
+  resetAll();
+  genaiStub.setImage(STYLED_PNG);
+  const strip = await upload({ templateId: 'strip', panelId: 'panel-01' });
+  await upload({ templateId: 'strip', panelId: 'panel-02', id: strip.body.id });
+  await upload({ templateId: 'strip', panelId: 'panel-01', id: strip.body.id });
+  const stripDoc = sanityStub.docs.get(strip.body.id);
+  ok(stripDoc.photos.length === 2, 'two panels, one of them replaced, is still two rows',
+    stripDoc.photos.map((p) => p.panel).join(', '));
+  ok(stripDoc.photos.filter((p) => p.panel === 'panel-01').length === 1,
+    'the replaced panel appears once');
+  ok(stripDoc.photoKeys.length === 2, 'and two keys', String(stripDoc.photoKeys.length));
+  ok(Object.keys(blobStub.dump('personalisation')).length === 2,
+    'and two blobs', String(Object.keys(blobStub.dump('personalisation')).length));
+}
+
 globalThis.fetch = realFetch;
 say(`\n${pass} passed, ${fail} failed.`);
 process.exitCode = fail ? 1 : 0;
