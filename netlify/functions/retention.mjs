@@ -41,17 +41,29 @@ import { sweepGuardCounters } from './_shared/spend-guard.mjs';
  * run retries rather than orphaning blobs behind a deleted document.
  */
 
-const PHOTO_STORE = 'personalisation';
-const RENDER_STORE = 'renders';
+import { deleteBuild, listBuildBlobs, PHOTO_STORE, RENDER_STORE } from './_shared/delete-build.mjs';
+
+export { PHOTO_STORE, RENDER_STORE };
 
 const DISPATCHED_RETENTION_DAYS = 90;
 const ABANDONED_RETENTION_DAYS = 30;
 /* A blob under personalisation/<id>/ that no document references is garbage:
    either a create that failed after the blob went up, or a document deletion
-   whose blob delete did not complete. The age guard is only there to avoid
-   racing an upload whose document has not been written yet -- a window of
-   milliseconds, so seven days is generous by any measure. */
-const ORPHAN_RETENTION_DAYS = 7;
+   whose blob delete did not complete.
+
+   WHAT THE GRACE PERIOD IS FOR, since it was seven days and read as though it
+   were a retention policy: it is not one. It exists for exactly one race --
+   personalise-save writes the blob and then the document, so for the
+   milliseconds between those two writes a perfectly good upload has no
+   document and looks like an orphan. Nothing else needs protecting: an orphan
+   is by definition unreachable, so no customer and no order can be waiting on
+   it, and keeping it longer only means keeping photographs nobody can use.
+
+   A day is four orders of magnitude more than that race needs and still leaves
+   a whole nightly run of slack if the clock is off. Seven days meant a deleted
+   build's photographs sat in the store for a week after the last thing that
+   could reach them had gone. */
+const ORPHAN_RETENTION_DAYS = 1;
 /* Studio uploads are a transport buffer, not a record. Once studio-render has
    made the print master the upload is a duplicate of artwork already stored at
    full resolution, and the renderer deletes it itself -- so anything still
@@ -69,7 +81,9 @@ const PROTECTED = new Set([
 const ABANDONED = new Set(['draft', 'awaiting_payment']);
 
 const DAY = 24 * 60 * 60 * 1000;
-const isId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
+/* isId lived here and guarded the blob listing. It moved into
+   _shared/delete-build.mjs as isBuildId, with the listing it guards, so the
+   rule and the thing it protects cannot drift apart. */
 
 const QUERY = `*[_type == "pendingPersonalisation"]{
   _id,
@@ -396,31 +410,20 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
          -- and following those would delete the product's artwork because one
          customer's build aged out. Nothing here looks at them, and the guard
          below means nothing here can start to by accident. */
-      const keys = [];
-      for (const [store, prefix] of [
-        [PHOTO_STORE, `personalisation/${id}/`],
-        [RENDER_STORE, `renders/${id}/`],
-      ]) {
-        if (!isId(id)) continue;   // legacy ids never had blobs under these prefixes
-        const { blobs } = await stores[store].list({ prefix });
-        for (const b of blobs) {
-          if (!b.key.startsWith(prefix)) continue;   // belt and braces; list() already scopes
-          keys.push({ store, key: b.key });
-        }
-      }
+      /* Blobs first, then the document, through the one helper that knows
+         that -- see _shared/delete-build.mjs. This loop used to carry the
+         order itself, and it was the only one of three callers that had it
+         right. */
+      const { blobs: deletedKeys } = await deleteBuild(id, { sanity, stores, dryRun });
 
-      if (dryRun) {
-        console.log(`${label}: would delete ${id} (${rule}: ${reason}) and ${keys.length} blob(s)` +
-          (keys.length ? ` -- ${keys.map((k) => k.key).join(', ')}` : ''));
-      } else {
-        for (const { store, key } of keys) await stores[store].delete(key);
-        await sanity.delete(id);
-        console.log(`retention: deleted ${id} (${rule}: ${reason}) and ${keys.length} blob(s)` +
-          (keys.length ? ` -- ${keys.map((k) => k.key).join(', ')}` : ''));
-      }
+      console.log(
+        `${label}: ${dryRun ? 'would delete' : 'deleted'} ${id} (${rule}: ${reason}) `
+        + `and ${deletedKeys.length} blob(s)`
+        + (deletedKeys.length ? ` -- ${deletedKeys.join(', ')}` : '')
+      );
 
-      report.deleted.push({ id, rule, reason, blobs: keys.map((k) => k.key) });
-      report.blobsDeleted += keys.length;
+      report.deleted.push({ id, rule, reason, blobs: deletedKeys });
+      report.blobsDeleted += deletedKeys.length;
     } catch (err) {
       // Leave the document in place: a failed blob delete followed by a
       // successful document delete would orphan the photos permanently, with

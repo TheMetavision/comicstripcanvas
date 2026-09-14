@@ -3,6 +3,7 @@ import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { emailHeader } from './_shared/email.mjs';
 import { FULL_BLEED, styleOr, styleLabel } from './_shared/artwork-styles.mjs';
+import { deleteBuild } from './_shared/delete-build.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -452,17 +453,22 @@ async function fulfilOrder(session) {
 
       console.log(`${isPersonalised ? 'Personalised o' : 'O'}rder ${orderNumber} created in Sanity for session ${session.id}`);
 
-      // Now that the order is safely persisted, remove the pending
-      // personalisation doc (its data now lives on the order). Deferred to
-      // here so a failed/retried run never deletes the brief before the
-      // order exists.
-      if (personalisationRef) {
-        try {
-          await sanity.delete(personalisationRef);
-        } catch (err) {
-          console.error(`Could not delete pending personalisation ${personalisationRef}:`, err.message);
-        }
-      }
+      /* The old flow deleted the pending document here, because it had just
+         copied everything it held onto the order and the document was spent.
+
+         A BUILDER BUILD MUST NOT BE DELETED HERE, and this is why the same
+         line is not simply re-pointed at the new ids: the build is not a copy
+         of anything, it is the source the print file is rendered FROM, and the
+         render has not run yet when this line is reached. settlePersonalisations
+         below marks each build `paid` instead, which is in retention's
+         PROTECTED set, so it survives until it has been rendered, approved and
+         dispatched -- and retention collects it then.
+
+         Nothing reaches this line any longer: personalisationRef comes only
+         from session metadata that the deleted /personalise endpoint used to
+         set. Left as a comment rather than as an `if` that can never be true,
+         because the next person to read it deserves the reason rather than the
+         wreckage. */
 
       // Builder-made lines: mark each build paid and start its render. Runs after
       // the order is persisted so a retry can never render against no order.
@@ -756,17 +762,53 @@ export default async (req, context) => {
     }
 
     if (event.type === 'checkout.session.expired') {
-      // M2: abandoned checkout — promptly bin the pending personalisation doc
-      // (it holds customer photos) instead of waiting for the periodic sweep.
-      const ref = event.data.object?.metadata?.personalisationRef;
-      if (ref) {
+      /* An abandoned checkout. The photographs are the customer's and they are
+         not coming back for them, so they go now rather than sitting until the
+         thirty-day sweep notices.
+
+         Resolved from the LINE ITEMS, the same way fulfilOrder finds them.
+         This used to read session.metadata.personalisationRef, which only the
+         deleted /personalise endpoint ever set -- so from the day the builder
+         replaced it this handler has quietly done nothing at all, and every
+         abandoned build has waited out the full thirty days instead. */
+      const session = event.data.object;
+      let ids = [];
+      try {
+        const lines = await stripe.checkout.sessions.listLineItems(session.id, {
+          limit: 100, expand: ['data.price.product'],
+        });
+        ids = [...new Set(
+          (lines?.data || [])
+            .map((l) => l.price?.product?.metadata?.personalisationId)
+            .filter(Boolean)
+        )];
+      } catch (err) {
+        console.error(`Expired session ${session.id}: could not read its line items:`, err.message);
+      }
+
+      /* And the old field, still honoured: an order placed through the old flow
+         cannot arrive any more, but reading one costs nothing and throwing it
+         away would be the same mistake this handler is being fixed for. */
+      const legacyRef = session.metadata?.personalisationRef;
+      if (legacyRef && !ids.includes(legacyRef)) ids.push(legacyRef);
+
+      for (const id of ids) {
         try {
-          await sanity.delete(ref);
-          console.log(`Expired session — deleted pending personalisation ${ref}`);
+          /* Blobs first, then the document. A failure here leaves the whole
+             build intact for retention rather than half of it for nobody. */
+          const { blobs } = await deleteBuild(id, { sanity });
+          console.log(
+            `Expired session ${session.id} — deleted pending personalisation ${id} `
+            + `and ${blobs.length} blob(s)`
+          );
         } catch (err) {
-          console.error(`Could not delete pending personalisation ${ref} on expiry:`, err.message);
+          console.error(
+            `Could not delete pending personalisation ${id} on expiry (left for retention):`,
+            err.message
+          );
         }
       }
+      if (!ids.length) console.log(`Expired session ${session.id} — no personalisation to delete.`);
       return new Response('Expired session handled', { status: 200 });
     }
   } catch (err) {

@@ -53,6 +53,8 @@ const stylePhoto = (await import(`${ROOT}netlify/functions/style-photo-backgroun
 const genaiStub = await import('./_stubs/google-genai.mjs');
 const sharp = (await import('sharp')).default;
 const guard = await import(`${ROOT}netlify/functions/_shared/spend-guard.mjs`);
+const { deleteBuild } = await import(`${ROOT}netlify/functions/_shared/delete-build.mjs`);
+const retention = await import(`${ROOT}netlify/functions/retention.mjs`);
 
 let pass = 0, fail = 0;
 const ok = (c, l, e = '') => {
@@ -1158,6 +1160,251 @@ say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
   ok(stripDoc.photoKeys.length === 2, 'and two keys', String(stripDoc.photoKeys.length));
   ok(Object.keys(blobStub.dump('personalisation')).length === 2,
     'and two blobs', String(Object.keys(blobStub.dump('personalisation')).length));
+}
+
+/* =============================================== deleting a build, in order */
+
+say('\n19. deleteBuild: BLOBS FIRST, THEN THE DOCUMENT\n');
+{
+  /* The order is the whole point. A blob is only reachable through the document
+     that names it, so document-first-then-fail leaves customer photographs in
+     the store with nothing to find them by. */
+  resetAll();
+  const ID = `pp-${'7'.repeat(32)}`;
+  const OTHER = `pp-${'8'.repeat(32)}`;
+  const photos = blobStub.getStore('personalisation');
+  const renders = blobStub.getStore('renders');
+  await photos.set(`personalisation/${ID}/art.jpg`, 'raw');
+  await photos.set(`personalisation/${ID}/styled-art.jpg`, 'styled');
+  await photos.set(`personalisation/${OTHER}/art.jpg`, 'someone else');
+  await renders.set(`renders/${ID}/print.png`, 'print');
+  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(OTHER, { _id: OTHER, _type: 'pendingPersonalisation' });
+
+  /* Watch the order rather than the outcome: both end up gone either way, and
+     only the sequence says whether a half-failure would litter. */
+  const order = [];
+  const watched = {
+    personalisation: { ...photos, async delete(k) { order.push(`blob:${k}`); return photos.delete(k); } },
+    renders: { ...renders, async delete(k) { order.push(`blob:${k}`); return renders.delete(k); } },
+  };
+  const watchedSanity = {
+    async delete(id) { order.push(`doc:${id}`); sanityStub.docs.delete(id); },
+  };
+
+  const r = await deleteBuild(ID, { sanity: watchedSanity, stores: watched });
+  ok(r.blobs.length === 3, 'both prefixes are collected — photos and renders',
+    r.blobs.join(', '));
+  ok(order.filter((o) => o.startsWith('blob:')).length === 3, 'three blobs went');
+  ok(order[order.length - 1] === `doc:${ID}`, 'and the DOCUMENT went last', order.join(' | '));
+  ok(order.slice(0, -1).every((o) => o.startsWith('blob:')),
+    'with nothing after it — a failure mid-way leaves the record, not the litter');
+  ok(!sanityStub.docs.has(ID), 'the build is gone');
+  ok(sanityStub.docs.has(OTHER), "and the next build's document is untouched");
+  ok(Object.keys(blobStub.dump('personalisation')).length === 1,
+    "and so are its photographs", Object.keys(blobStub.dump('personalisation')).join(', '));
+
+  /* Safe when the blobs have already gone -- a half-finished earlier attempt,
+     or retention having swept them as orphans first. */
+  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
+  const again = await deleteBuild(ID, { sanity: watchedSanity, stores: watched });
+  ok(again.blobs.length === 0 && again.deleted === true,
+    'a build whose blobs are already gone still loses its document',
+    `${again.blobs.length} blob(s)`);
+
+  /* And safe on an id that never had blobs under these prefixes. */
+  sanityStub.docs.set('legacy-thing', { _id: 'legacy-thing', _type: 'pendingPersonalisation' });
+  const legacy = await deleteBuild('legacy-thing', { sanity: watchedSanity, stores: watched });
+  ok(legacy.blobs.length === 0 && legacy.deleted === true,
+    'a legacy id is deleted without asking the blob store anything');
+
+  /* A dry run lists and touches nothing. */
+  await photos.set(`personalisation/${ID}/art.jpg`, 'raw again');
+  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
+  const dry = await deleteBuild(ID, { sanity: watchedSanity, stores: watched, dryRun: true });
+  ok(dry.blobs.length === 1 && dry.deleted === false, 'a dry run reports without deleting',
+    `${dry.blobs.length} listed`);
+  ok(sanityStub.docs.has(ID) && blobStub.dump('personalisation')[`personalisation/${ID}/art.jpg`],
+    'and both are still there');
+}
+
+say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
+{
+  /* This handler read session.metadata.personalisationRef, which only the
+     deleted /personalise endpoint ever set -- so it has quietly done nothing
+     since the builder replaced it, and every abandoned build waited out the
+     full thirty-day sweep with the customer's photographs in it. */
+  resetAll();
+  const BUILD = `pp-${'9'.repeat(32)}`;
+  sanityStub.docs.set(BUILD, { _id: BUILD, _type: 'pendingPersonalisation', status: 'draft' });
+  const photos = blobStub.getStore('personalisation');
+  await photos.set(`personalisation/${BUILD}/art.jpg`, 'the customer photo');
+  await photos.set(`personalisation/${BUILD}/styled-art.jpg`, 'the styled one');
+
+  /* An expired session whose LINE ITEM carries the build, exactly as checkout
+     stamps it -- and with no session-level metadata at all, exactly as checkout
+     creates it. */
+  const session = paidSession({ id: 'cs_test_abandoned', payment_status: 'unpaid', metadata: {} });
+  stripeStub.sessions.push({
+    ...session,
+    line_items: [{
+      price_data: {
+        currency: 'gbp', unit_amount: 1999,
+        product_data: {
+          name: 'Gizmo',
+          metadata: { productId: 'p', slug: 'gizmo', personalisationId: BUILD },
+        },
+      },
+      quantity: 1,
+    }],
+  });
+
+  const r = await postWebhook(stripeEvent('checkout.session.expired', session));
+  ok(r.status === 200, 'the expired event is acknowledged', String(r.status));
+  ok(!sanityStub.docs.has(BUILD), 'the abandoned build is deleted');
+  ok(Object.keys(blobStub.dump('personalisation')).length === 0,
+    "AND the customer's photographs go with it",
+    Object.keys(blobStub.dump('personalisation')).join(', '));
+
+  /* The old field still works, for an order that could only have come from the
+     flow that is gone. */
+  resetAll();
+  const LEGACY = `pp-${'0'.repeat(31)}a`;
+  sanityStub.docs.set(LEGACY, { _id: LEGACY, _type: 'pendingPersonalisation' });
+  await blobStub.getStore('personalisation').set(`personalisation/${LEGACY}/art.jpg`, 'old');
+  const legacySession = paidSession({
+    id: 'cs_test_legacy_expired', metadata: { personalisationRef: LEGACY },
+  });
+  stripeStub.sessions.push({ ...legacySession, line_items: [] });
+  await postWebhook(stripeEvent('checkout.session.expired', legacySession));
+  ok(!sanityStub.docs.has(LEGACY), 'a legacy personalisationRef is still honoured');
+  ok(Object.keys(blobStub.dump('personalisation')).length === 0, 'with its blobs too');
+
+  /* An ordinary abandoned basket has nothing to delete and says so. */
+  resetAll();
+  const plain = paidSession({ id: 'cs_test_plain_expired', metadata: {} });
+  stripeStub.sessions.push({ ...plain, line_items: [{
+    price_data: { currency: 'gbp', unit_amount: 999, product_data: { name: 'Gizmo', metadata: {} } },
+    quantity: 1,
+  }] });
+  const plainRes = await postWebhook(stripeEvent('checkout.session.expired', plain));
+  ok(plainRes.status === 200, 'an expired basket with no personalisation is fine',
+    String(plainRes.status));
+
+  /* A PAID order must NOT lose its build here -- the render has not run yet. */
+  resetAll();
+  const PAID = `pp-${'1'.repeat(31)}b`;
+  sanityStub.docs.set(PAID, {
+    _id: PAID, _type: 'pendingPersonalisation', status: 'draft',
+    photos: [{ panel: 'art', styleStatus: 'done', styledKey: 'k' }],
+  });
+  const paid = paidSession({ id: 'cs_test_paid_keeps' });
+  stripeStub.sessions.push({
+    ...paid,
+    line_items: [{
+      price_data: {
+        currency: 'gbp', unit_amount: 1999,
+        product_data: {
+          name: 'Gizmo',
+          metadata: { productId: 'p', slug: 'gizmo', personalisationId: PAID, buildKind: 'personalised' },
+        },
+      },
+      quantity: 1,
+    }],
+  });
+  await postWebhook(stripeEvent('checkout.session.completed', paid));
+  ok(sanityStub.docs.has(PAID),
+    'a PAID build survives fulfilment — it is what the print file is rendered from');
+  ok(sanityStub.docs.get(PAID)?.status === 'paid', 'and is marked paid instead of deleted',
+    sanityStub.docs.get(PAID)?.status);
+}
+
+say('\n21. RETENTION, THROUGH THE SAME HELPER\n');
+{
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW_R = new Date('2026-09-14T00:00:00Z');
+  const ago = (days) => new Date(NOW_R.getTime() - days * DAY).toISOString();
+
+  resetAll();
+  const stores = {
+    personalisation: blobStub.getStore('personalisation'),
+    renders: blobStub.getStore('renders'),
+    studio: blobStub.getStore('studio'),
+  };
+
+  /* One build long abandoned, one fresh. Only the first should go. */
+  const OLD = `pp-${'a'.repeat(31)}1`;
+  const NEW = `pp-${'b'.repeat(31)}2`;
+  for (const [id, days] of [[OLD, 40], [NEW, 1]]) {
+    sanityStub.docs.set(id, {
+      _id: id, _type: 'pendingPersonalisation', status: 'draft', _createdAt: ago(days),
+    });
+    await stores.personalisation.set(`personalisation/${id}/art.jpg`, 'x',
+      { metadata: { uploadedAt: ago(days) } });
+    await stores.renders.set(`renders/${id}/print.png`, 'x',
+      { metadata: { uploadedAt: ago(days) } });
+  }
+
+  const report = await retention.runRetention({
+    now: NOW_R,
+    deps: { sanity: { ...sanityStub.createClient(), async delete(id) { sanityStub.docs.delete(id); } }, stores },
+  });
+
+  ok(!sanityStub.docs.has(OLD), 'a build past the abandoned window is deleted');
+  ok(sanityStub.docs.has(NEW), 'and a fresh one is kept');
+  ok(!blobStub.dump('personalisation')[`personalisation/${OLD}/art.jpg`],
+    'its photograph went with it');
+  ok(!blobStub.dump('renders')[`renders/${OLD}/print.png`], 'and its render');
+  ok(!!blobStub.dump('personalisation')[`personalisation/${NEW}/art.jpg`],
+    "and the fresh build's photograph is untouched");
+  ok(report.blobsDeleted === 2, 'the report counts both blobs', String(report.blobsDeleted));
+  ok(report.deleted.length === 1 && report.deleted[0].id === OLD,
+    'and names the build it took', JSON.stringify(report.deleted.map((d) => d.id)));
+  ok(report.orphans?.orphaned?.length === 0,
+    'the orphan sweep finds nothing left behind by it — the helper took the blobs first',
+    String(report.orphans?.orphaned?.length));
+}
+
+say('\n22. THE ORPHAN SWEEP AT ONE DAY\n');
+{
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW_R = new Date('2026-09-14T00:00:00Z');
+  const ago = (h) => new Date(NOW_R.getTime() - h * 3600_000).toISOString();
+
+  resetAll();
+  const stores = { personalisation: blobStub.getStore('personalisation') };
+
+  /* Three prefixes with no document: one from two days ago, one from two hours
+     ago, and one that is referenced. Only the first is collectable. */
+  const OLD = `pp-${'c'.repeat(31)}3`;
+  const RECENT = `pp-${'d'.repeat(31)}4`;
+  const LIVE = `pp-${'e'.repeat(31)}5`;
+  await stores.personalisation.set(`personalisation/${OLD}/art.jpg`, 'x',
+    { metadata: { uploadedAt: ago(48) } });
+  await stores.personalisation.set(`personalisation/${RECENT}/art.jpg`, 'x',
+    { metadata: { uploadedAt: ago(2) } });
+  await stores.personalisation.set(`personalisation/${LIVE}/art.jpg`, 'x',
+    { metadata: { uploadedAt: ago(72) } });
+  sanityStub.docs.set(LIVE, { _id: LIVE, _type: 'pendingPersonalisation' });
+
+  const r = await retention.sweepOrphanBlobs({
+    now: NOW_R,
+    deps: { sanity: sanityStub.createClient(), stores },
+  });
+
+  ok(r.examined === 3, 'three prefixes examined', String(r.examined));
+  ok(r.orphaned.length === 1, 'one collected', r.orphaned.map((o) => o.id).join(', '));
+  ok(r.orphaned[0]?.id === OLD, 'the one a day past its last write', r.orphaned[0]?.id);
+  ok(!blobStub.dump('personalisation')[`personalisation/${OLD}/art.jpg`], 'and it is gone');
+  ok(!!blobStub.dump('personalisation')[`personalisation/${RECENT}/art.jpg`],
+    'a prefix written two hours ago is still inside the grace period');
+  ok(!!blobStub.dump('personalisation')[`personalisation/${LIVE}/art.jpg`],
+    'and one with a live document is never an orphan at any age');
+
+  /* The grace period is for the milliseconds between personalise-save writing
+     the blob and writing the document. A day is not a retention policy. */
+  ok(r.orphaned[0]?.age === '2 days old', 'the age is reported from the newest blob',
+    r.orphaned[0]?.age);
 }
 
 globalThis.fetch = realFetch;

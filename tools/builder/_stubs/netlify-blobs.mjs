@@ -54,6 +54,12 @@ export function getStore(nameOrOpts) {
       data.set(key, { value: JSON.stringify(value), etag: `etag-${++seq}`, metadata: {} });
       return { modified: true };
     },
+    /* The orphan sweep reads uploadedAt off this to age a prefix, so the
+       metadata written by set() has to come back out. */
+    async getMetadata(key) {
+      const e = read(key);
+      return e ? { etag: e.etag, metadata: e.metadata || {} } : null;
+    },
     async delete(key) { data.delete(key); },
     async list({ prefix } = {}) {
       return {

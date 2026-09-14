@@ -145,6 +145,27 @@ export function createClient() {
           }));
       }
 
+      /* retention's two reads. The orphan sweep asks for nothing but the ids,
+         and the document sweep joins each build to its order for the dispatch
+         date -- both projected from the same seeded documents. */
+      const builds = () => [...docs.values()].filter((d) => d._type === 'pendingPersonalisation');
+      if (/^\*\[_type == "pendingPersonalisation"\]\._id$/.test(q)) {
+        return builds().map((d) => d._id);
+      }
+      if (/^\*\[_type == "pendingPersonalisation"\]\{/.test(q)) {
+        return builds().map((d) => {
+          const order = d.orderId ? docs.get(d.orderId) : null;
+          return {
+            _id: d._id,
+            _createdAt: d._createdAt ?? null,
+            status: d.status ?? null,
+            orderId: d.orderId ?? null,
+            orderStatus: order?.status ?? null,
+            orderDispatchedAt: order?.shippingEmailSentAt ?? null,
+          };
+        });
+      }
+
       throw new Error(`stub: no answer for query ${q.slice(0, 160)}`);
     },
     async create(doc) {
