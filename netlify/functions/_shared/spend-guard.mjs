@@ -8,7 +8,10 @@ import { getStore } from '@netlify/blobs';
  * any idea how much has been spent today. The counters, all in Netlify Blobs:
  *
  *   per visitor   new personalisations per hour, and style calls per rolling 24h
- *                 -- counted PER TEMPLATE FAMILY, see below
+ *                 -- counted PER TEMPLATE FAMILY, see below. Every one of them
+ *                 is read from the environment per request, so the shop can be
+ *                 tuned without a deploy and no single hardcoded number can
+ *                 quietly become the one that binds.
  *   site-wide     style calls per UTC day, with a circuit breaker above it --
  *                 one counter per ORIGIN, so internal work and customer traffic
  *                 cannot exhaust each other
@@ -77,8 +80,22 @@ export const ORIGINS = [CUSTOMER, STUDIO];
  */
 export const originOr = (value) => (value === STUDIO ? STUDIO : CUSTOMER);
 
-/** New pendingPersonalisation documents one visitor may create in an hour. */
-export const MAX_NEW_DESIGNS_PER_HOUR = 4;
+/**
+ * New pendingPersonalisation documents one visitor may create in an hour.
+ *
+ * A CONSTANT no longer, and the reason is worth keeping: every style allowance
+ * around it became tunable from the environment and this one did not, so it
+ * quietly became the ceiling that actually bound. Raising STYLE_LIMIT_STRIPS to
+ * let somebody make five strips does nothing at all if they cannot create more
+ * than four designs in the hour it takes them to try -- and nothing in the logs
+ * says that is what happened, because the refusal names the designs guard and
+ * not the allowance it is standing in front of.
+ *
+ * Exported as the DEFAULT, not as the limit. Read newDesignsPerHourLimit() for
+ * the number in force: a constant captured at import time cannot be changed
+ * without a deploy, which is the whole thing being fixed.
+ */
+export const DEFAULT_NEW_DESIGNS_PER_HOUR = 4;
 
 /* ------------------------------------------------------- template families */
 
@@ -143,6 +160,13 @@ const LIMIT_ENV = {
   [ICONS]: 'STYLE_LIMIT_ICONS',
   [STRIPS]: 'STYLE_LIMIT_STRIPS',
 };
+
+/* The designs guard rides with them. It limits documents rather than style
+   calls, so it is not a member of the family above -- but it is the same kind
+   of dial, it is tuned in the same conversation, and sharing the prefix is what
+   puts it next to them in a list of environment variables instead of somewhere
+   else alphabetically. */
+const DESIGNS_ENV = 'STYLE_LIMIT_DESIGNS_PER_HOUR';
 
 /** One family's daily allowance, overridable in the Netlify UI without a deploy. */
 export function styleLimitFor(family) {
@@ -265,6 +289,20 @@ export function styleDailyMax(origin = CUSTOMER) {
   const n = Number.parseInt(String(raw ?? '').trim(), 10);
   if (Number.isFinite(n) && n > 0) return n;
   return studio ? DEFAULT_STUDIO_STYLE_DAILY_MAX : DEFAULT_STYLE_DAILY_MAX;
+}
+
+/**
+ * How many new designs one visitor may start in an hour, right now.
+ *
+ * Read per request, like every limit beside it, so the number can be changed in
+ * the Netlify UI and the next upload sees it. Nonsense -- absent, zero,
+ * negative, fractional, a word -- falls back to the default rather than being
+ * interpreted, because a guard that switches itself off over a typo is worse
+ * than one that ignores it.
+ */
+export function newDesignsPerHourLimit() {
+  const n = Number.parseInt(String(process.env[DESIGNS_ENV] ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_NEW_DESIGNS_PER_HOUR;
 }
 
 /** The studio ceiling, named rather than passed as an argument. */
@@ -506,7 +544,7 @@ export async function readVisitorAll(store, key, now = new Date()) {
  * Fails OPEN. If the counter store cannot be read the answer is yes -- a blob
  * store having a bad minute must not take the shop's builder down with it.
  *
- * @returns {{ ok: boolean, reason: string|null, designsThisHour, styleCalls24h }}
+ * @returns {{ ok, reason, designsThisHour, designsLimit, styleCalls24h, family, limit }}
  */
 export async function checkVisitor(store, key, { newDesign = false, templateId = null, now = new Date() } = {}) {
   let counts;
@@ -516,22 +554,28 @@ export async function checkVisitor(store, key, { newDesign = false, templateId =
     console.warn(`spend-guard: ${key} could not be read, allowing: ${err.message}`);
     return {
       ok: true, reason: null, designsThisHour: 0, styleCalls24h: 0,
+      designsLimit: newDesignsPerHourLimit(),
       family: familyForTemplate(templateId), limit: styleLimitFor(familyForTemplate(templateId)),
       remaining: null,
     };
   }
 
-  if (newDesign && counts.designsThisHour >= MAX_NEW_DESIGNS_PER_HOUR) {
-    return { ...counts, ok: false, reason: 'visitor-designs-per-hour' };
+  /* Both numbers travel with the verdict, so a caller can say which ceiling it
+     hit and what that ceiling was without importing either. The log line for
+     this refusal used to name the count and not the limit, which made a tuned
+     deploy and an untuned one read identically. */
+  const designsLimit = newDesignsPerHourLimit();
+  if (newDesign && counts.designsThisHour >= designsLimit) {
+    return { ...counts, designsLimit, ok: false, reason: 'visitor-designs-per-hour' };
   }
   /* Out of attempts for this family is NOT a refusal of the upload any more.
      The caller stores the photograph, marks the panel `limited` and shows the
      customer the way to the artwork team -- see STYLE_LIMIT_MESSAGE. The
      reason names the family so a log line says which allowance ran out. */
   if (counts.styleCalls24h >= counts.limit) {
-    return { ...counts, ok: false, reason: `visitor-style-limit-${counts.family}` };
+    return { ...counts, designsLimit, ok: false, reason: `visitor-style-limit-${counts.family}` };
   }
-  return { ...counts, ok: true, reason: null };
+  return { ...counts, designsLimit, ok: true, reason: null };
 }
 
 /** Did this verdict run out of style attempts, rather than designs per hour? */

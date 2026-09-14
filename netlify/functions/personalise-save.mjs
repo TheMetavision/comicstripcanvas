@@ -207,7 +207,7 @@ async function savePhoto(form, file, req, context) {
   if (!verdict.ok && !styleLimited) {
     console.warn(
       `spend-guard: refused an upload from ${gkey} — ${verdict.reason} ` +
-      `(${verdict.designsThisHour} new design(s) this hour)`
+      `(${verdict.designsThisHour} of ${verdict.designsLimit} new design(s) this hour)`
     );
     return json({ error: LIMIT_MESSAGE, reason: verdict.reason, limited: true }, 429);
   }

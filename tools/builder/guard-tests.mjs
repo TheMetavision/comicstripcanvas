@@ -16,7 +16,7 @@ import {
   DEFAULT_STYLE_DAILY_MAX, DEFAULT_STUDIO_STYLE_DAILY_MAX,
   styleDailyMax, studioStyleDailyMax,
   BUSY_MESSAGE, STUDIO_BUSY_MESSAGE, busyMessageFor,
-  MAX_NEW_DESIGNS_PER_HOUR,
+  DEFAULT_NEW_DESIGNS_PER_HOUR, newDesignsPerHourLimit,
   COVERS, ICONS, STRIPS, TEMPLATE_FAMILIES, familyForTemplate, styleLimitFor,
   DEFAULT_STYLE_LIMITS, isStyleLimit, readVisitorAll,
   STYLE_LIMIT_MESSAGE, STYLE_LIMIT_KEEPS, STYLE_LIMIT_CTA_LABEL,
@@ -296,12 +296,15 @@ say('\n7. THE PER-VISITOR GUARDS, UNTOUCHED\n');
   const store = memStore();
   const key = 'vabc123';
 
-  ok(MAX_NEW_DESIGNS_PER_HOUR === 4, 'still four new designs an hour',
-    String(MAX_NEW_DESIGNS_PER_HOUR));
+  ok(DEFAULT_NEW_DESIGNS_PER_HOUR === 4, 'still four new designs an hour by default',
+    String(DEFAULT_NEW_DESIGNS_PER_HOUR));
+  ok(newDesignsPerHourLimit() === 4, 'and four in force with nothing set',
+    String(newDesignsPerHourLimit()));
 
-  for (let i = 0; i < MAX_NEW_DESIGNS_PER_HOUR; i++) {
+  const designs = newDesignsPerHourLimit();
+  for (let i = 0; i < designs; i++) {
     ok((await checkVisitor(store, key, { newDesign: true, now: NOW })).ok,
-      `new design ${i + 1} of ${MAX_NEW_DESIGNS_PER_HOUR} allowed`);
+      `new design ${i + 1} of ${designs} allowed`);
     await bumpVisitor(store, key, 'designs', 1, NOW);
   }
   const fifth = await checkVisitor(store, key, { newDesign: true, now: NOW });
@@ -657,6 +660,87 @@ say('\n13. ONE EMAIL PER VISITOR PER DAY\n');
   ok(kept.length <= 2, 'six days of claims keep at most two rows', kept.join(', '));
 
   if (savedKey) process.env.RESEND_API_KEY = savedKey;
+}
+
+/* --------------------------------- 14. the designs guard is tunable as well */
+
+say('\n14. HOW MANY DESIGNS AN HOUR, WITHOUT A DEPLOY\n');
+{
+  /* Every style allowance beside it became tunable and this one did not, so it
+     quietly became the ceiling that actually bound: raising STYLE_LIMIT_STRIPS
+     to allow five strips does nothing if the visitor cannot create more than
+     four designs in the hour it takes to try them. */
+  delete process.env.STYLE_LIMIT_DESIGNS_PER_HOUR;
+  ok(newDesignsPerHourLimit() === DEFAULT_NEW_DESIGNS_PER_HOUR,
+    'unset is the default', String(newDesignsPerHourLimit()));
+
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '12';
+  ok(newDesignsPerHourLimit() === 12, 'a value in the environment is honoured',
+    String(newDesignsPerHourLimit()));
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = ' 7 ';
+  ok(newDesignsPerHourLimit() === 7, 'and trimmed', String(newDesignsPerHourLimit()));
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '1';
+  ok(newDesignsPerHourLimit() === 1, 'it can be tightened as well as loosened',
+    String(newDesignsPerHourLimit()));
+
+  /* A guard that switches itself off over a typo is worse than one that
+     ignores it, so every unusable value falls back rather than being
+     interpreted -- exactly as the three style limits do. */
+  for (const bad of ['0', '-3', 'lots', '', '  ', 'null', 'Infinity', 'NaN']) {
+    process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = bad;
+    ok(newDesignsPerHourLimit() === DEFAULT_NEW_DESIGNS_PER_HOUR,
+      `${JSON.stringify(bad)} falls back to ${DEFAULT_NEW_DESIGNS_PER_HOUR}`,
+      String(newDesignsPerHourLimit()));
+  }
+
+  /* PER REQUEST, not at import. A constant captured when the module loaded is
+     exactly what needed a deploy to change, so this is the assertion that says
+     the fix is a fix: the same module instance, read twice, answers
+     differently. */
+  delete process.env.STYLE_LIMIT_DESIGNS_PER_HOUR;
+  const before = newDesignsPerHourLimit();
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '9';
+  const after = newDesignsPerHourLimit();
+  delete process.env.STYLE_LIMIT_DESIGNS_PER_HOUR;
+  const restored = newDesignsPerHourLimit();
+  ok(before === 4 && after === 9 && restored === 4,
+    'the same module answers 4, then 9, then 4 again — read per request',
+    `${before} -> ${after} -> ${restored}`);
+
+  /* And the guard actually enforces the tuned number, not the default. */
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '2';
+  const store = memStore();
+  const key = 'vtunable';
+  ok((await checkVisitor(store, key, { newDesign: true, now: NOW })).ok, 'design 1 of 2 allowed');
+  await bumpVisitor(store, key, 'designs', 1, NOW);
+  ok((await checkVisitor(store, key, { newDesign: true, now: NOW })).ok, 'design 2 of 2 allowed');
+  await bumpVisitor(store, key, 'designs', 1, NOW);
+  const third = await checkVisitor(store, key, { newDesign: true, now: NOW });
+  ok(!third.ok && third.reason === 'visitor-designs-per-hour',
+    'and the third is refused at the TUNED limit, not at four', third.reason);
+  ok(third.designsLimit === 2, 'the verdict carries the limit it hit',
+    String(third.designsLimit));
+  ok(third.designsThisHour === 2, 'and the count', String(third.designsThisHour));
+
+  /* Raised mid-hour, the visitor who was refused a moment ago is allowed --
+     which is the whole point of reading it per request. */
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '5';
+  const afterRaise = await checkVisitor(store, key, { newDesign: true, now: NOW });
+  ok(afterRaise.ok, 'raising it unblocks them on their very next upload');
+  ok(afterRaise.designsLimit === 5, 'against the new number', String(afterRaise.designsLimit));
+
+  /* Tightening it below what they have already spent refuses immediately. */
+  process.env.STYLE_LIMIT_DESIGNS_PER_HOUR = '1';
+  ok(!(await checkVisitor(store, key, { newDesign: true, now: NOW })).ok,
+    'and tightening it below their count refuses at once');
+
+  /* It bounds NEW designs only. A visitor at the designs ceiling can still add
+     photographs to the design they are already working on -- otherwise the
+     guard would strand a half-built strip. */
+  ok((await checkVisitor(store, key, { newDesign: false, now: NOW })).ok,
+    'but another photo on an existing design is still allowed');
+
+  delete process.env.STYLE_LIMIT_DESIGNS_PER_HOUR;
 }
 
 say(`\n${pass} passed, ${fail} failed.`);
