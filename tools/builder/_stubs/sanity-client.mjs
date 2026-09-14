@@ -77,6 +77,13 @@ function patchBuilder(id) {
     set(o) { Object.assign(ops.set, o); return api; },
     setIfMissing(o) { Object.assign(ops.setIfMissing, o); return api; },
     inc(o) { Object.assign(ops.inc, o); return api; },
+    /* dec, because the refund path uses it. Its absence did not throw anywhere
+       visible -- the handler wraps its refund in a try/catch and logs -- so the
+       count simply never came back and the test read it as a handler bug. */
+    dec(o) {
+      for (const [k, v] of Object.entries(o)) ops.inc[k] = -(Number(v) || 0);
+      return api;
+    },
     unset(paths) { ops.unset.push(...paths); return api; },
     append(path, items) { ops.appends.push([path, items]); return api; },
     ifRevisionId() { return api; },
@@ -104,15 +111,82 @@ export function createClient() {
         return doc ? clone(doc) : null;
       }
       if (/count\(photos\[styleStatus == "paused"\]\)/.test(q)) return [];
-      throw new Error(`stub: no answer for query ${q.slice(0, 120)}`);
+
+      /* checkout's three lookups. Projected out of the same documents a test
+         seeds, rather than answered from a canned list -- otherwise the test
+         would be asserting against its own fixture instead of against what the
+         handler asks for. */
+      const products = () => [...docs.values()].filter((d) => d._type === 'product');
+      if (/_type == "product".*slug\.current in \$slugs/.test(q)) {
+        const want = new Set(params.slugs || []);
+        return products()
+          .filter((p) => want.has(p.slug?.current))
+          .map((p) => {
+            const row = { slug: p.slug.current };
+            if (/defined\(fullBleed\.printFile\.asset\)/.test(q)) {
+              row.fullBleed = !!p.fullBleed?.printFile?.asset;
+            }
+            if (/personalisationFee/.test(q)) row.personalisationFee = p.personalisationFee;
+            return row;
+          });
+      }
+      if (/_type == "pendingPersonalisation" && _id in \$ids/.test(q)) {
+        const want = new Set(params.ids || []);
+        return [...docs.values()]
+          .filter((d) => d._type === 'pendingPersonalisation' && want.has(d._id))
+          .map((b) => ({
+            _id: b._id,
+            kind: b.kind ?? null,
+            productId: b.productId ?? null,
+            artworkStyle: b.artworkStyle ?? null,
+            /* The joined subquery: the customiseFee off the PRODUCT the build
+               was made from, which is where checkout reads it. */
+            customiseFee: products().find((p) => p._id === b.productId)?.customiseFee ?? null,
+          }));
+      }
+
+      throw new Error(`stub: no answer for query ${q.slice(0, 160)}`);
     },
     async create(doc) {
       if (failures.create) throw new Error('stub: create refused');
-      if (docs.has(doc._id)) throw new Error(`stub: ${doc._id} already exists`);
+      if (docs.has(doc._id)) {
+        /* The shape Sanity actually returns for a duplicate, because the
+           webhook's concurrent-delivery branch keys off statusCode 409 and
+           would otherwise never be reachable in a test. */
+        const err = new Error(`Document by ID "${doc._id}" already exists`);
+        err.statusCode = 409;
+        throw err;
+      }
       docs.set(doc._id, { ...clone(doc), _rev: 'rev-1' });
       return clone(docs.get(doc._id));
     },
-    patch(id) { return patchBuilder(id); },
+    async getDocument(id) {
+      const doc = docs.get(id);
+      return doc ? clone(doc) : undefined;
+    },
+    async createIfNotExists(doc) {
+      if (!docs.has(doc._id)) docs.set(doc._id, { ...clone(doc), _rev: 'rev-1' });
+      return clone(docs.get(doc._id));
+    },
+    /* The second argument is Sanity's patch options -- ifRevisionID for the
+       order-number counter. Honoured rather than ignored: the retry loop around
+       it only means anything if a stale revision can actually be refused. */
+    patch(id, opts = {}) {
+      const p = patchBuilder(id);
+      if (opts.ifRevisionID) {
+        const commit = p.commit;
+        p.commit = async () => {
+          const doc = docs.get(id);
+          if (doc && doc._rev !== opts.ifRevisionID) {
+            const err = new Error('stub: revision mismatch');
+            err.statusCode = 409;
+            throw err;
+          }
+          return commit();
+        };
+      }
+      return p;
+    },
     transaction() {
       const patches = [];
       const tx = {

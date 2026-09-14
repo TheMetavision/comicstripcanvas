@@ -23,6 +23,8 @@ const STUBS = {
   '@sanity/client': new URL('./sanity-client.mjs', import.meta.url).href,
   '@netlify/blobs': new URL('./netlify-blobs.mjs', import.meta.url).href,
   resend: new URL('./resend.mjs', import.meta.url).href,
+  stripe: new URL('./stripe.mjs', import.meta.url).href,
+  '@google/genai': new URL('./google-genai.mjs', import.meta.url).href,
 };
 
 export async function resolve(specifier, context, nextResolve) {
