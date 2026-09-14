@@ -10,10 +10,11 @@ import { cutoutConfigured } from './_shared/cutout.mjs';
 import { memoryNote } from './_shared/scene.mjs';
 import {
   guardStore, bumpVisitor, bumpGlobal, readGlobal, originOr, CUSTOMER,
-  visitorHasStyleBudget, familyForTemplate,
+  readVisitor, familyForTemplate,
 } from './_shared/spend-guard.mjs';
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
+import { notifyStyleLimit } from './_shared/limit-email.mjs';
 
 /**
  * Style one photograph.
@@ -247,10 +248,20 @@ export default async (req) => {
        arrive after the allowance has gone. Marked `limited` rather than paused
        -- nothing resumes it, because nothing gives the allowance back early. */
     family = familyForTemplate(doc.templateId);
-    if (guardKey && !(await visitorHasStyleBudget(guard, guardKey, new Date(), doc.templateId))) {
+    /* readVisitor rather than the boolean: the same read answers whether there
+       is room AND how much has been spent, and the email is worth the number. */
+    const allowance = guardKey
+      ? await readVisitor(guard, guardKey, { templateId: doc.templateId })
+      : null;
+    if (allowance && allowance.styleCalls24h >= allowance.limit) {
       await limitPanel(sanity, id, panel, doc.templateId);
+      await notifyStyleLimit({
+        store: guard, key: guardKey, buildId: id,
+        templateId: doc.templateId, calls: allowance.styleCalls24h,
+      });
       console.warn(
-        `spend-guard: style-photo stopped ${id} ${panel} — ${guardKey} is out of ${family} attempts`
+        `spend-guard: style-photo stopped ${id} ${panel} — ${guardKey} is out of ${family} `
+        + `attempts (${allowance.styleCalls24h}/${allowance.limit})`
       );
       return new Response('Out of attempts', { status: 200 });
     }

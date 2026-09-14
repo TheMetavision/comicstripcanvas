@@ -20,11 +20,12 @@ import {
   COVERS, ICONS, STRIPS, TEMPLATE_FAMILIES, familyForTemplate, styleLimitFor,
   DEFAULT_STYLE_LIMITS, isStyleLimit, readVisitorAll,
   STYLE_LIMIT_MESSAGE, STYLE_LIMIT_KEEPS, STYLE_LIMIT_CTA_LABEL,
-  styleLimitCta, styleLimitNotice,
+  styleLimitCta, styleLimitNotice, claimStyleLimitNotice,
   readGlobal, bumpGlobal, claimBreakerNotice,
   readVisitor, checkVisitor, bumpVisitor, visitorHasStyleBudget,
   hourBucket, dayBucket, sweepGuardCounters,
 } from '../../netlify/functions/_shared/spend-guard.mjs';
+import { notifyStyleLimit } from '../../netlify/functions/_shared/limit-email.mjs';
 
 let pass = 0, fail = 0;
 const ok = (c, l, e = '') => {
@@ -537,6 +538,125 @@ say('\n12. THE WAY OUT\n');
   ok(bare.family === null, 'and says nothing it does not know');
 
   ok(styleLimitCta('pp-x') !== styleLimitCta('pp-y'), 'two builds get two links');
+}
+
+/* ------------------------------------- 13. telling somebody a customer is stuck */
+
+say('\n13. ONE EMAIL PER VISITOR PER DAY\n');
+{
+  /* No RESEND_API_KEY here on purpose. notifyStyleLimit claims the right to
+     send BEFORE it sends -- so a provider outage costs one notification rather
+     than one per refusal -- which means the claim is observable without any
+     network at all: the first call reports that it had nothing to send WITH,
+     and every call after it reports that it had nothing to send ABOUT. Those
+     two answers are the whole contract. */
+  const savedKey = process.env.RESEND_API_KEY;
+  delete process.env.RESEND_API_KEY;
+
+  const store = memStore();
+  const key = 'vstuck';
+
+  const first = await notifyStyleLimit({
+    store, key, buildId: 'pp-aaa', templateId: 'cover', calls: 5, now: NOW,
+  });
+  ok(first.sent === false && first.reason === 'no RESEND_API_KEY',
+    'the first hit claims the day and tries to send', first.reason);
+
+  /* Eight more, the way a customer tapping Replace produces them. */
+  const repeats = [];
+  for (let i = 0; i < 8; i++) {
+    repeats.push(await notifyStyleLimit({
+      store, key, buildId: 'pp-aaa', templateId: 'cover', calls: 5 + i, now: NOW,
+    }));
+  }
+  ok(repeats.every((r) => r.reason === 'already notified about this visitor today'),
+    'and the next eight are silent — one email, not nine',
+    [...new Set(repeats.map((r) => r.reason))].join(' | '));
+  ok(repeats.every((r) => r.sent === false), 'none of them sent anything');
+
+  /* The three places that can notice this all go through the same claim, so a
+     retry endpoint and a background styler cannot each send their own. */
+  ok((await claimStyleLimitNotice(store, key, NOW)) === false,
+    'a second caller on the same visitor and day is refused the claim');
+
+  /* A different customer is a different person and gets their own. */
+  const second = await notifyStyleLimit({
+    store, key: 'vother', buildId: 'pp-bbb', templateId: 'strip', calls: 30, now: NOW,
+  });
+  ok(second.reason === 'no RESEND_API_KEY', 'another visitor claims their own day', second.reason);
+
+  /* And tomorrow reopens it, because tomorrow they are stuck again. */
+  const tomorrow = new Date('2026-09-16T09:00:00Z');
+  ok((await notifyStyleLimit({
+    store, key, buildId: 'pp-aaa', templateId: 'cover', calls: 5, now: tomorrow,
+  })).reason === 'no RESEND_API_KEY', 'the next UTC day is a new claim');
+
+  /* Every family can raise one -- the email is about a person being stuck, and
+     all three ways of being stuck are worth hearing about. */
+  for (const [templateId, family] of [
+    ['cover', 'covers'], ['icon-portrait', 'icons'], ['strip', 'strips'],
+  ]) {
+    const fresh = `vfam-${family}`;
+    const r = await notifyStyleLimit({
+      store, key: fresh, buildId: `pp-${family}`, templateId, calls: 1, now: NOW,
+    });
+    ok(r.reason === 'no RESEND_API_KEY', `a ${family} customer triggers it`, r.reason);
+    const again = await notifyStyleLimit({
+      store, key: fresh, buildId: `pp-${family}`, templateId, calls: 2, now: NOW,
+    });
+    ok(again.reason === 'already notified about this visitor today',
+      `and a ${family} customer only triggers it once`, again.reason);
+    /* The claim records what it was about, so the stored row says something on
+       its own -- and nothing in it identifies anybody. */
+    const doc = await store.get(`visitor/${fresh}/notified.json`, { type: 'json' });
+    ok(doc.days[dayBucket(NOW)].family === family, `the claim records the ${family} family`,
+      doc.days[dayBucket(NOW)].family);
+    ok(doc.days[dayBucket(NOW)].buildId === `pp-${family}`, 'and the build to look at');
+    ok(!JSON.stringify(doc).includes('@') && !/\d+\.\d+\.\d+\.\d+/.test(JSON.stringify(doc)),
+      'and holds no address of any kind');
+  }
+
+  /* Nothing to claim against is not an error, it is a no-op. */
+  const nokey = await notifyStyleLimit({ store, key: null, buildId: 'pp-ccc', now: NOW });
+  ok(nokey.sent === false && /no visitor/.test(nokey.reason),
+    'a build with no visitor key notifies nobody rather than throwing', nokey.reason);
+
+  /* THE INDEPENDENCE THAT MATTERS. The site-wide breaker email and this one are
+     different facts about different things -- the shop has stopped styling for
+     everyone, versus one customer has used their own allowance while the shop
+     carried on. They are claimed on different records, so neither can silence
+     the other on a day when both happen. */
+  const shared = memStore();
+  const vkey = 'vboth';
+  ok((await claimStyleLimitNotice(shared, vkey, NOW)) === true,
+    'a customer runs out and the claim is taken');
+  ok((await claimBreakerNotice(shared, NOW, CUSTOMER)) === true,
+    'the site-wide breaker still claims its own email the same day');
+  ok((await claimStyleLimitNotice(shared, vkey, NOW)) === false,
+    'the customer one stays claimed');
+  ok((await claimBreakerNotice(shared, NOW, CUSTOMER)) === false,
+    'and so does the breaker one');
+  ok((await claimBreakerNotice(shared, NOW, STUDIO)) === true,
+    'and the studio budget is a third, independent of both');
+
+  /* The other order, in case one of them ever starts writing where the other
+     reads. */
+  const reverse = memStore();
+  ok((await claimBreakerNotice(reverse, NOW, CUSTOMER)) === true, 'breaker first');
+  ok((await claimStyleLimitNotice(reverse, 'vrev', NOW)) === true,
+    'then a customer — still both');
+
+  /* The claim document must not grow for ever. */
+  const growing = memStore();
+  for (let d = 1; d <= 6; d++) {
+    await claimStyleLimitNotice(growing, 'vlong', new Date(`2026-09-0${d}T10:00:00Z`));
+  }
+  const kept = Object.keys(
+    (await growing.get('visitor/vlong/notified.json', { type: 'json' })).days
+  );
+  ok(kept.length <= 2, 'six days of claims keep at most two rows', kept.join(', '));
+
+  if (savedKey) process.env.RESEND_API_KEY = savedKey;
 }
 
 say(`\n${pass} passed, ${fail} failed.`);

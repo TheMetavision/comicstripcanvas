@@ -664,6 +664,60 @@ export async function claimBreakerNotice(store, now = new Date(), origin = CUSTO
   return after?.notifyNonce === nonce;
 }
 
+/* ------------------------------------- telling somebody a customer is stuck */
+
+/* Two days kept, not one. A claim made at 23:59 and a second attempt at 00:01
+   are different days, and the older row has to survive long enough for that
+   boundary to be visible rather than silently reopening the claim. Anything
+   older than that is noise, and retention collects the whole document once the
+   visitor has been quiet for VISITOR_RETENTION_HOURS. */
+const NOTICE_DAYS_KEPT = 2;
+
+/**
+ * Claim the right to tell the team that this visitor has run out of attempts.
+ *
+ * Exactly one caller gets true per visitor per UTC day, whichever asks first.
+ * Everyone else gets false and stays quiet, so a customer who taps Replace
+ * eight times produces one email rather than eight -- and all three of the
+ * places that can notice this (the upload, the retry endpoint and the styler
+ * itself) go through the same claim, so they cannot each send their own.
+ *
+ * The same shape as claimBreakerNotice, and for the same reason: a nonce
+ * written through a compare-and-swap, not a timestamp compared afterwards. Two
+ * callers a second apart would both find a fresh-looking mark and both send;
+ * only the one whose own nonce survived the write may claim it.
+ *
+ * Claimed BEFORE the send, so an email provider having a bad minute costs one
+ * missing notification rather than one per refusal.
+ */
+export async function claimStyleLimitNotice(store, key, now = new Date(), detail = {}) {
+  const day = dayBucket(now);
+  const nonce = crypto.randomUUID();
+  await update(store, visitorPath(key, 'notified'), (doc) => {
+    const next = doc || { days: {}, createdAt: now.toISOString() };
+    next.days = next.days || {};
+    if (next.days[day]) return null;            // somebody already has today
+    for (const d of Object.keys(next.days)) {
+      if (d < dayBucket(new Date(now.getTime() - (NOTICE_DAYS_KEPT - 1) * 86400_000))) {
+        delete next.days[d];
+      }
+    }
+    next.days[day] = {
+      at: now.toISOString(),
+      nonce,
+      /* What it was about, so the record says something on its own. None of
+         this identifies anybody: the key is already a salted hash and the
+         build id is opaque. */
+      family: detail.family || null,
+      buildId: detail.buildId || null,
+    };
+    next.updatedAt = now.toISOString();
+    return next;
+  });
+  const after = await readJson(store, visitorPath(key, 'notified'));
+  return after?.days?.[day]?.nonce === nonce;
+}
+
 /* ------------------------------------------------------------- the sweeper */
 
 /**

@@ -9,6 +9,7 @@ import {
 } from './_shared/spend-guard.mjs';
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
+import { notifyStyleLimit } from './_shared/limit-email.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artwork-styles.mjs';
 import { moderate, MODERATION_MESSAGE } from './_shared/moderation.mjs';
@@ -336,6 +337,7 @@ async function savePhoto(form, file, req, context) {
   // rather than losing anything.
   const style = await triggerStyle({
     id, panelId, sha256, req, guard, spendOrigin, styleLimited, templateId,
+    guardKey: gkey, spent: verdict.styleCalls24h,
   });
 
   return json({ id, key, sha256, style });
@@ -363,6 +365,7 @@ const photoRow = ({ panel, rawKey, sha256, styleStatus = 'pending' }) => ({
  */
 async function triggerStyle({
   id, panelId, sha256, req, guard, spendOrigin = CUSTOMER, styleLimited = false, templateId = null,
+  guardKey = null, spent = null,
 }) {
   try {
     const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
@@ -383,6 +386,13 @@ async function triggerStyle({
        that you personally are out of attempts would be misleading. */
     if (styleLimited) {
       const notice = await limitPanel(sanity, id, panelId, templateId);
+      /* And tell somebody. The customer has been given a way to ask for help,
+         but they may not take it, and until this existed nobody on our side
+         ever knew they had been stopped. Awaited rather than left dangling:
+         the function's environment freezes the moment it returns. */
+      await notifyStyleLimit({
+        store: guard || guardStore(), key: guardKey, buildId: id, templateId, calls: spent,
+      });
       return { limited: true, notice };
     }
 

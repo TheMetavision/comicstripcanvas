@@ -6,6 +6,7 @@ import {
   familyForTemplate,
 } from './_shared/spend-guard.mjs';
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
+import { notifyStyleLimit } from './_shared/limit-email.mjs';
 
 /**
  * Re-style one panel:
@@ -113,6 +114,11 @@ export default async (req, context) => {
          attempts for today, and the answer says what they can do about it.
          Their photograph and their build are untouched. */
       const notice = await limitPanel(sanity, id, panel, doc.templateId);
+      /* One claim per visitor per day covers all three of the places that can
+         notice this, so tapping Replace repeatedly is quiet after the first. */
+      await notifyStyleLimit({
+        store, key: gkey, buildId: id, templateId: doc.templateId, calls: spent.styleCalls24h,
+      });
       console.warn(
         `spend-guard: ${id} ${panel} from ${gkey} is out of ${family} attempts ` +
         `(${spent.styleCalls24h}/${spent.limit} in 24h)`
