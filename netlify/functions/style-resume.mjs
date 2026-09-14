@@ -38,9 +38,11 @@ const json = (body, status = 200) =>
  * header as well means a forgery has to be deliberate rather than accidental.
  *
  * Neither marker is a secret, so neither is the real defence. That is the
- * budget: resumeAllPaused never spends past STYLE_DAILY_MAX or past a
- * visitor's own 24-hour allowance, so the worst a forged invocation can do is
- * bring work forward that we had already decided to pay for.
+ * budget: resumeAllPaused never spends past a day's ceiling -- STYLE_DAILY_MAX
+ * for customer work, STUDIO_STYLE_DAILY_MAX for studio work, counted and spent
+ * separately so neither queue can eat into the other's -- nor past a visitor's
+ * own 24-hour allowance. So the worst a forged invocation can do is bring work
+ * forward that we had already decided to pay for.
  */
 const looksScheduled = (req, body) =>
   (req.headers.get('x-nf-event') || '').toLowerCase() === 'schedule' &&

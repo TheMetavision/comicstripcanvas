@@ -2,8 +2,8 @@ import { createClient } from '@sanity/client';
 import { MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
 import {
-  guardStore, visitorKey, readVisitor, readGlobal,
-  MAX_VISITOR_STYLE_CALLS_PER_DAY, LIMIT_MESSAGE, BUSY_MESSAGE,
+  guardStore, visitorKey, readVisitor, readGlobal, originOr, busyMessageFor,
+  MAX_VISITOR_STYLE_CALLS_PER_DAY, LIMIT_MESSAGE,
 } from './_shared/spend-guard.mjs';
 import { pausePanel } from './_shared/style-resume.mjs';
 
@@ -63,7 +63,7 @@ export default async (req, context) => {
   const retry = searchParams.get('retry') === '1';
 
   try {
-    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, guardKey }', { id });
+    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, guardKey, origin }', { id });
     if (!doc) return notFound();
     const row = (doc.photos || []).find((p) => p.panel === panel);
     if (!row || !row.rawKey) return notFound();
@@ -116,17 +116,20 @@ export default async (req, context) => {
       }, 429);
     }
 
-    const breaker = await readGlobal(store);
+    /* The document's budget, for the same reason its guardKey is preferred
+       over this request's: a retry spends what the build spends. */
+    const spendOrigin = originOr(doc.origin);
+    const breaker = await readGlobal(store, new Date(), spendOrigin);
     if (breaker.tripped) {
-      await pausePanel(sanity, id, panel);
+      await pausePanel(sanity, id, panel, spendOrigin);
       console.warn(
-        `spend-guard: paused a retry of ${id} ${panel} — site-wide limit reached ` +
-        `(${breaker.calls}/${breaker.max} today)`
+        `spend-guard: paused a retry of ${id} ${panel} — the ${spendOrigin} daily limit ` +
+        `is reached (${breaker.calls}/${breaker.max} today)`
       );
       /* 200, not an error: the request was understood and acted on. The panel
          is now waiting on the breaker, the poll will report it as paused, and
          style-resume will finish the job without anyone asking again. */
-      return reply({ id, panel, triggered: false, paused: true, message: BUSY_MESSAGE });
+      return reply({ id, panel, triggered: false, paused: true, message: busyMessageFor(spendOrigin) });
     }
 
     if ((doc.styleCalls || 0) >= MAX_STYLE_CALLS) {

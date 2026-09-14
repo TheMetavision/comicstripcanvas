@@ -5,6 +5,7 @@ import { styleSizeForTemplate, MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
 import {
   guardStore, visitorKey, checkVisitor, bumpVisitor, readGlobal, LIMIT_MESSAGE,
+  requestOrigin, originOr, CUSTOMER,
 } from './_shared/spend-guard.mjs';
 import { pausePanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
@@ -146,6 +147,19 @@ async function savePhoto(form, file, req, context) {
      Failing open is deliberate -- see checkVisitor. */
   const guard = guardStore();
   const gkey = visitorKey(req, context);
+  /* Which daily budget this build will spend from, decided once, at the upload
+     that creates it, and then carried on the document -- the function that
+     actually spends runs in the background and never sees this request.
+
+     Derived, never believed: requestOrigin ignores the claim unless the studio
+     secret is with it. Nothing in the shop sends either today, so every build
+     is a customer build and nothing about live behaviour changes.
+
+     The per-visitor guards above are NOT skipped for a studio build. They are a
+     separate limit answering a separate question -- how much one address may
+     spend -- and letting an origin out of them would be the bypass this is
+     explicitly not allowed to have. */
+  const spendOrigin = requestOrigin(req, { claimed: form.get('origin') });
   const verdict = await checkVisitor(guard, gkey, { newDesign: creating });
   if (!verdict.ok) {
     console.warn(
@@ -236,6 +250,10 @@ async function savePhoto(form, file, req, context) {
            function that never sees the request. Hashed, so what is stored
            still identifies nobody. */
         guardKey: gkey,
+        /* Written even when it is the default, so a document always says which
+           budget it spends from rather than leaving the answer to whatever the
+           reader happens to default to. */
+        origin: spendOrigin,
         consentAt,
         createdAt: new Date().toISOString(),
       });
@@ -296,7 +314,7 @@ async function savePhoto(form, file, req, context) {
   // Styling is best-effort from here: the photo is stored and the document is
   // written, so a trigger that does not fire leaves a retryable 'pending' row
   // rather than losing anything.
-  const style = await triggerStyle({ id, panelId, sha256, req, guard });
+  const style = await triggerStyle({ id, panelId, sha256, req, guard, spendOrigin });
 
   return json({ id, key, sha256, style });
 }
@@ -321,7 +339,7 @@ const photoRow = ({ panel, rawKey, sha256, styleStatus = 'pending' }) => ({
  * a styling trigger that fails leaves the row 'pending' and is retryable
  * through /api/personalisation-style.
  */
-async function triggerStyle({ id, panelId, sha256, req, guard }) {
+async function triggerStyle({ id, panelId, sha256, req, guard, spendOrigin = CUSTOMER }) {
   try {
     const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
     const photos = doc?.photos || [];
@@ -343,18 +361,19 @@ async function triggerStyle({ id, panelId, sha256, req, guard }) {
        Add to basket gate stays shut behind it, and style-resume picks it up
        when the counter resets. */
     const store = guard || guardStore();
-    const breaker = await readGlobal(store);
+    const which = originOr(spendOrigin);
+    const breaker = await readGlobal(store, new Date(), which);
     if (breaker.tripped) {
-      await pausePanel(sanity, id, panelId);
+      await pausePanel(sanity, id, panelId, which);
       console.warn(
-        `spend-guard: paused ${id} ${panelId} — site-wide limit reached ` +
+        `spend-guard: paused ${id} ${panelId} — the ${which} daily limit is reached ` +
         `(${breaker.calls}/${breaker.max} today)`
       );
       /* Claimed once a day, so this is a no-op for every refusal after the
          first. Here as well as at the crossing in style-photo-background
          because a ceiling lowered by hand trips the breaker without any call
          ever crossing it. */
-      await notifyBreakerTripped({ store, calls: breaker.calls });
+      await notifyBreakerTripped({ store, calls: breaker.calls, origin: which });
       return { paused: true, until: 'the daily limit resets' };
     }
 

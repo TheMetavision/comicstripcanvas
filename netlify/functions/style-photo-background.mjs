@@ -8,7 +8,9 @@ import { cutoutConfigured } from './_shared/cutout.mjs';
    external_node_modules, so importing it here would try to bundle a native
    .node binary. */
 import { memoryNote } from './_shared/scene.mjs';
-import { guardStore, bumpVisitor, bumpGlobal, readGlobal } from './_shared/spend-guard.mjs';
+import {
+  guardStore, bumpVisitor, bumpGlobal, readGlobal, originOr, CUSTOMER,
+} from './_shared/spend-guard.mjs';
 import { pausePanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 
@@ -184,7 +186,7 @@ export default async (req) => {
      hand back exactly what was taken. Rolling them into one flag would either
      refund a counter that was never incremented or keep one that was. */
   let visitorCharged = false, globalCharged = false;
-  let guard = null, guardKey = null;
+  let guard = null, guardKey = null, spendOrigin = CUSTOMER;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id; panel = body.panel;
@@ -202,7 +204,7 @@ export default async (req) => {
     }
 
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId, guardKey }', { id }
+      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
     );
     if (!doc) {
       console.error(`style-photo: ${id} does not exist`);
@@ -221,14 +223,20 @@ export default async (req) => {
        else, and the panel is better paused than billed. */
     guard = guardStore();
     guardKey = doc.guardKey || null;
-    const breaker = await readGlobal(guard);
+    /* Off the document, not off this request: this function is triggered by
+       three different callers and is the only one that spends, so the budget
+       has to be the one the build was created against rather than whatever the
+       trigger happened to look like. A document written before origins existed
+       has none, and reads as a customer. */
+    spendOrigin = originOr(doc.origin);
+    const breaker = await readGlobal(guard, new Date(), spendOrigin);
     if (breaker.tripped) {
-      await pausePanel(sanity, id, panel);
+      await pausePanel(sanity, id, panel, spendOrigin);
       console.warn(
-        `spend-guard: style-photo paused ${id} ${panel} — site-wide limit reached ` +
-        `(${breaker.calls}/${breaker.max} today)`
+        `spend-guard: style-photo paused ${id} ${panel} — the ${spendOrigin} daily limit ` +
+        `is reached (${breaker.calls}/${breaker.max} today)`
       );
-      await notifyBreakerTripped({ store: guard, calls: breaker.calls });
+      await notifyBreakerTripped({ store: guard, calls: breaker.calls, origin: spendOrigin });
       return new Response('Paused', { status: 200 });
     }
 
@@ -283,11 +291,13 @@ export default async (req) => {
        their photograph, so a failure here is logged and the call proceeds. */
     try {
       if (guardKey) { await bumpVisitor(guard, guardKey, 'style', 1); visitorCharged = true; }
-      const site = await bumpGlobal(guard, 1);
+      const site = await bumpGlobal(guard, 1, new Date(), spendOrigin);
       globalCharged = true;
       if (site.crossed) {
-        console.warn(`spend-guard: this call took the day to ${site.calls}/${site.max} — breaker open`);
-        await notifyBreakerTripped({ store: guard, calls: site.calls });
+        console.warn(
+          `spend-guard: this call took the ${spendOrigin} day to ${site.calls}/${site.max} — breaker open`
+        );
+        await notifyBreakerTripped({ store: guard, calls: site.calls, origin: spendOrigin });
       }
     } catch (err) {
       console.warn(`spend-guard: could not count the call for ${id} ${panel}: ${err.message}`);
@@ -416,7 +426,7 @@ export default async (req) => {
     if (shouldRefund(err) && (visitorCharged || globalCharged)) {
       try {
         if (visitorCharged) await bumpVisitor(guard, guardKey, 'style', -1);
-        if (globalCharged) await bumpGlobal(guard, -1);
+        if (globalCharged) await bumpGlobal(guard, -1, new Date(), spendOrigin);
         console.warn(
           `spend-guard: refunded the call for ${id} ${panel} (${guardKey || 'no visitor key'}) — ` +
           `status ${err.status} never reached the model`

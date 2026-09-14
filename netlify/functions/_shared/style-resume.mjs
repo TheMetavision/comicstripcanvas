@@ -1,5 +1,5 @@
 import {
-  guardStore, readGlobal, visitorHasStyleBudget, BUSY_MESSAGE,
+  guardStore, readGlobal, visitorHasStyleBudget, busyMessageFor, originOr, ORIGINS,
 } from './spend-guard.mjs';
 
 /**
@@ -34,17 +34,20 @@ export const pausedRows = (doc) =>
   (doc?.photos || []).filter((p) => p && p.styleStatus === PAUSED && p.rawKey);
 
 /**
- * Mark one panel as waiting on the breaker.
+ * Mark one panel as waiting on its budget.
  *
- * BUSY_MESSAGE goes into styleError rather than being invented by the builder,
- * so the Studio's per-panel row says the same thing the customer is reading.
+ * The message goes into styleError rather than being invented by the builder,
+ * so the Studio's per-panel row says the same thing the customer is reading --
+ * and which message it is depends on which budget ran out, because "we're
+ * unusually busy" is true for a customer and useless to whoever has to decide
+ * whether to raise the ceiling.
  */
-export async function pausePanel(sanity, id, panel) {
+export async function pausePanel(sanity, id, panel, spendOrigin) {
   await sanity
     .patch(id)
     .set({
       [`photos[panel == "${panel}"].styleStatus`]: PAUSED,
-      [`photos[panel == "${panel}"].styleError`]: BUSY_MESSAGE,
+      [`photos[panel == "${panel}"].styleError`]: busyMessageFor(spendOrigin),
       [`photos[panel == "${panel}"].pausedAt`]: new Date().toISOString(),
     })
     .commit();
@@ -108,21 +111,25 @@ export async function resumeDocument({ sanity, doc, origin, now = new Date(), st
   const rows = pausedRows(doc);
   if (!rows.length) return { resumed: 0, remaining: 0 };
 
+  /* `origin` is the site URL -- it is what the trigger is POSTed to. The budget
+     this document spends from is `spendOrigin`, off the document itself. Two
+     unrelated meanings of the same word, and only one of them can keep it. */
+  const spendOrigin = originOr(doc.origin);
   const s = store || guardStore();
-  const global = await readGlobal(s, now);
+  const global = await readGlobal(s, now, spendOrigin);
   if (global.tripped) return { resumed: 0, remaining: rows.length };
 
   let budget = global.remaining;
   let resumed = 0;
   // Re-read: the caller's copy may predate another resume, and _rev is what the
   // claim below is made against.
-  let fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, photos }', { id: doc._id });
+  let fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, origin, photos }', { id: doc._id });
   for (const row of pausedRows(fresh)) {
     if (budget <= 0) break;
     const outcome = await resumePanel({ sanity, store: s, doc: fresh, panel: row.panel, origin, now });
     if (outcome === 'resumed') { resumed++; budget--; }
     if (outcome === 'visitor-limited') break;   // the whole document shares one visitor
-    fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, photos }', { id: doc._id });
+    fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, origin, photos }', { id: doc._id });
   }
   return { resumed, remaining: pausedRows(fresh).length };
 }
@@ -138,21 +145,28 @@ export async function resumeDocument({ sanity, doc, origin, now = new Date(), st
  */
 export async function resumeAllPaused({ sanity, origin, now = new Date(), store, max = 200 }) {
   const s = store || guardStore();
-  const global = await readGlobal(s, now);
+  /* A budget per origin, read once and spent down independently. Sharing one
+     number here would undo the whole point of separating the counters: a studio
+     batch still waiting would eat the allowance customers are queued against. */
+  const globals = {};
+  for (const o of ORIGINS) globals[o] = await readGlobal(s, now, o);
   const report = {
     documents: 0, resumed: 0, stillPaused: 0,
-    budget: global.remaining, tripped: global.tripped, day: global.day,
+    budgets: Object.fromEntries(ORIGINS.map((o) => [o, globals[o].remaining])),
+    tripped: Object.fromEntries(ORIGINS.map((o) => [o, globals[o].tripped])),
+    day: globals.customer.day,
   };
-  if (global.tripped) {
+  if (ORIGINS.every((o) => globals[o].tripped)) {
     console.log(
-      `style-resume: still over the daily limit (${global.calls}/${global.max}) — nothing resumed`
+      'style-resume: every budget is spent — nothing resumed ('
+      + ORIGINS.map((o) => `${o} ${globals[o].calls}/${globals[o].max}`).join(', ') + ')'
     );
     return report;
   }
 
   const docs = await sanity.fetch(
     `*[_type == "pendingPersonalisation" && count(photos[styleStatus == "paused"]) > 0]
-       | order(createdAt asc) [0...$max]{ _id, _rev, guardKey, photos, createdAt }`,
+       | order(createdAt asc) [0...$max]{ _id, _rev, guardKey, origin, photos, createdAt }`,
     { max }
   );
   report.documents = docs.length;
@@ -161,20 +175,23 @@ export async function resumeAllPaused({ sanity, origin, now = new Date(), store,
     return report;
   }
 
-  let budget = global.remaining;
+  const budget = { ...report.budgets };
   for (const doc of docs) {
-    if (budget <= 0) {
+    const spendOrigin = originOr(doc.origin);
+    if (budget[spendOrigin] <= 0) {
       report.stillPaused += pausedRows(doc).length;
       continue;
     }
     const { resumed, remaining } = await resumeDocument({ sanity, doc, origin, now, store: s });
     report.resumed += resumed;
     report.stillPaused += remaining;
-    budget -= resumed;
+    budget[spendOrigin] -= resumed;
   }
   console.log(
-    `style-resume: ${report.resumed} panel(s) resumed across ${report.documents} document(s), ` +
-    `${report.stillPaused} still paused, ${Math.max(0, budget)} of today's budget left.`
+    `style-resume: ${report.resumed} panel(s) resumed across ${report.documents} document(s), `
+    + `${report.stillPaused} still paused, `
+    + ORIGINS.map((o) => `${Math.max(0, budget[o])} ${o}`).join(' and ')
+    + " of today's budget left."
   );
   return report;
 }

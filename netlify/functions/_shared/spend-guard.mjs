@@ -5,10 +5,21 @@ import { getStore } from '@netlify/blobs';
  * Spend guards for the styling pipeline.
  *
  * Every comic style call costs money, and nothing upstream of this module has
- * any idea how much has been spent today. Three counters, all in Netlify Blobs:
+ * any idea how much has been spent today. The counters, all in Netlify Blobs:
  *
  *   per visitor   new personalisations per hour, and style calls per rolling 24h
- *   site-wide     style calls per UTC day, with a circuit breaker above it
+ *   site-wide     style calls per UTC day, with a circuit breaker above it --
+ *                 one counter per ORIGIN, so internal work and customer traffic
+ *                 cannot exhaust each other
+ *
+ * TWO BUDGETS, NOT ONE POOL. Catalogue generation and customer traffic used to
+ * share a single daily ceiling, which meant a batch of internal work could shut
+ * the live builder for the rest of the day. They now have a counter each --
+ * STYLE_DAILY_MAX for customers, STUDIO_STYLE_DAILY_MAX for studio work -- and
+ * neither can draw the other down. Both are real limits: running out of studio
+ * budget pauses studio work exactly as running out of customer budget pauses a
+ * customer's, and there is deliberately no bypass, no unlimited mode and no way
+ * to reset either counter from a request.
  *
  * A visitor is a salted hash of the client IP and nothing else. The raw address
  * is never written anywhere -- not to a blob, not to Sanity, not to a log line.
@@ -40,12 +51,44 @@ import { getStore } from '@netlify/blobs';
 
 export const GUARD_STORE = 'spend-guard';
 
+/* ---------------------------------------------------------------- origins */
+
+/**
+ * Which budget a style call spends from.
+ *
+ * A document carries its origin from the moment it is created, so every later
+ * caller -- the styler, the retry endpoint, the resume sweep -- bills and
+ * checks the same counter without having to work it out again from whatever
+ * request happens to be in flight.
+ */
+export const CUSTOMER = 'customer';
+export const STUDIO = 'studio';
+export const ORIGINS = [CUSTOMER, STUDIO];
+
+/**
+ * An origin, or the customer one.
+ *
+ * Anything unrecognised -- absent, misspelt, a value from a document written
+ * before this field existed -- reads as `customer`. That direction is the safe
+ * one: an unknown origin spends the budget that is watched most closely and
+ * refills on the same schedule, rather than quietly finding its way onto the
+ * internal one.
+ */
+export const originOr = (value) => (value === STUDIO ? STUDIO : CUSTOMER);
+
 /** New pendingPersonalisation documents one visitor may create in an hour. */
 export const MAX_NEW_DESIGNS_PER_HOUR = 4;
 /** Billed style calls one visitor may make in a rolling 24 hours. */
 export const MAX_VISITOR_STYLE_CALLS_PER_DAY = 40;
 /** Site-wide style calls per UTC day, unless STYLE_DAILY_MAX says otherwise. */
 export const DEFAULT_STYLE_DAILY_MAX = 300;
+/* Studio work per UTC day, unless STUDIO_STYLE_DAILY_MAX says otherwise.
+   Deliberately small. A catalogue batch is twenty photographs and a handful of
+   retries, and the number this defaults to is the one that applies on a deploy
+   where nobody has thought about it -- so it should be enough to do a day's
+   work and not enough to run up a bill nobody noticed. Raising it is one
+   environment variable and no deploy. */
+export const DEFAULT_STUDIO_STYLE_DAILY_MAX = 40;
 /** How long a visitor's counters are kept after their last write. */
 export const VISITOR_RETENTION_HOURS = 48;
 /** How long a day's site-wide counter is kept, for reading back after the fact. */
@@ -66,12 +109,34 @@ export const LIMIT_MESSAGE =
 /** Shown on a panel whose styling is waiting for the breaker to reset. */
 export const BUSY_MESSAGE = "We're unusually busy — your comic style will be applied shortly";
 
-/** The site-wide ceiling, overridable in the Netlify UI without a deploy. */
-export function styleDailyMax() {
-  const raw = process.env.STYLE_DAILY_MAX;
+/* The same state, said to whoever is actually looking at it. A customer is told
+   the shop is busy, because from where they are standing that is the whole
+   truth and the wait is the only part that concerns them. Someone working in
+   the Studio needs the other half: which budget ran out, and what to change. */
+export const STUDIO_BUSY_MESSAGE =
+  "The studio's daily styling budget is spent — this artwork will be styled when "
+  + 'the budget resets at midnight UTC, or sooner if STUDIO_STYLE_DAILY_MAX is raised.';
+
+/** The message for a paused panel, given which budget paused it. */
+export const busyMessageFor = (origin) =>
+  (originOr(origin) === STUDIO ? STUDIO_BUSY_MESSAGE : BUSY_MESSAGE);
+
+/**
+ * A site-wide ceiling, overridable in the Netlify UI without a deploy.
+ *
+ * Defaults to the customer ceiling when asked without an origin, so every
+ * existing caller keeps the meaning it had.
+ */
+export function styleDailyMax(origin = CUSTOMER) {
+  const studio = originOr(origin) === STUDIO;
+  const raw = studio ? process.env.STUDIO_STYLE_DAILY_MAX : process.env.STYLE_DAILY_MAX;
   const n = Number.parseInt(String(raw ?? '').trim(), 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_STYLE_DAILY_MAX;
+  if (Number.isFinite(n) && n > 0) return n;
+  return studio ? DEFAULT_STUDIO_STYLE_DAILY_MAX : DEFAULT_STYLE_DAILY_MAX;
 }
+
+/** The studio ceiling, named rather than passed as an argument. */
+export const studioStyleDailyMax = () => styleDailyMax(STUDIO);
 
 export const guardStore = () => getStore(GUARD_STORE);
 
@@ -111,6 +176,48 @@ export function visitorKey(req, context) {
   return `v${digest.slice(0, 16)}`;
 }
 
+/**
+ * Which budget this request may spend from.
+ *
+ * NEVER taken on trust. `claimed` is whatever the request said about itself,
+ * and by itself it means nothing at all: a customer who posts origin=studio
+ * would otherwise be spending the internal budget and walking past their own.
+ * So a claim of `studio` is only honoured when the request also carries the
+ * studio's shared secret -- the same one studio-save requires, and the only
+ * studio proof that exists at the API layer. /admin/* Basic Auth guards the
+ * page and never sees a function call, so it cannot be the thing that decides
+ * this.
+ *
+ * Everything else, including every request that says nothing, is a customer.
+ */
+export function requestOrigin(req, { claimed = null } = {}) {
+  if (originOr(claimed) !== STUDIO) return CUSTOMER;
+  const expected = process.env.PERSONALISATION_ACTION_SECRET;
+  if (!expected) {
+    console.warn('spend-guard: a request claimed the studio origin but no secret is configured');
+    return CUSTOMER;
+  }
+  const given = req?.headers?.get ? req.headers.get('x-csc-action-secret') : null;
+  if (!sameSecret(given, expected)) {
+    console.warn('spend-guard: a request claimed the studio origin with a bad or missing secret');
+    return CUSTOMER;
+  }
+  return STUDIO;
+}
+
+/* Constant-time, and length-safe: a mismatched length returns before the loop,
+   which leaks the length of the expected value and nothing else. studio-save
+   carries its own identical copy; they are six lines each and merging them is
+   a refactor for another branch, not something to do while changing what the
+   counters mean. */
+function sameSecret(given, expected) {
+  if (typeof given !== 'string' || typeof expected !== 'string') return false;
+  if (given.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 /* ------------------------------------------------------------- the buckets */
 
 /** '2026-09-13T04' — UTC, so the day the counters reset on is not local. */
@@ -138,7 +245,16 @@ export function windowHours(now = new Date()) {
    a local dev run loses one of the two writes and the count quietly runs
    short. Two writers of the SAME counter still go through the CAS below. */
 const visitorPath = (key, field) => `visitor/${key}/${field}.json`;
-const globalPath = (day) => `global/${day}.json`;
+/* A prefix per origin rather than a field inside one document, for the same
+   reason the visitor's two counters are separate keys: the two are written by
+   unrelated callers and must not contend, and a studio batch must not be able
+   to lose a customer's increment to a compare-and-swap it won. The customer
+   path keeps the key it has always had, so today's counters keep counting and
+   nothing needs migrating. */
+const globalPath = (day, origin = CUSTOMER) =>
+  (originOr(origin) === STUDIO ? `global-studio/${day}.json` : `global/${day}.json`);
+/** Every prefix a day counter can live under, for the sweeper. */
+const GLOBAL_PREFIXES = ORIGINS.map((o) => globalPath('', o).replace('.json', ''));
 
 const sumWindow = (buckets, hours) =>
   hours.reduce((n, h) => n + (Number(buckets?.[h]) || 0), 0);
@@ -300,12 +416,14 @@ export async function bumpVisitor(store, key, field, delta, now = new Date()) {
  * unreadable counter does not pause the whole shop. The per-design cap and the
  * per-visitor limits are still in force underneath it.
  */
-export async function readGlobal(store, now = new Date()) {
+export async function readGlobal(store, now = new Date(), origin = CUSTOMER) {
+  const which = originOr(origin);
   const day = dayBucket(now);
-  const doc = await readJson(store, globalPath(day));
-  const max = styleDailyMax();
+  const doc = await readJson(store, globalPath(day, which));
+  const max = styleDailyMax(which);
   const calls = Number(doc?.calls) || 0;
   return {
+    origin: which,
     day,
     calls,
     max,
@@ -323,20 +441,27 @@ export async function readGlobal(store, now = new Date()) {
  *          single increment that took the count from below the threshold to at
  *          or above it, which is the moment worth emailing about.
  */
-export async function bumpGlobal(store, delta, now = new Date()) {
-  const max = styleDailyMax();
+export async function bumpGlobal(store, delta, now = new Date(), origin = CUSTOMER) {
+  const which = originOr(origin);
+  const max = styleDailyMax(which);
   let before = 0;
-  const doc = await update(store, globalPath(dayBucket(now)), (existing) => {
-    const next = existing || { day: dayBucket(now), calls: 0, createdAt: now.toISOString() };
+  const doc = await update(store, globalPath(dayBucket(now), which), (existing) => {
+    const next = existing
+      || { day: dayBucket(now), origin: which, calls: 0, createdAt: now.toISOString() };
     before = Number(next.calls) || 0;
     next.calls = Math.max(0, before + delta);
     next.max = max;
+    next.origin = which;
     if (next.calls >= max && !next.trippedAt) next.trippedAt = now.toISOString();
     next.updatedAt = now.toISOString();
     return next;
   });
   const calls = Number(doc?.calls) || 0;
-  return { calls, max, tripped: calls >= max, crossed: before < max && calls >= max };
+  return {
+    origin: which, calls, max,
+    tripped: calls >= max,
+    crossed: before < max && calls >= max,
+  };
 }
 
 /**
@@ -346,20 +471,25 @@ export async function bumpGlobal(store, delta, now = new Date()) {
  * gets false and stays quiet. Claimed BEFORE the send rather than after, so a
  * Resend outage costs one missing email rather than one per refused upload.
  */
-export async function claimBreakerNotice(store, now = new Date()) {
+export async function claimBreakerNotice(store, now = new Date(), origin = CUSTOMER) {
   /* A nonce rather than a timestamp comparison. Two callers a second apart
      would both find a fresh-looking notifiedAt and both send; only the one
      whose own mark survived the compare-and-swap may claim it. */
+  const which = originOr(origin);
   const nonce = crypto.randomUUID();
-  await update(store, globalPath(dayBucket(now)), (existing) => {
-    const next = existing || { day: dayBucket(now), calls: 0, createdAt: now.toISOString() };
+  /* Per origin, so a studio budget running out still gets its own email even
+     though a customer one already sent today's. They are different facts about
+     different money. */
+  await update(store, globalPath(dayBucket(now), which), (existing) => {
+    const next = existing
+      || { day: dayBucket(now), origin: which, calls: 0, createdAt: now.toISOString() };
     if (next.notifiedAt) return null;            // someone already has it
     next.notifiedAt = now.toISOString();
     next.notifyNonce = nonce;
     next.trippedAt = next.trippedAt || now.toISOString();
     return next;
   });
-  const after = await readJson(store, globalPath(dayBucket(now)));
+  const after = await readJson(store, globalPath(dayBucket(now), which));
   return after?.notifyNonce === nonce;
 }
 
@@ -391,16 +521,20 @@ export async function sweepGuardCounters({ dryRun = false, now = new Date(), sto
     report.errors.push(`visitors: ${err.message}`);
   }
 
-  try {
-    const { blobs } = await s.list({ prefix: 'global/' });
-    for (const b of blobs) {
-      const day = Date.parse((b.key.split('/').pop() || '').replace('.json', ''));
-      if (!Number.isFinite(day) || day > dayCutoff) { report.kept++; continue; }
-      if (!dryRun) await s.delete(b.key);
-      report.days++;
+  /* Both prefixes, from ORIGINS rather than a literal list: adding a third
+     budget must not silently leave its counters uncollected. */
+  for (const prefix of GLOBAL_PREFIXES) {
+    try {
+      const { blobs } = await s.list({ prefix });
+      for (const b of blobs) {
+        const day = Date.parse((b.key.split('/').pop() || '').replace('.json', ''));
+        if (!Number.isFinite(day) || day > dayCutoff) { report.kept++; continue; }
+        if (!dryRun) await s.delete(b.key);
+        report.days++;
+      }
+    } catch (err) {
+      report.errors.push(`days (${prefix}): ${err.message}`);
     }
-  } catch (err) {
-    report.errors.push(`days: ${err.message}`);
   }
 
   const label = dryRun ? 'spend-guard sweep (DRY RUN)' : 'spend-guard sweep';

@@ -427,6 +427,27 @@ export default defineType({
         'same connection; nothing here can be turned back into an address.',
     }),
     defineField({
+      name: 'origin',
+      title: 'Spend Origin',
+      type: 'string',
+      readOnly: true,
+      options: {
+        list: [
+          { title: 'Customer', value: 'customer' },
+          { title: 'Studio', value: 'studio' },
+        ],
+      },
+      initialValue: 'customer',
+      description:
+        'Which daily styling budget this build spends from. Customer builds count against ' +
+        'STYLE_DAILY_MAX and studio builds against STUDIO_STYLE_DAILY_MAX, so internal work ' +
+        'cannot exhaust the ceiling the live builder depends on, or the other way round. ' +
+        'Set once at the upload that creates the build and never afterwards: the job that ' +
+        'actually bills runs in the background and reads this rather than the request. ' +
+        'Empty on anything written before the two budgets were separated, and read as ' +
+        'Customer.',
+    }),
+    defineField({
       name: 'customerNotes',
       title: 'Customer Notes',
       type: 'text',

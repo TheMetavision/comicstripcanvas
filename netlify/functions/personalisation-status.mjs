@@ -1,7 +1,7 @@
 import { createClient } from '@sanity/client';
 import { cutoutConfigured } from './_shared/cutout.mjs';
 import { MAX_STYLE_CALLS } from './_shared/style-limits.mjs';
-import { BUSY_MESSAGE } from './_shared/spend-guard.mjs';
+import { busyMessageFor } from './_shared/spend-guard.mjs';
 import { pausedRows, resumeDocument, PAUSED } from './_shared/style-resume.mjs';
 
 /**
@@ -52,7 +52,7 @@ export default async (req) => {
 
   try {
     let doc = await sanity.fetch(
-      '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey }', { id }
+      '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
     );
     if (!doc) return notFound();
 
@@ -71,7 +71,7 @@ export default async (req) => {
         const { resumed } = await resumeDocument({ sanity, doc, origin });
         if (resumed) {
           doc = await sanity.fetch(
-            '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey }', { id }
+            '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
           ) || doc;
         }
       } catch (err) {
@@ -121,7 +121,9 @@ export default async (req) => {
          lives on the server so the panel, the Studio row and the email all say
          the same thing. */
       paused: photos.filter((p) => p.styleStatus === PAUSED).length,
-      busyMessage: BUSY_MESSAGE,
+      /* Which budget paused it decides the wording: a customer is told the shop
+         is busy, the Studio is told which ceiling to raise. */
+      busyMessage: busyMessageFor(doc.origin),
       templateId: doc.templateId || null,
       /* Whether a cutout is coming at all. Without this the builder cannot tell
          "not ready yet" from "this deployment has no cutout service", and its
