@@ -514,6 +514,15 @@ const builderData = JSON.stringify({
   .csc-builder .b-hint-bad {
     @apply border-l-4 border-comic-red pl-2 font-semibold text-comic-red;
   }
+  /* The one link that ever appears inside a hint: the way to the artwork team
+     when a customer has used their style attempts for the day. Underlined and
+     in the brand yellow because it is the thing to press, and it is sitting in
+     a line of grey text that is otherwise never interactive. */
+  .csc-builder .b-hint-link {
+    @apply font-semibold text-comic-yellow underline underline-offset-2;
+  }
+  .csc-builder .b-hint-link:hover { @apply text-off-white; }
+
   /* Asking, not scolding: the yellow border the box already has, brightened and
      pulsed twice so it catches the eye of someone who has just dropped a photo
      and is looking at the artwork, then settles. */

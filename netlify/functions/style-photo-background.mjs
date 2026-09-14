@@ -10,8 +10,9 @@ import { cutoutConfigured } from './_shared/cutout.mjs';
 import { memoryNote } from './_shared/scene.mjs';
 import {
   guardStore, bumpVisitor, bumpGlobal, readGlobal, originOr, CUSTOMER,
+  visitorHasStyleBudget, familyForTemplate,
 } from './_shared/spend-guard.mjs';
-import { pausePanel } from './_shared/style-resume.mjs';
+import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 
 /**
@@ -186,7 +187,7 @@ export default async (req) => {
      hand back exactly what was taken. Rolling them into one flag would either
      refund a counter that was never incremented or keep one that was. */
   let visitorCharged = false, globalCharged = false;
-  let guard = null, guardKey = null, spendOrigin = CUSTOMER;
+  let guard = null, guardKey = null, spendOrigin = CUSTOMER, family = null;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id; panel = body.panel;
@@ -240,6 +241,20 @@ export default async (req) => {
       return new Response('Paused', { status: 200 });
     }
 
+    /* And the customer's own daily allowance for this template family, for the
+       same reason as the breaker above: three callers reach this function and
+       only this one spends, so a trigger that was allowed a moment ago can
+       arrive after the allowance has gone. Marked `limited` rather than paused
+       -- nothing resumes it, because nothing gives the allowance back early. */
+    family = familyForTemplate(doc.templateId);
+    if (guardKey && !(await visitorHasStyleBudget(guard, guardKey, new Date(), doc.templateId))) {
+      await limitPanel(sanity, id, panel, doc.templateId);
+      console.warn(
+        `spend-guard: style-photo stopped ${id} ${panel} — ${guardKey} is out of ${family} attempts`
+      );
+      return new Response('Out of attempts', { status: 200 });
+    }
+
     /* The cap is counted here as well as at the trigger, because this function
        is reachable from the retry endpoint too and the count is the only thing
        standing between a stuck retry and an open-ended bill. */
@@ -290,7 +305,7 @@ export default async (req) => {
        Best-effort: a counter that cannot be written must not cost the customer
        their photograph, so a failure here is logged and the call proceeds. */
     try {
-      if (guardKey) { await bumpVisitor(guard, guardKey, 'style', 1); visitorCharged = true; }
+      if (guardKey) { await bumpVisitor(guard, guardKey, family, 1); visitorCharged = true; }
       const site = await bumpGlobal(guard, 1, new Date(), spendOrigin);
       globalCharged = true;
       if (site.crossed) {
@@ -425,7 +440,7 @@ export default async (req) => {
        inflated them would pause a shop that had spent nothing. */
     if (shouldRefund(err) && (visitorCharged || globalCharged)) {
       try {
-        if (visitorCharged) await bumpVisitor(guard, guardKey, 'style', -1);
+        if (visitorCharged) await bumpVisitor(guard, guardKey, family, -1);
         if (globalCharged) await bumpGlobal(guard, -1, new Date(), spendOrigin);
         console.warn(
           `spend-guard: refunded the call for ${id} ${panel} (${guardKey || 'no visitor key'}) — ` +

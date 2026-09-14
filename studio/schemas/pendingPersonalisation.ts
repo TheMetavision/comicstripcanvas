@@ -281,11 +281,28 @@ export default defineType({
                   { title: 'Styling', value: 'styling' },
                   { title: 'Done', value: 'done' },
                   { title: 'Failed', value: 'failed' },
-                  { title: 'Paused (daily limit)', value: 'paused' },
+                  { title: 'Paused (site-wide daily limit)', value: 'paused' },
+                  { title: 'Out of attempts (customer daily limit)', value: 'limited' },
                 ],
               },
+              description:
+                'Paused and Out of attempts are not the same waiting. Paused is the shop’s own ' +
+                'daily ceiling and clears itself the moment that resets — the sweep restarts it ' +
+                'and the customer need do nothing. Out of attempts is this customer’s own daily ' +
+                'allowance for this kind of design; nothing restarts it, their attempts refill ' +
+                'over the following 24 hours, and they have been offered the artwork team instead. ' +
+                'Someone sitting on Out of attempts is someone who may be waiting to hear from us.',
             },
             { name: 'styleError', title: 'Style Error', type: 'string' },
+            {
+              name: 'limitedAt',
+              title: 'Ran Out Of Attempts At',
+              type: 'datetime',
+              readOnly: true,
+              description:
+                'When this panel was stopped by the customer’s own daily allowance. Their photo ' +
+                'and their build are intact; this only records that the last step did not happen.',
+            },
             { name: 'styledWidth', title: 'Styled Width', type: 'number' },
             { name: 'styledHeight', title: 'Styled Height', type: 'number' },
             { name: 'styledAt', title: 'Styled At', type: 'datetime' },

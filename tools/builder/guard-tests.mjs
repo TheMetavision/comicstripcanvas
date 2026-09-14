@@ -16,7 +16,11 @@ import {
   DEFAULT_STYLE_DAILY_MAX, DEFAULT_STUDIO_STYLE_DAILY_MAX,
   styleDailyMax, studioStyleDailyMax,
   BUSY_MESSAGE, STUDIO_BUSY_MESSAGE, busyMessageFor,
-  MAX_NEW_DESIGNS_PER_HOUR, MAX_VISITOR_STYLE_CALLS_PER_DAY,
+  MAX_NEW_DESIGNS_PER_HOUR,
+  COVERS, ICONS, STRIPS, TEMPLATE_FAMILIES, familyForTemplate, styleLimitFor,
+  DEFAULT_STYLE_LIMITS, isStyleLimit, readVisitorAll,
+  STYLE_LIMIT_MESSAGE, STYLE_LIMIT_KEEPS, STYLE_LIMIT_CTA_LABEL,
+  styleLimitCta, styleLimitNotice,
   readGlobal, bumpGlobal, claimBreakerNotice,
   readVisitor, checkVisitor, bumpVisitor, visitorHasStyleBudget,
   hourBucket, dayBucket, sweepGuardCounters,
@@ -268,17 +272,18 @@ say('\n6. RESETS\n');
   await bumpVisitor(vstore, 'vtest', 'style', 1, new Date('2026-09-15T14:00:00Z'));
   const eightHoursOn = new Date('2026-09-15T22:00:00Z');
   const twentyFiveHoursOn = new Date('2026-09-16T15:00:00Z');
-  ok((await readVisitor(vstore, 'vtest', eightHoursOn)).styleCalls24h === 1,
+  const at = (now) => readVisitor(vstore, 'vtest', { family: COVERS, now });
+  ok((await at(eightHoursOn)).styleCalls24h === 1,
     'a visitor style call is still counted eight hours later');
-  ok((await readVisitor(vstore, 'vtest', eightHoursOn)).styleCalls24h === 1,
+  ok((await at(new Date('2026-09-16T13:00:00Z'))).styleCalls24h === 1,
     'and across midnight UTC — it is a rolling 24 hours, not a calendar day');
-  ok((await readVisitor(vstore, 'vtest', twentyFiveHoursOn)).styleCalls24h === 0,
+  ok((await at(twentyFiveHoursOn)).styleCalls24h === 0,
     'and gone once 24 hours have passed');
 
   await bumpVisitor(vstore, 'vtest', 'designs', 1, new Date('2026-09-15T14:59:00Z'));
-  ok((await readVisitor(vstore, 'vtest', new Date('2026-09-15T14:59:59Z'))).designsThisHour === 1,
+  ok((await at(new Date('2026-09-15T14:59:59Z'))).designsThisHour === 1,
     'a new design is counted within its UTC hour');
-  ok((await readVisitor(vstore, 'vtest', new Date('2026-09-15T15:00:01Z'))).designsThisHour === 0,
+  ok((await at(new Date('2026-09-15T15:00:01Z'))).designsThisHour === 0,
     'and the hour bucket turns over on the hour, not 60 minutes later',
     hourBucket(new Date('2026-09-15T15:00:01Z')));
 }
@@ -292,8 +297,6 @@ say('\n7. THE PER-VISITOR GUARDS, UNTOUCHED\n');
 
   ok(MAX_NEW_DESIGNS_PER_HOUR === 4, 'still four new designs an hour',
     String(MAX_NEW_DESIGNS_PER_HOUR));
-  ok(MAX_VISITOR_STYLE_CALLS_PER_DAY === 40, 'still forty style calls in a rolling 24h',
-    String(MAX_VISITOR_STYLE_CALLS_PER_DAY));
 
   for (let i = 0; i < MAX_NEW_DESIGNS_PER_HOUR; i++) {
     ok((await checkVisitor(store, key, { newDesign: true, now: NOW })).ok,
@@ -307,20 +310,22 @@ say('\n7. THE PER-VISITOR GUARDS, UNTOUCHED\n');
     'but another photo on an existing design is still allowed');
 
   const busy = 'vbusy';
-  for (let i = 0; i < MAX_VISITOR_STYLE_CALLS_PER_DAY; i++) {
-    await bumpVisitor(store, busy, 'style', 1, NOW);
+  for (let i = 0; i < styleLimitFor(COVERS); i++) {
+    await bumpVisitor(store, busy, COVERS, 1, NOW);
   }
-  const spent = await checkVisitor(store, busy, { now: NOW });
-  ok(!spent.ok && spent.reason === 'visitor-style-calls-24h',
-    'a visitor out of style calls is refused', spent.reason);
-  ok((await visitorHasStyleBudget(store, busy, NOW)) === false, 'and the resume path agrees');
+  const spent = await checkVisitor(store, busy, { templateId: 'cover', now: NOW });
+  ok(!spent.ok && spent.reason === 'visitor-style-limit-covers',
+    'a visitor out of cover attempts is stopped', spent.reason);
+  ok(isStyleLimit(spent.reason), 'and it is recognised as an allowance, not a refusal');
+  ok((await visitorHasStyleBudget(store, busy, NOW, 'cover')) === false,
+    'and the resume path agrees');
 
   /* The two axes are independent: the site-wide budget having room does not
      buy a visitor past their own limit, which is the whole point of having
      both. Nothing about the origins changed this. */
   process.env.STUDIO_STYLE_DAILY_MAX = '1000';
   process.env.STYLE_DAILY_MAX = '1000';
-  ok(!(await checkVisitor(store, busy, { now: NOW })).ok,
+  ok(!(await checkVisitor(store, busy, { templateId: 'cover', now: NOW })).ok,
     'a wide-open site budget does not lift a per-visitor refusal');
   delete process.env.STUDIO_STYLE_DAILY_MAX;
   delete process.env.STYLE_DAILY_MAX;
@@ -328,7 +333,7 @@ say('\n7. THE PER-VISITOR GUARDS, UNTOUCHED\n');
   /* Failing open is deliberate: a blob store having a bad minute must not take
      the builder down. */
   const broken = { async get() { throw new Error('store is down'); } };
-  const verdict = await checkVisitor(broken, key, { newDesign: true, now: NOW });
+  const verdict = await checkVisitor(broken, key, { newDesign: true, templateId: 'cover', now: NOW });
   ok(verdict.ok === true, 'an unreadable counter store allows the upload', verdict.reason || 'ok');
 }
 
@@ -369,7 +374,7 @@ say('\n10. BOTH SETS OF COUNTERS ARE COLLECTED\n');
   const old = new Date('2026-08-01T12:00:00Z');
   for (const o of ORIGINS) await bumpGlobal(store, 1, old, o);
   for (const o of ORIGINS) await bumpGlobal(store, 1, NOW, o);
-  await bumpVisitor(store, 'vold', 'style', 1, old);
+  await bumpVisitor(store, 'vold', COVERS, 1, old);
 
   const before = [...store.data.keys()].length;
   const report = await sweepGuardCounters({ now: NOW, store });
@@ -381,6 +386,157 @@ say('\n10. BOTH SETS OF COUNTERS ARE COLLECTED\n');
     "today's counters are both still there", left.join(', '));
   ok(!report.errors.length, 'and nothing errored', report.errors.join('; '));
   ok(before > left.length, 'something was actually deleted', `${before} -> ${left.length}`);
+}
+
+/* ---------------------------------------- 11. an allowance per kind of design */
+
+say('\n11. AN ALLOWANCE PER KIND OF DESIGN\n');
+{
+  /* A cover is one panel and a strip is twelve, so one flat number was
+     generous for one and barely a single build of the other. These are the
+     three allowances, and the point of them is that they are separate. */
+  ok(TEMPLATE_FAMILIES.join(',') === 'covers,icons,strips', 'three families',
+    TEMPLATE_FAMILIES.join(','));
+
+  const map = [
+    ['cover', COVERS], ['cover-fullbleed', COVERS],
+    ['icon-portrait', ICONS], ['icon-landscape', ICONS],
+    ['strip', STRIPS],
+  ];
+  for (const [templateId, family] of map) {
+    ok(familyForTemplate(templateId) === family, `${templateId} spends from ${family}`,
+      familyForTemplate(templateId));
+  }
+  for (const unknown of [null, undefined, '', 'poster', 'cover-v2']) {
+    ok(familyForTemplate(unknown) === COVERS,
+      `${JSON.stringify(unknown)} falls back to the tightest allowance`, familyForTemplate(unknown));
+  }
+
+  ok(DEFAULT_STYLE_LIMITS[COVERS] === 5 && DEFAULT_STYLE_LIMITS[ICONS] === 5
+    && DEFAULT_STYLE_LIMITS[STRIPS] === 30, 'the defaults are 5 / 5 / 30',
+    JSON.stringify(DEFAULT_STYLE_LIMITS));
+
+  /* One complete build, per template, against its own allowance. This is the
+     assertion that would catch a limit set below what a build actually costs. */
+  const PANELS = { cover: 1, 'cover-fullbleed': 1, 'icon-portrait': 1, 'icon-landscape': 1, strip: 12 };
+  for (const [templateId, panels] of Object.entries(PANELS)) {
+    const limit = styleLimitFor(familyForTemplate(templateId));
+    ok(limit >= panels, `${templateId}: ${limit} attempts covers a complete ${panels}-panel build`,
+      `${panels} needed`);
+  }
+
+  for (const [envVar, family] of [
+    ['STYLE_LIMIT_COVERS', COVERS], ['STYLE_LIMIT_ICONS', ICONS], ['STYLE_LIMIT_STRIPS', STRIPS],
+  ]) {
+    process.env[envVar] = '3';
+    ok(styleLimitFor(family) === 3, `${envVar} is read per request`, String(styleLimitFor(family)));
+    process.env[envVar] = 'nonsense';
+    ok(styleLimitFor(family) === DEFAULT_STYLE_LIMITS[family],
+      'and nonsense falls back to the default', String(styleLimitFor(family)));
+    delete process.env[envVar];
+  }
+
+  /* THE ONE THAT MATTERS: spending a strip allowance must leave the covers
+     alone. This is the bug the old flat counter had by construction. */
+  process.env.STYLE_LIMIT_COVERS = '5';
+  process.env.STYLE_LIMIT_ICONS = '5';
+  process.env.STYLE_LIMIT_STRIPS = '30';
+  const store = memStore();
+  const key = 'vmixed';
+
+  for (let i = 0; i < 12; i++) await bumpVisitor(store, key, STRIPS, 1, NOW);
+  const all = await readVisitorAll(store, key, NOW);
+  ok(all[STRIPS].styleCalls24h === 12, 'a twelve-panel strip spent twelve strip attempts',
+    String(all[STRIPS].styleCalls24h));
+  ok(all[COVERS].styleCalls24h === 0 && all[ICONS].styleCalls24h === 0,
+    'and nothing at all from covers or icons',
+    `${all[COVERS].styleCalls24h} / ${all[ICONS].styleCalls24h}`);
+  ok((await checkVisitor(store, key, { templateId: 'cover', now: NOW })).ok,
+    'so a cover is still allowed after a whole strip');
+  ok(all[COVERS].remaining === 5, 'with the full cover allowance intact',
+    String(all[COVERS].remaining));
+
+  /* Each boundary, on its own counter. */
+  for (const [templateId, family] of [['cover', COVERS], ['icon-portrait', ICONS], ['strip', STRIPS]]) {
+    const k = `vlim-${family}`;
+    const limit = styleLimitFor(family);
+    for (let i = 0; i < limit - 1; i++) await bumpVisitor(store, k, family, 1, NOW);
+    ok((await checkVisitor(store, k, { templateId, now: NOW })).ok,
+      `${family}: the last attempt inside the limit is allowed`, `${limit - 1} of ${limit}`);
+    await bumpVisitor(store, k, family, 1, NOW);
+    const over = await checkVisitor(store, k, { templateId, now: NOW });
+    ok(!over.ok && over.reason === `visitor-style-limit-${family}`,
+      `${family}: the one past it is stopped`, over.reason);
+    ok(over.remaining === 0, 'with nothing left', String(over.remaining));
+
+    /* And the other two are untouched by it. */
+    const others = TEMPLATE_FAMILIES.filter((f) => f !== family);
+    const counts = await readVisitorAll(store, k, NOW);
+    ok(others.every((f) => counts[f].styleCalls24h === 0),
+      `${family}: ${others.join(' and ')} never moved`,
+      others.map((f) => `${f} ${counts[f].styleCalls24h}`).join(', '));
+  }
+
+  /* A refund goes back to the family that paid. */
+  const rk = 'vrefund';
+  await bumpVisitor(store, rk, STRIPS, 1, NOW);
+  await bumpVisitor(store, rk, STRIPS, -1, NOW);
+  const refunded = await readVisitorAll(store, rk, NOW);
+  ok(refunded[STRIPS].styleCalls24h === 0, 'a refunded strip call is given back');
+  ok(refunded[COVERS].styleCalls24h === 0, 'and no other counter was touched');
+
+  /* The rolling window is per family too, not a shared clock. */
+  const wk = 'vwindow';
+  await bumpVisitor(store, wk, COVERS, 1, new Date('2026-09-15T02:00:00Z'));
+  ok((await readVisitor(store, wk, { family: COVERS, now: new Date('2026-09-16T01:00:00Z') })).styleCalls24h === 1,
+    'a cover attempt is still spent 23 hours later');
+  ok((await readVisitor(store, wk, { family: COVERS, now: new Date('2026-09-16T03:00:00Z') })).styleCalls24h === 0,
+    'and back 25 hours later — rolling, not midnight');
+
+  delete process.env.STYLE_LIMIT_COVERS;
+  delete process.env.STYLE_LIMIT_ICONS;
+  delete process.env.STYLE_LIMIT_STRIPS;
+}
+
+/* ------------------------------------------- 12. what the customer is told */
+
+say('\n12. THE WAY OUT\n');
+{
+  ok(STYLE_LIMIT_MESSAGE === "You've reached the maximum number of style attempts for today. "
+    + "Send your photo to our artwork team and we'll put a proof together for you.",
+    'the shop\u2019s wording, unchanged', STYLE_LIMIT_MESSAGE);
+  ok(!/fail/i.test(STYLE_LIMIT_MESSAGE) && !/error/i.test(STYLE_LIMIT_MESSAGE)
+    && !/sorry/i.test(STYLE_LIMIT_MESSAGE), 'it does not read as a failure');
+  ok(/saved/i.test(STYLE_LIMIT_KEEPS) && /tomorrow/i.test(STYLE_LIMIT_KEEPS),
+    'and the line under it answers "is my work gone?" and "when can I come back?"',
+    STYLE_LIMIT_KEEPS);
+
+  const notice = styleLimitNotice('pp-0123456789abcdef', STRIPS);
+  ok(notice.text === STYLE_LIMIT_MESSAGE, 'the notice carries the wording');
+  ok(notice.ctaLabel === STYLE_LIMIT_CTA_LABEL && /artwork team/i.test(notice.ctaLabel),
+    'and a label that says what pressing it does', notice.ctaLabel);
+  ok(notice.ctaHref.startsWith('/contact?'), 'the call to action is the contact form',
+    notice.ctaHref);
+  ok(/[?&]ref=pp-0123456789abcdef(&|$)/.test(notice.ctaHref),
+    'with the build reference, so the team can find the photos already uploaded',
+    notice.ctaHref);
+  ok(/[?&]topic=artwork-proof(&|$)/.test(notice.ctaHref), 'and the topic the page prefills from');
+  ok(/[?&]subject=Custom\+Order(&|$)/.test(notice.ctaHref),
+    'and a subject the form actually offers', notice.ctaHref);
+  ok(notice.family === STRIPS, 'it knows which allowance ran out', notice.family);
+
+  /* Nothing personal is ever in that URL -- a build id and two fixed words. */
+  const params = [...new URL(`https://x${notice.ctaHref}`).searchParams.keys()].sort();
+  ok(params.join(',') === 'ref,subject,topic', 'and nothing else is in the link',
+    params.join(','));
+
+  /* It has to work for a build that has no id yet. */
+  const bare = styleLimitNotice(null, null);
+  ok(bare.ctaHref.startsWith('/contact?') && !/ref=/.test(bare.ctaHref),
+    'a notice with no build still has a working link', bare.ctaHref);
+  ok(bare.family === null, 'and says nothing it does not know');
+
+  ok(styleLimitCta('pp-x') !== styleLimitCta('pp-y'), 'two builds get two links');
 }
 
 say(`\n${pass} passed, ${fail} failed.`);

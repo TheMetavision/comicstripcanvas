@@ -1,5 +1,6 @@
 import {
   guardStore, readGlobal, visitorHasStyleBudget, busyMessageFor, originOr, ORIGINS,
+  styleLimitNotice, familyForTemplate,
 } from './spend-guard.mjs';
 
 /**
@@ -29,6 +30,23 @@ import {
 
 export const PAUSED = 'paused';
 
+/**
+ * Out of style attempts for today.
+ *
+ * A SEPARATE state from PAUSED, and the difference is the whole reason it
+ * exists: a paused panel is waiting on the shop and comes back by itself the
+ * moment the site-wide breaker clears, so the sweep below picks it up and the
+ * customer need do nothing. A limited panel is waiting on the CUSTOMER's own
+ * daily allowance, and nothing here restarts it -- their allowance refills
+ * gradually over the next twenty-four hours and they choose whether to come
+ * back or to send the photograph to the artwork team instead.
+ *
+ * Resuming one automatically would spend an allowance they have not been given
+ * back yet and would do it without asking, so pausedRows deliberately does not
+ * match these and the sweep never sees them.
+ */
+export const LIMITED = 'limited';
+
 /** Rows this document has waiting on the breaker. */
 export const pausedRows = (doc) =>
   (doc?.photos || []).filter((p) => p && p.styleStatus === PAUSED && p.rawKey);
@@ -54,14 +72,41 @@ export async function pausePanel(sanity, id, panel, spendOrigin) {
 }
 
 /**
+ * Mark one panel as out of attempts for today.
+ *
+ * Everything the customer has done survives: the photograph is already stored,
+ * the document is already written, and this only records that the last step did
+ * not happen. Coming back tomorrow and asking again is all that is needed.
+ *
+ * The wording and the link come from the server, exactly as the paused message
+ * does, so the panel, the Studio row and the status poll cannot drift apart.
+ */
+export async function limitPanel(sanity, id, panel, templateId) {
+  const notice = styleLimitNotice(id, familyForTemplate(templateId));
+  await sanity
+    .patch(id)
+    .set({
+      [`photos[panel == "${panel}"].styleStatus`]: LIMITED,
+      [`photos[panel == "${panel}"].styleError`]: notice.text,
+      [`photos[panel == "${panel}"].limitedAt`]: new Date().toISOString(),
+    })
+    .commit();
+  return notice;
+}
+
+/**
  * Restart one paused panel, if every guard still allows it.
  *
  * @returns {'resumed'|'no-budget'|'visitor-limited'|'raced'|'failed'}
  */
 async function resumePanel({ sanity, store, doc, panel, origin, now }) {
-  if (doc.guardKey && !(await visitorHasStyleBudget(store, doc.guardKey, now))) {
+  /* The visitor's allowance for THIS document's family. Asking the wrong one
+     would either stall a strip because its owner is out of cover attempts, or
+     spend a cover allowance that is already gone. */
+  if (doc.guardKey && !(await visitorHasStyleBudget(store, doc.guardKey, now, doc.templateId))) {
     console.warn(
-      `style-resume: ${doc._id} ${panel} left paused — visitor ${doc.guardKey} has no 24h budget left`
+      `style-resume: ${doc._id} ${panel} left paused — visitor ${doc.guardKey} has no `
+      + `${familyForTemplate(doc.templateId)} attempts left`
     );
     return 'visitor-limited';
   }
@@ -123,13 +168,15 @@ export async function resumeDocument({ sanity, doc, origin, now = new Date(), st
   let resumed = 0;
   // Re-read: the caller's copy may predate another resume, and _rev is what the
   // claim below is made against.
-  let fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, origin, photos }', { id: doc._id });
+  let fresh = await sanity.fetch(
+    '*[_id == $id][0]{ _id, _rev, guardKey, origin, templateId, photos }', { id: doc._id });
   for (const row of pausedRows(fresh)) {
     if (budget <= 0) break;
     const outcome = await resumePanel({ sanity, store: s, doc: fresh, panel: row.panel, origin, now });
     if (outcome === 'resumed') { resumed++; budget--; }
     if (outcome === 'visitor-limited') break;   // the whole document shares one visitor
-    fresh = await sanity.fetch('*[_id == $id][0]{ _id, _rev, guardKey, origin, photos }', { id: doc._id });
+    fresh = await sanity.fetch(
+      '*[_id == $id][0]{ _id, _rev, guardKey, origin, templateId, photos }', { id: doc._id });
   }
   return { resumed, remaining: pausedRows(fresh).length };
 }
@@ -166,7 +213,7 @@ export async function resumeAllPaused({ sanity, origin, now = new Date(), store,
 
   const docs = await sanity.fetch(
     `*[_type == "pendingPersonalisation" && count(photos[styleStatus == "paused"]) > 0]
-       | order(createdAt asc) [0...$max]{ _id, _rev, guardKey, origin, photos, createdAt }`,
+       | order(createdAt asc) [0...$max]{ _id, _rev, guardKey, origin, templateId, photos, createdAt }`,
     { max }
   );
   report.documents = docs.length;

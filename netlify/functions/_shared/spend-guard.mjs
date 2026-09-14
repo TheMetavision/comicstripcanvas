@@ -8,6 +8,7 @@ import { getStore } from '@netlify/blobs';
  * any idea how much has been spent today. The counters, all in Netlify Blobs:
  *
  *   per visitor   new personalisations per hour, and style calls per rolling 24h
+ *                 -- counted PER TEMPLATE FAMILY, see below
  *   site-wide     style calls per UTC day, with a circuit breaker above it --
  *                 one counter per ORIGIN, so internal work and customer traffic
  *                 cannot exhaust each other
@@ -78,8 +79,80 @@ export const originOr = (value) => (value === STUDIO ? STUDIO : CUSTOMER);
 
 /** New pendingPersonalisation documents one visitor may create in an hour. */
 export const MAX_NEW_DESIGNS_PER_HOUR = 4;
-/** Billed style calls one visitor may make in a rolling 24 hours. */
-export const MAX_VISITOR_STYLE_CALLS_PER_DAY = 40;
+
+/* ------------------------------------------------------- template families */
+
+/**
+ * What a build costs depends entirely on what it is.
+ *
+ * A cover and an icon are ONE panel: a complete build is one style call, and
+ * everything after that is the customer trying again. A strip is TWELVE: a
+ * complete build is twelve calls before anyone has changed their mind about
+ * anything. One flat allowance across all three -- which is what was here --
+ * therefore means the same number is generous for a cover and barely a single
+ * attempt at a strip, and a customer who made a strip in the morning had spent
+ * most of the day's covers by lunchtime.
+ *
+ * So: a counter per family, and a limit that reflects what the family costs.
+ * A customer's strip usage cannot touch their cover allowance, or the reverse.
+ */
+export const COVERS = 'covers';
+export const ICONS = 'icons';
+export const STRIPS = 'strips';
+export const TEMPLATE_FAMILIES = [COVERS, ICONS, STRIPS];
+
+const FAMILY_BY_TEMPLATE = {
+  cover: COVERS,
+  'cover-fullbleed': COVERS,
+  'icon-portrait': ICONS,
+  'icon-landscape': ICONS,
+  strip: STRIPS,
+};
+
+/**
+ * Which allowance a template spends from.
+ *
+ * An unrecognised template -- absent, misspelt, a template added later and not
+ * listed here -- counts as a cover. That is the tightest of the three, so a
+ * gap in this table costs a customer some attempts rather than handing out a
+ * strip's worth of calls to anything that turns up with no name.
+ */
+export const familyForTemplate = (templateId) => FAMILY_BY_TEMPLATE[templateId] || COVERS;
+
+/**
+ * Billed style calls one visitor may make per family, per rolling 24 hours.
+ *
+ * Measured against what a build actually costs as the code stands:
+ *
+ *   covers   1 call a build (one panel)  -> 5 is one build and four re-tries
+ *   icons    1 call a build (one panel)  -> 5 is one build and four re-tries
+ *   strips  12 calls a build (12 panels) -> 30 is two complete strips and six
+ *
+ * The per-design cap (MAX_STYLE_CALLS, 16) sits underneath all of them and is
+ * unchanged: no single design may ever spend more than sixteen calls, however
+ * much daily allowance is left.
+ */
+export const DEFAULT_STYLE_LIMITS = {
+  [COVERS]: 5,
+  [ICONS]: 5,
+  [STRIPS]: 30,
+};
+
+const LIMIT_ENV = {
+  [COVERS]: 'STYLE_LIMIT_COVERS',
+  [ICONS]: 'STYLE_LIMIT_ICONS',
+  [STRIPS]: 'STYLE_LIMIT_STRIPS',
+};
+
+/** One family's daily allowance, overridable in the Netlify UI without a deploy. */
+export function styleLimitFor(family) {
+  const fam = TEMPLATE_FAMILIES.includes(family) ? family : COVERS;
+  const n = Number.parseInt(String(process.env[LIMIT_ENV[fam]] ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_STYLE_LIMITS[fam];
+}
+
+/** The blob field a family's counter lives in. */
+const styleField = (family) => `style-${TEMPLATE_FAMILIES.includes(family) ? family : COVERS}`;
 /** Site-wide style calls per UTC day, unless STYLE_DAILY_MAX says otherwise. */
 export const DEFAULT_STYLE_DAILY_MAX = 300;
 /* Studio work per UTC day, unless STUDIO_STYLE_DAILY_MAX says otherwise.
@@ -101,10 +174,69 @@ const WINDOW_HOURS = 24;
 
 const SALT_FALLBACK = 'csc-style-guard-v1';
 
-/** Shown to the customer when a per-visitor limit refuses an upload. */
+/** Shown to the customer when the designs-per-hour guard refuses an upload. */
 export const LIMIT_MESSAGE =
   "You've reached today's limit for new designs — please try again later, " +
   'or contact us if you\'re working on something big.';
+
+/* ------------------------------------------- out of style attempts for today */
+
+/**
+ * The end of a customer's daily allowance, which is not a failure and must not
+ * read like one.
+ *
+ * They have done nothing wrong, their photographs are safe, and there is
+ * something we can actually do for them -- so the message says all three and
+ * hands them a way to ask. The first two sentences are the shop's words,
+ * unchanged; the third is the part the builder needs in order to be honest
+ * about what happens next.
+ */
+export const STYLE_LIMIT_MESSAGE =
+  "You've reached the maximum number of style attempts for today. Send your photo "
+  + "to our artwork team and we'll put a proof together for you.";
+
+/** Said underneath it, because "is my work gone?" is the next question. */
+export const STYLE_LIMIT_KEEPS =
+  'Your photos and everything you have built are saved. You can carry on tomorrow, '
+  + 'or send them over now and we will take it from here.';
+
+export const STYLE_LIMIT_CTA_LABEL = 'Send your photo to our artwork team';
+
+/**
+ * Where that button goes.
+ *
+ * The contact form rather than a mailto: a mailto opens nothing at all for
+ * anyone on webmail, which is most people, and a dead button at the exact
+ * moment somebody is already frustrated is worse than no button. The form is
+ * already built, already has Turnstile and the honeypot in front of it, and
+ * already reaches the team.
+ *
+ * `ref` is the build id, so whoever answers can find the photographs that are
+ * already uploaded instead of asking for them again. It is an opaque id and
+ * grants no access to anything -- the proof and thumbnail endpoints carry their
+ * own unguessable tokens -- and no name, address or email ever goes in the URL.
+ */
+export function styleLimitCta(buildId) {
+  const params = new URLSearchParams({ subject: 'Custom Order', topic: 'artwork-proof' });
+  if (buildId) params.set('ref', String(buildId));
+  return `/contact?${params.toString()}`;
+}
+
+/**
+ * Everything the builder needs to render the state, from the server.
+ *
+ * The wording lives here for the same reason the paused wording does: the
+ * panel, the Studio row and anything else that has to describe this should not
+ * be able to disagree about it.
+ */
+export const styleLimitNotice = (buildId, family) => ({
+  text: STYLE_LIMIT_MESSAGE,
+  keeps: STYLE_LIMIT_KEEPS,
+  ctaLabel: STYLE_LIMIT_CTA_LABEL,
+  ctaHref: styleLimitCta(buildId),
+  family: TEMPLATE_FAMILIES.includes(family) ? family : null,
+  resetsOn: 'a rolling 24 hours from each call',
+});
 
 /** Shown on a panel whose styling is waiting for the breaker to reset. */
 export const BUSY_MESSAGE = "We're unusually busy — your comic style will be applied shortly";
@@ -329,19 +461,38 @@ async function readJson(store, key) {
 /**
  * What this visitor has spent.
  *
- * @returns {{ designsThisHour: number, styleCalls24h: number, hour: string }}
+ * `styleCalls24h` is the family's own count, not a total across all three: the
+ * whole point of the split is that they are separate allowances, and a number
+ * that added them up would be the flat limit again wearing a different name.
+ *
+ * @returns {{ designsThisHour, styleCalls24h, family, limit, remaining, hour }}
  */
-export async function readVisitor(store, key, now = new Date()) {
+export async function readVisitor(store, key, { templateId = null, family = null, now = new Date() } = {}) {
+  const fam = family || familyForTemplate(templateId);
   const [designs, style] = await Promise.all([
     readJson(store, visitorPath(key, 'designs')),
-    readJson(store, visitorPath(key, 'style')),
+    readJson(store, visitorPath(key, styleField(fam))),
   ]);
   const hour = hourBucket(now);
+  const calls = sumWindow(style?.hours, windowHours(now));
+  const limit = styleLimitFor(fam);
   return {
     designsThisHour: Number(designs?.hours?.[hour]) || 0,
-    styleCalls24h: sumWindow(style?.hours, windowHours(now)),
+    styleCalls24h: calls,
+    family: fam,
+    limit,
+    remaining: Math.max(0, limit - calls),
     hour,
   };
+}
+
+/** Every family's count at once, for a log line or a report. */
+export async function readVisitorAll(store, key, now = new Date()) {
+  const out = {};
+  for (const fam of TEMPLATE_FAMILIES) {
+    out[fam] = await readVisitor(store, key, { family: fam, now });
+  }
+  return out;
 }
 
 /**
@@ -357,28 +508,44 @@ export async function readVisitor(store, key, now = new Date()) {
  *
  * @returns {{ ok: boolean, reason: string|null, designsThisHour, styleCalls24h }}
  */
-export async function checkVisitor(store, key, { newDesign = false, now = new Date() } = {}) {
+export async function checkVisitor(store, key, { newDesign = false, templateId = null, now = new Date() } = {}) {
   let counts;
   try {
-    counts = await readVisitor(store, key, now);
+    counts = await readVisitor(store, key, { templateId, now });
   } catch (err) {
     console.warn(`spend-guard: ${key} could not be read, allowing: ${err.message}`);
-    return { ok: true, reason: null, designsThisHour: 0, styleCalls24h: 0 };
+    return {
+      ok: true, reason: null, designsThisHour: 0, styleCalls24h: 0,
+      family: familyForTemplate(templateId), limit: styleLimitFor(familyForTemplate(templateId)),
+      remaining: null,
+    };
   }
 
   if (newDesign && counts.designsThisHour >= MAX_NEW_DESIGNS_PER_HOUR) {
     return { ...counts, ok: false, reason: 'visitor-designs-per-hour' };
   }
-  if (counts.styleCalls24h >= MAX_VISITOR_STYLE_CALLS_PER_DAY) {
-    return { ...counts, ok: false, reason: 'visitor-style-calls-24h' };
+  /* Out of attempts for this family is NOT a refusal of the upload any more.
+     The caller stores the photograph, marks the panel `limited` and shows the
+     customer the way to the artwork team -- see STYLE_LIMIT_MESSAGE. The
+     reason names the family so a log line says which allowance ran out. */
+  if (counts.styleCalls24h >= counts.limit) {
+    return { ...counts, ok: false, reason: `visitor-style-limit-${counts.family}` };
   }
   return { ...counts, ok: true, reason: null };
 }
 
-/** True while this visitor still has room for another billed style call. */
-export async function visitorHasStyleBudget(store, key, now = new Date()) {
-  const { styleCalls24h } = await readVisitor(store, key, now);
-  return styleCalls24h < MAX_VISITOR_STYLE_CALLS_PER_DAY;
+/** Did this verdict run out of style attempts, rather than designs per hour? */
+export const isStyleLimit = (reason) => /^visitor-style-limit-/.test(String(reason || ''));
+
+/**
+ * True while this visitor still has room for another billed style call on this
+ * family. The family matters: a customer with no cover attempts left may still
+ * have twenty-eight strip calls in hand, and a resume that asked the wrong one
+ * would either stall good work or spend an allowance that is gone.
+ */
+export async function visitorHasStyleBudget(store, key, now = new Date(), templateId = null) {
+  const { styleCalls24h, limit } = await readVisitor(store, key, { templateId, now });
+  return styleCalls24h < limit;
 }
 
 /**
@@ -389,6 +556,10 @@ export async function visitorHasStyleBudget(store, key, now = new Date()) {
  * collected by retention rather than growing.
  */
 export async function bumpVisitor(store, key, field, delta, now = new Date()) {
+  /* 'designs', or a family -- 'covers' / 'icons' / 'strips', which is stored as
+     style-<family>. Anything else would silently open a counter nobody reads,
+     so it is named here rather than accepted. */
+  const path = field === 'designs' ? 'designs' : styleField(field);
   const hour = hourBucket(now);
   /* Prune what has EXPIRED, not everything outside the window. ISO hour labels
      sort chronologically as strings, so this is a comparison and not a set
@@ -396,7 +567,7 @@ export async function bumpVisitor(store, key, field, delta, now = new Date()) {
      also excludes the hours ahead of now, so a write whose clock ran a moment
      behind another one would delete that other one's bucket. */
   const oldest = windowHours(now)[WINDOW_HOURS - 1];
-  return update(store, visitorPath(key, field === 'designs' ? 'designs' : 'style'), (doc) => {
+  return update(store, visitorPath(key, path), (doc) => {
     const next = doc || { hours: {}, createdAt: now.toISOString() };
     next.hours = next.hours || {};
     for (const h of Object.keys(next.hours)) if (h < oldest) delete next.hours[h];

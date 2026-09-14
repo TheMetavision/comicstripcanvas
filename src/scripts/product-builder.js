@@ -1120,11 +1120,33 @@ export function initProductBuilder() {
      status poll, or from the hourly sweep if this tab is long closed -- so
      there is nothing for the customer to do and nothing to retry. */
   const STYLE_PAUSED = 'paused';
+  /* A SIXTH, and the one that does not clear itself. Paused is the shop's
+     daily limit and comes back on its own; this is the CUSTOMER's own daily
+     allowance for this kind of design, and nothing restarts it -- their
+     attempts refill over the next twenty-four hours and they decide whether to
+     come back or to let the artwork team take it from here. Everything they
+     have built is kept either way, which is the first thing the message says.
+
+     It is not a failure and must never be drawn as one: there is no retry,
+     because asking again today would be refused again today. */
+  const STYLE_LIMITED = 'limited';
 
   /* Both are the server's words, fetched from the status endpoint so the panel,
      the Studio row and the email that goes to us cannot drift apart. These are
      the fallbacks for a reply that predates them. */
   let busyText = "We're unusually busy — your comic style will be applied shortly";
+  /* The same again for the out-of-attempts state, wording and link together. A
+     fallback with no link is better than no fallback, but the server's copy is
+     what is normally shown -- and it is the only one that knows the build
+     reference to hand the artwork team. */
+  let limitNotice = {
+    text: "You've reached the maximum number of style attempts for today. Send your photo "
+      + "to our artwork team and we'll put a proof together for you.",
+    keeps: 'Your photos and everything you have built are saved. You can carry on tomorrow, '
+      + 'or send them over now and we will take it from here.',
+    ctaLabel: 'Send your photo to our artwork team',
+    ctaHref: '/contact?subject=Custom+Order&topic=artwork-proof',
+  };
   const CAP_TEXT = 'This design has reached its limit of photo changes — you can continue '
     + 'with the photos you have, or start a new design';
 
@@ -1171,12 +1193,18 @@ export function initProductBuilder() {
   const STYLE_GIVE_UP_MS = 240000;
 
   /* Paused counts as waiting, which is what keeps Add to basket shut and the
-     poll running: the photograph is coming, just not yet. */
+     poll running: the photograph is coming, just not yet.
+
+     LIMITED deliberately does NOT count as waiting. Nothing is coming: the
+     poll would spin until it gave up and the customer would watch a spinner
+     that could never finish. It still holds the gate shut -- see below -- but
+     it does it by not being done rather than by pretending to be in flight. */
   const styleWaiting = () => styleable().filter(
     (s) => s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING
       || s.styleState === STYLE_PAUSED
   ).length;
   const stylePausedCount = () => styleable().filter((s) => s.styleState === STYLE_PAUSED).length;
+  const styleLimitedCount = () => styleable().filter((s) => s.styleState === STYLE_LIMITED).length;
   /* And the cutout, which is a SECOND wait after styling finishes -- the server
      writes it once the panel is already 'done'. Counting it separately is the
      whole point: styling being over does not mean there is nothing left to
@@ -1393,6 +1421,13 @@ export function initProductBuilder() {
           : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
             : ['Style not applied', 'Tap to try again'];
         tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
+      } else if (s.uploadState === UPLOADED && s.styleState === STYLE_LIMITED) {
+        /* 'busy', not 'bad'. Nothing has gone wrong and the flag should not
+           look as though it has -- and there is no "tap to retry", because
+           today there is nothing to retry with. */
+        kind = 'busy';
+        lines = ['No attempts', 'left today'];
+        tip = limitNotice.text;
       } else if (s.uploadState === UPLOADED && s.styleState === STYLE_PAUSED) {
         /* Busy rather than bad: nothing has gone wrong, and the spinner is
            honest -- the server really is going to do this without being asked
@@ -1701,6 +1736,11 @@ export function initProductBuilder() {
     if (typeof payload.styleCalls === 'number') styleCalls = payload.styleCalls;
     if (typeof payload.styleMax === 'number') styleMax = payload.styleMax;
     if (typeof payload.busyMessage === 'string' && payload.busyMessage) busyText = payload.busyMessage;
+    /* Wording AND link from the server, for the same reason: it is the only
+       side that knows which allowance ran out and which build to quote. */
+    if (payload.limitNotice && typeof payload.limitNotice.text === 'string') {
+      limitNotice = { ...limitNotice, ...payload.limitNotice };
+    }
     const rows = Array.isArray(payload.photos) ? payload.photos : [];
     let touched = false;
     for (const row of rows) {
@@ -2920,12 +2960,23 @@ export function initProductBuilder() {
     const st = s.uploadState;
     const styleFailed = st === UPLOADED && s.styleState === STYLE_FAILED;
     const paused = st === UPLOADED && s.styleState === STYLE_PAUSED;
+    const outOfAttempts = st === UPLOADED && s.styleState === STYLE_LIMITED;
     const styling = st === UPLOADED && !s.styled
       && (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING);
-    const cuttingOut = st === UPLOADED && !styling && !paused && !cutoutSettled(s);
+    const cuttingOut = st === UPLOADED && !styling && !paused && !outOfAttempts && !cutoutSettled(s);
     up.classList.toggle('b-hint-bad', st === FAILED || styleFailed);
     up.hidden = !(st === PENDING || st === UPLOADING || st === FAILED || styling || styleFailed
-      || paused || cuttingOut || s.styled);
+      || paused || outOfAttempts || cuttingOut || s.styled);
+
+    /* The only hint that carries a link, so it is built rather than assigned --
+       and it goes first, because "you are out of attempts" outranks every other
+       thing this line could be saying about a photo that is already stored. */
+    if (outOfAttempts) {
+      setHint(up, `${limitNotice.text} ${limitNotice.keeps || ''}`.trim(),
+        { href: limitNotice.ctaHref, label: limitNotice.ctaLabel });
+      return;
+    }
+
     up.textContent = st === PENDING ? 'Waiting to upload…'
       : st === UPLOADING ? 'Uploading this photo…'
         /* A limit is not a failure to retry: the server's sentence is the whole
@@ -2943,6 +2994,28 @@ export function initProductBuilder() {
                 : s.styled ? 'Style applied — adjust the crop if you like'
                   : '';
   }
+  /**
+   * Put a sentence in a hint, optionally with a link after it.
+   *
+   * textContent everywhere else, and DOM nodes here rather than innerHTML: the
+   * wording and the href both arrive over the network, and a hint line is not
+   * a place to start trusting either. The href is checked to be a plain
+   * same-origin path before it is used at all -- no scheme, no host, so there
+   * is nothing a crafted value could navigate to.
+   */
+  function setHint(el, text, cta) {
+    if (!el) return;
+    el.textContent = text || '';
+    if (!cta || !cta.href || !cta.label) return;
+    if (!/^\/[A-Za-z0-9/?=&_.,+%-]*$/.test(cta.href)) return;
+    el.appendChild(document.createTextNode(' '));
+    const a = document.createElement('a');
+    a.href = cta.href;
+    a.textContent = cta.label;
+    a.className = 'b-hint-link';
+    el.appendChild(a);
+  }
+
   function rail() {
     const tb = $('textFields'); tb.innerHTML = '';
     const editable = T.text.filter((f) => !locked(f));
@@ -3230,11 +3303,26 @@ export function initProductBuilder() {
       /* Nothing to upload and nothing to style, so the only thing to wait for
          is the artwork arriving from the endpoint. Consent is about the
          customer's own photographs and there are none. */
+      /* An out-of-attempts panel holds the gate shut on its own account. It is
+         not counted as `waiting` -- nothing is coming -- so without this the
+         button would open over a photograph that never got styled and sell a
+         plain snapshot as comic artwork. */
+      const outOfAttempts = styleLimitedCount();
       btn.disabled = CUSTOMISE
         ? (basketBusy || !customiseReady)
-        : (basketBusy || busy > 0 || waiting > 0 || cutWaiting > 0
+        : (basketBusy || busy > 0 || waiting > 0 || cutWaiting > 0 || outOfAttempts > 0
           || !consented() || real !== total);
-      $('basketHint').textContent = basketBusy ? ''
+
+      const hint = $('basketHint');
+      /* Ahead of everything except an upload still in flight: it is the reason
+         nothing else is going to happen, and it is the only line here with
+         somewhere for the customer to go. */
+      if (!basketBusy && !CUSTOMISE && consented() && busy === 0 && failedIdx < 0 && outOfAttempts > 0) {
+        setHint(hint, `${limitNotice.text} ${limitNotice.keeps || ''}`.trim(),
+          { href: limitNotice.ctaHref, label: limitNotice.ctaLabel });
+        return;
+      }
+      hint.textContent = basketBusy ? ''
         : CUSTOMISE ? (customiseReady ? '' : (customiseError || 'Loading the design…'))
         : !consented() ? 'Tick the consent box to get started.'
           : busy > 0 ? `Uploading — ${busy} photo${busy === 1 ? '' : 's'} to go…`

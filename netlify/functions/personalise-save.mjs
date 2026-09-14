@@ -5,9 +5,9 @@ import { styleSizeForTemplate, MAX_STYLE_CALLS } from './_shared/style.mjs';
 import { findStyledTwin, adoptStyledTwin } from './_shared/style-dedupe.mjs';
 import {
   guardStore, visitorKey, checkVisitor, bumpVisitor, readGlobal, LIMIT_MESSAGE,
-  requestOrigin, originOr, CUSTOMER,
+  requestOrigin, originOr, CUSTOMER, isStyleLimit, familyForTemplate,
 } from './_shared/spend-guard.mjs';
-import { pausePanel } from './_shared/style-resume.mjs';
+import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artwork-styles.mjs';
@@ -160,13 +160,33 @@ async function savePhoto(form, file, req, context) {
      spend -- and letting an origin out of them would be the bypass this is
      explicitly not allowed to have. */
   const spendOrigin = requestOrigin(req, { claimed: form.get('origin') });
-  const verdict = await checkVisitor(guard, gkey, { newDesign: creating });
-  if (!verdict.ok) {
+  const verdict = await checkVisitor(guard, gkey, { newDesign: creating, templateId });
+
+  /* Two different answers, because they are two different situations.
+
+     Out of style attempts for today is NOT a refusal any more: the photograph
+     is stored, the build is written, and the panel is marked `limited` further
+     down so the customer keeps everything they have done and gets a way to
+     reach the artwork team. Refusing the upload here would throw away the very
+     thing we are asking them to send us.
+
+     Too many new designs in an hour still refuses outright. Nothing has been
+     stored yet at that point, there is nothing to preserve, and the guard is
+     there to stop document churn rather than to ration attempts. */
+  const styleLimited = !verdict.ok && isStyleLimit(verdict.reason);
+  if (!verdict.ok && !styleLimited) {
     console.warn(
       `spend-guard: refused an upload from ${gkey} — ${verdict.reason} ` +
-      `(${verdict.designsThisHour} new design(s) this hour, ${verdict.styleCalls24h} style call(s) in 24h)`
+      `(${verdict.designsThisHour} new design(s) this hour)`
     );
     return json({ error: LIMIT_MESSAGE, reason: verdict.reason, limited: true }, 429);
+  }
+  if (styleLimited) {
+    console.warn(
+      `spend-guard: ${gkey} is out of ${verdict.family} attempts `
+      + `(${verdict.styleCalls24h}/${verdict.limit} in 24h) — storing the photo and `
+      + 'pointing them at the artwork team'
+    );
   }
 
   // The key is deterministic per panel, so replacing a panel's photo overwrites
@@ -314,7 +334,9 @@ async function savePhoto(form, file, req, context) {
   // Styling is best-effort from here: the photo is stored and the document is
   // written, so a trigger that does not fire leaves a retryable 'pending' row
   // rather than losing anything.
-  const style = await triggerStyle({ id, panelId, sha256, req, guard, spendOrigin });
+  const style = await triggerStyle({
+    id, panelId, sha256, req, guard, spendOrigin, styleLimited, templateId,
+  });
 
   return json({ id, key, sha256, style });
 }
@@ -339,7 +361,9 @@ const photoRow = ({ panel, rawKey, sha256, styleStatus = 'pending' }) => ({
  * a styling trigger that fails leaves the row 'pending' and is retryable
  * through /api/personalisation-style.
  */
-async function triggerStyle({ id, panelId, sha256, req, guard, spendOrigin = CUSTOMER }) {
+async function triggerStyle({
+  id, panelId, sha256, req, guard, spendOrigin = CUSTOMER, styleLimited = false, templateId = null,
+}) {
   try {
     const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
     const photos = doc?.photos || [];
@@ -350,6 +374,16 @@ async function triggerStyle({ id, panelId, sha256, req, guard, spendOrigin = CUS
       await adoptStyledTwin(sanity, id, panelId, twin);
       console.log(`personalise-save: dedupe hit — ${id} ${panelId} reused the styled photo from ${twin.panel} (same sha256)`);
       return { deduped: true, from: twin.panel };
+    }
+
+    /* Out of attempts, checked after the dedupe for the same reason the breaker
+       is: a dedupe costs nothing, so it is never worth refusing one. Ahead of
+       the breaker because this is the customer's own allowance and it is the
+       more specific answer -- being told the shop is busy when the truth is
+       that you personally are out of attempts would be misleading. */
+    if (styleLimited) {
+      const notice = await limitPanel(sanity, id, panelId, templateId);
+      return { limited: true, notice };
     }
 
     /* The circuit breaker. Checked AFTER the dedupe and before the cap, in the

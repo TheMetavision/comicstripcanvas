@@ -364,6 +364,42 @@ if (!TURNSTILE_SITE_KEY) {
   // between the visitor's clock and the server's.
   if (tsLoadField) tsLoadField.value = String(Date.now());
 
+  /* Arriving from somewhere that already knows what this is about.
+   *
+   * The builder sends anyone who has run out of style attempts here, and asking
+   * them to explain from scratch what they were doing -- at the exact moment
+   * they have just been told they cannot finish it -- is how a "contact us"
+   * link goes unused. So the subject and an opening line are filled in, and the
+   * build reference comes with them so whoever answers can find the photographs
+   * that are already uploaded.
+   *
+   * Only the subject and the message are ever touched, and only when they are
+   * still empty: a customer who has started typing keeps what they typed. The
+   * reference is validated rather than echoed -- it goes into the page, so
+   * anything that is not the shape of a build id is dropped on the floor.
+   */
+  (function prefillFromQuery() {
+    const q = new URLSearchParams(window.location.search);
+    const subject = document.getElementById('subject') as HTMLSelectElement | null;
+    const message = document.getElementById('message') as HTMLTextAreaElement | null;
+
+    const wanted = (q.get('subject') || '').trim();
+    if (subject && wanted && !subject.value) {
+      const match = [...subject.options].find((o) => o.value === wanted);
+      if (match) subject.value = match.value;
+    }
+
+    if (q.get('topic') !== 'artwork-proof' || !message || message.value.trim()) return;
+    const ref = (q.get('ref') || '').trim();
+    const safeRef = /^pp-[A-Za-z0-9_-]{1,64}$/.test(ref) ? ref : '';
+    message.value = [
+      "I've used my style attempts for today and I'd like your artwork team to put a proof together.",
+      safeRef ? `My design reference is ${safeRef}.` : 'I still have my design open in the builder.',
+      '',
+      'Anything else you should know:',
+    ].join('\n');
+  })();
+
   function setSending(on: boolean) {
     if (submitBtn) submitBtn.disabled = on;
     if (sendText) sendText.style.display = on ? 'none' : '';

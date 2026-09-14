@@ -1,8 +1,8 @@
 import { createClient } from '@sanity/client';
 import { cutoutConfigured } from './_shared/cutout.mjs';
 import { MAX_STYLE_CALLS } from './_shared/style-limits.mjs';
-import { busyMessageFor } from './_shared/spend-guard.mjs';
-import { pausedRows, resumeDocument, PAUSED } from './_shared/style-resume.mjs';
+import { busyMessageFor, styleLimitNotice, familyForTemplate } from './_shared/spend-guard.mjs';
+import { pausedRows, resumeDocument, PAUSED, LIMITED } from './_shared/style-resume.mjs';
 
 /**
  * Styling progress: GET /api/personalisation-status/<id>
@@ -124,6 +124,14 @@ export default async (req) => {
       /* Which budget paused it decides the wording: a customer is told the shop
          is busy, the Studio is told which ceiling to raise. */
       busyMessage: busyMessageFor(doc.origin),
+      /* Out of style attempts for today. A DIFFERENT state from paused, and
+         deliberately so: paused clears itself when the site-wide breaker
+         reopens, while this one waits on the customer's own allowance refilling
+         over the next twenty-four hours and nothing restarts it for them. The
+         notice carries the wording and a working link to the artwork team, from
+         the server for the same reason busyMessage is. */
+      limited: photos.filter((p) => p.styleStatus === LIMITED).length,
+      limitNotice: styleLimitNotice(doc._id, familyForTemplate(doc.templateId)),
       templateId: doc.templateId || null,
       /* Whether a cutout is coming at all. Without this the builder cannot tell
          "not ready yet" from "this deployment has no cutout service", and its
