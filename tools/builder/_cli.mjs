@@ -44,15 +44,73 @@ export function slugFor(file) {
   return slug || 'untitled';
 }
 
+/* ------------------------------------------------------- styled artwork */
+
+/**
+ * What style.mjs calls the pictures it writes.
+ *
+ * Here rather than in style.mjs so the tool that READS a batch and the tool
+ * that WRITES one cannot disagree about the name -- and because cutout.mjs
+ * must not import style.mjs to find out, which would pull the Gemini SDK into
+ * a tool that never generates anything.
+ */
+export const STYLED_SIZES = ['4k', '2k'];   // 4K first: it is the better source
+export const styledName = (size) => `styled-${String(size).toLowerCase()}.png`;
+export const STYLED_NAMES = STYLED_SIZES.map(styledName);
+
+/** Is this file one of style.mjs's own outputs rather than somebody's photo? */
+export const isStyledArtwork = (file) =>
+  STYLED_NAMES.includes(path.basename(String(file)).toLowerCase());
+
+/**
+ * The slug for a file, which is not always its name.
+ *
+ * Every picture in a batch is called styled-2k.png or styled-4k.png -- the
+ * name says the SIZE, and the folder says which artwork it is. Taking the slug
+ * from the filename therefore gave every cutout in a batch the same slug,
+ * "styled-2k", so each one overwrote the last and twenty cutouts came out as
+ * one file. Silent, and only noticeable by counting.
+ *
+ * So, in order:
+ *
+ *   1. the sibling meta.json, which style.mjs wrote and which records the slug
+ *      it used -- the authoritative answer, and the only one that survives a
+ *      folder being renamed
+ *   2. the parent folder's name, which is what style.mjs named it after
+ *   3. the filename's stem, for a loose photograph anywhere else on disk
+ *
+ * Only a styled-artwork filename goes down the first two routes. A file called
+ * holiday-photo.jpg is a photograph whatever folder it is sitting in, and its
+ * stem is the right slug.
+ */
+export function slugForArtwork(file) {
+  const full = path.resolve(String(file));
+  if (!isStyledArtwork(full)) return slugFor(full);
+
+  const dir = path.dirname(full);
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+    /* Run through slugFor even so: this becomes a directory name, and a value
+       that has been hand-edited into something with a space in it should not
+       become a folder with a space in it. */
+    if (meta && typeof meta.slug === 'string' && meta.slug.trim()) return slugFor(meta.slug);
+  } catch (e) { /* no meta, or unreadable: the folder name is the next best */ }
+
+  return slugFor(path.basename(dir));
+}
+
 /** Every image in a folder, sorted, with its slug. Throws if it is not there. */
 export function listImages(dir) {
   const stat = fs.existsSync(dir) ? fs.statSync(dir) : null;
   if (!stat) throw new Error(`No such folder: ${dir}`);
-  if (stat.isFile()) return [{ file: path.resolve(dir), slug: slugFor(dir) }];
+  /* slugForArtwork, not slugFor, in both branches: pointed at one picture
+     inside a batch, or at a single slug's folder, the filename is the size and
+     the folder is the identity. */
+  if (stat.isFile()) return [{ file: path.resolve(dir), slug: slugForArtwork(dir) }];
   return fs.readdirSync(dir)
     .filter((f) => IMAGE_EXTS.includes(path.extname(f).toLowerCase()))
     .sort()
-    .map((f) => ({ file: path.resolve(dir, f), slug: slugFor(f) }));
+    .map((f) => ({ file: path.resolve(dir, f), slug: slugForArtwork(path.resolve(dir, f)) }));
 }
 
 /**
@@ -74,9 +132,12 @@ export function listStyledBatch(dir) {
   const out = [];
   for (const e of entries) {
     if (!e.isDirectory() || e.name.startsWith('_')) continue;
-    for (const name of ['styled-4k.png', 'styled-2k.png']) {
+    for (const name of STYLED_NAMES) {
       const file = path.join(dir, e.name, name);
-      if (fs.existsSync(file)) { out.push({ file: path.resolve(file), slug: e.name }); break; }
+      /* slugForArtwork rather than the folder name directly, so a meta.json
+         that disagrees with its folder still wins here too -- one rule for
+         where a slug comes from, wherever the picture was found. */
+      if (fs.existsSync(file)) { out.push({ file: path.resolve(file), slug: slugForArtwork(file) }); break; }
     }
   }
   return out.sort((a, b) => a.slug.localeCompare(b.slug));

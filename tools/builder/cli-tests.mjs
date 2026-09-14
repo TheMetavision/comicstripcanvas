@@ -15,6 +15,7 @@ import sharp from 'sharp';
 import {
   parseArgs, slugFor, listImages, filterOnly, alreadyDone, concurrencyFrom,
   classifyFailure, withRetry, pool, MAX_CONCURRENCY, DEFAULT_CONCURRENCY,
+  slugForArtwork, styledName, STYLED_NAMES,
 } from './_cli.mjs';
 import { run as styleRun, contactSheet, HELP as STYLE_HELP } from './style.mjs';
 import {
@@ -521,6 +522,133 @@ say('\n12. --help\n');
   const empty = [];
   await styleRun([], { log: (s) => empty.push(String(s)) });
   ok(/node tools\/builder\/style.mjs/.test(empty.join('\n')), 'and no arguments prints it too');
+}
+
+/* ------------------------------------------- 13. a slug is not always a name */
+
+say('\n13. SLUGS INSIDE A STYLED BATCH\n');
+{
+  /* Every picture style.mjs writes is called styled-2k.png or styled-4k.png:
+     the name is the size, and the folder is the subject. Taking the slug from
+     the filename put every cutout in a batch into one folder called
+     "styled-2k", each overwriting the last. These are that regression. */
+  process.env.CUTOUT_SERVICE_URL = 'https://csc-cutout.test/';
+  process.env.CUTOUT_TOKEN = 'test-token-not-a-real-one';
+
+  const BATCH = path.join(TMP, 'slug-batch');
+  const A = 'hf-20260709-093748-2d0bcd76';   // the real-world shape: a long hash
+  const B = 'tupac-shakur';
+  const C = 'renamed-on-disk';
+
+  /** One slug folder holding one styled picture, and optionally a meta.json. */
+  const makeSlugFolder = async (name, file, meta) => {
+    const dir = path.join(BATCH, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const png = await sharp({
+      create: { width: 24, height: 24, channels: 3, background: { r: 10, g: 120, b: 200 } },
+    }).png().toBuffer();
+    fs.writeFileSync(path.join(dir, file), png);
+    if (meta) fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta));
+    return path.join(dir, file);
+  };
+
+  const aFile = await makeSlugFolder(A, 'styled-2k.png');
+  const bFile = await makeSlugFolder(B, 'styled-4k.png');
+  const cFile = await makeSlugFolder(C, 'styled-2k.png', { slug: 'the-recorded-slug', size: '2K' });
+
+  /* The same transparent-topped PNG the stubbed service hands back in 10. */
+  const raw = Buffer.alloc(10 * 10 * 4);
+  for (let i = 0; i < 10 * 10; i++) {
+    raw[i * 4] = 200; raw[i * 4 + 1] = 30; raw[i * 4 + 2] = 40;
+    raw[i * 4 + 3] = i < 50 ? 0 : 255;
+  }
+  const cut = await sharp(raw, { raw: { width: 10, height: 10, channels: 4 } }).png().toBuffer();
+  let calls = 0;
+  const fetchFn = async () => {
+    calls++;
+    return new Response(cut, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png', 'X-Cutout-Px': '10x10',
+        'X-Alpha-Coverage': '0.5', 'X-BBox': '0,5,10,10',
+      },
+    });
+  };
+  const svc = { fetchFn, sleep: async () => {}, log: quiet, error: quiet };
+
+  /* (a) one 2K picture, named by hand, out of a batch */
+  const outA = path.join(TMP, 'slug-out-a');
+  ok(slugForArtwork(aFile) === A, 'a styled-2k.png takes its slug from its folder',
+    slugForArtwork(aFile));
+  ok(await cutoutRun(['--in', aFile, '--out', outA], svc) === 0, 'and the run is clean');
+  ok(fs.existsSync(path.join(outA, A, 'cutout.png')), `written to ${A}/cutout.png`);
+  ok(!fs.existsSync(path.join(outA, 'styled-2k')), 'not to a folder called styled-2k');
+  ok(fs.existsSync(path.join(outA, A, 'cutout-meta.json')), 'its meta goes with it');
+  ok(JSON.parse(fs.readFileSync(path.join(outA, A, 'cutout-meta.json'), 'utf8')).slug === A,
+    'and records the same slug');
+
+  /* (b) the 4K name is known too */
+  const outB = path.join(TMP, 'slug-out-b');
+  ok(slugForArtwork(bFile) === B, 'a styled-4k.png does the same', slugForArtwork(bFile));
+  await cutoutRun(['--in', bFile, '--out', outB], svc);
+  ok(fs.existsSync(path.join(outB, B, 'cutout.png')), `written to ${B}/cutout.png`);
+  ok(!fs.existsSync(path.join(outB, 'styled-4k')), 'not to a folder called styled-4k');
+  ok(STYLED_NAMES.includes(styledName('2k')) && STYLED_NAMES.includes(styledName('4k')),
+    'both names come from the one definition style.mjs writes by', STYLED_NAMES.join(', '));
+
+  /* (c) meta.json beats the folder it sits in */
+  const outC = path.join(TMP, 'slug-out-c');
+  ok(slugForArtwork(cFile) === 'the-recorded-slug',
+    'a meta.json slug wins over the folder name', slugForArtwork(cFile));
+  ok(slugForArtwork(cFile) !== C, 'explicitly: the folder name is NOT used when meta.json disagrees',
+    `${C} -> ${slugForArtwork(cFile)}`);
+  await cutoutRun(['--in', cFile, '--out', outC], svc);
+  ok(fs.existsSync(path.join(outC, 'the-recorded-slug', 'cutout.png')),
+    'so the cutout lands under the recorded slug');
+  ok(!fs.existsSync(path.join(outC, C)), 'and not under the folder name');
+
+  /* (d) the whole batch at once — the regression that matters */
+  const outAll = path.join(TMP, 'slug-out-all');
+  calls = 0;
+  await cutoutRun(['--in', BATCH, '--out', outAll, '--concurrency', '1'], svc);
+  /* _runs is the run log, not a slug -- the same underscore rule listStyledBatch
+     reads a batch by. */
+  const made = fs.readdirSync(outAll)
+    .filter((d) => !d.startsWith('_') && fs.statSync(path.join(outAll, d)).isDirectory()).sort();
+  ok(calls === 3, 'three pictures in the batch, three calls', String(calls));
+  ok(made.length === 3, 'three output folders, not one', made.join(', '));
+  ok(made.join(',') === [A, B, 'the-recorded-slug'].sort().join(','),
+    'each named for its own artwork', made.join(', '));
+  ok(!made.some((d) => /^styled-/.test(d)), 'none of them called styled-2k or styled-4k');
+  ok(made.every((d) => fs.existsSync(path.join(outAll, d, 'cutout.png'))),
+    'and every one of the three kept its cutout — nothing overwrote anything');
+
+  /* (e) a loose photograph is still its own name */
+  const loose = path.join(TMP, 'loose');
+  fs.mkdirSync(loose, { recursive: true });
+  const jpg = await sharp({ create: { width: 20, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+    .jpeg().toBuffer();
+  fs.writeFileSync(path.join(loose, 'holiday-photo.jpg'), jpg);
+  const looseFile = path.join(loose, 'holiday-photo.jpg');
+  ok(slugForArtwork(looseFile) === 'holiday-photo', 'a loose image keeps its stem',
+    slugForArtwork(looseFile));
+  ok(listImages(looseFile)[0].slug === 'holiday-photo', 'and so does listImages');
+  const outLoose = path.join(TMP, 'slug-out-loose');
+  await cutoutRun(['--in', looseFile, '--out', outLoose], svc);
+  ok(fs.existsSync(path.join(outLoose, 'holiday-photo', 'cutout.png')),
+    'written under holiday-photo, exactly as before');
+
+  /* (f) resume and --force, under the new rule */
+  calls = 0;
+  await cutoutRun(['--in', aFile, '--out', outA], svc);
+  ok(calls === 0, 'a slug that already has a cutout.png is skipped', String(calls));
+  await cutoutRun(['--in', BATCH, '--out', outAll], svc);
+  ok(calls === 0, 'and so is the whole batch, all three of them', String(calls));
+  await cutoutRun(['--in', aFile, '--out', outA, '--force'], svc);
+  ok(calls === 1, '--force does it again — and finds the same slug to skip by', String(calls));
+
+  delete process.env.CUTOUT_SERVICE_URL;
+  delete process.env.CUTOUT_TOKEN;
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

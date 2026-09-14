@@ -28,6 +28,7 @@ import {
 import {
   parseArgs, listImages, filterOnly, slugFor, MIME_BY_EXT, pool, withRetry, classifyFailure,
   alreadyDone, concurrencyFrom, MAX_CONCURRENCY, DEFAULT_CONCURRENCY, sha256, humanMs,
+  styledName, STYLED_SIZES,
   writeRunLog, readRunTotals, printSummary, requireEnv, sleep as realSleep,
 } from './_cli.mjs';
 
@@ -60,7 +61,10 @@ export const HELP = `
     --help              this
 
   The slug is the filename without its extension, lowercased, with anything
-  that is not a letter or a digit collapsed to a hyphen.
+  that is not a letter or a digit collapsed to a hyphen. The one exception is a
+  picture already called styled-2k.png or styled-4k.png: those names say the
+  size rather than the subject, so the slug comes from the folder holding it,
+  or from the slug recorded in the meta.json beside it.
 
   Needs GOOGLE_AI_API_KEY in the environment or in .env at the repo root -- the
   same variable the deployed functions read. Its value is never printed.
@@ -118,7 +122,10 @@ export async function run(argv, deps = {}) {
   if (!opts.in || !opts.out) { error('  --in and --out are both required.'); log(HELP); return 1; }
 
   const size = opts['4k'] ? '4K' : '2K';
-  const outName = `styled-${size.toLowerCase()}.png`;
+  /* The name comes from _cli.mjs, which is also where cutout.mjs learns to
+     recognise it -- one definition, so a batch cannot be written under a name
+     the other tool does not know is artwork. */
+  const outName = styledName(size);
   const dryRun = !!opts['dry-run'];
   const concurrency = concurrencyFrom(opts.concurrency);
 
@@ -245,8 +252,8 @@ export async function run(argv, deps = {}) {
   const sheetRows = fs.readdirSync(outDir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !d.name.startsWith('_'))
     .map((d) => {
-      for (const res of ['4k', '2k']) {
-        const rel = `${d.name}/styled-${res}.png`;
+      for (const res of STYLED_SIZES) {
+        const rel = `${d.name}/${styledName(res)}`;
         if (fs.existsSync(path.join(outDir, rel))) {
           return { slug: d.name, href: rel, note: res === '4k' ? '4K' : '' };
         }

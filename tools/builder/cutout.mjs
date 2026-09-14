@@ -53,7 +53,13 @@ export const HELP = `
 
     --in <folder|file>  a folder of images, a single image, or a batch folder
                         written by style.mjs -- in which case each slug's styled
-                        picture is used (the 4K one when there is one)
+                        picture is used (the 4K one when there is one). A slug
+                        comes from the filename, except for a styled-2k.png or
+                        styled-4k.png, whose name is only its size: that takes
+                        its slug from the meta.json beside it, or failing that
+                        from the folder it sits in. So pointing --in at one
+                        picture inside a batch still writes it under its own
+                        name
     --out <folder>      where to write <slug>/cutout.png. Defaults to --in when
                         that is a folder, so a styled batch can be cut out in
                         place beside its artwork
