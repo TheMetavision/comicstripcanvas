@@ -26,6 +26,10 @@ import {
   concurrencyFrom, MAX_CONCURRENCY, DEFAULT_CONCURRENCY, humanMs, writeRunLog,
   readRunTotals, printSummary, requireEnv, sleep as realSleep,
 } from './_cli.mjs';
+import {
+  locateUpscaler as findUpscalerAt, UPSCALER_BINARIES as UPSCALER_NAMES,
+  DEFAULT_MODEL as UPSCALE_MODEL, MODEL_SCALE,
+} from './upscale.mjs';
 
 const SPEC = {
   in: 'string', out: 'string', upscale: 'boolean', only: 'string',
@@ -41,9 +45,11 @@ export const CUTOUT_MAX_COVERAGE = 0.90;
 /** What "4K" means here: the longest side, matching the print pipeline. */
 export const UPSCALE_TARGET = 3840;
 
-/* Real-ESRGAN ships under a couple of names depending on how it was installed;
-   both are looked for before giving up, and giving up says what to install. */
-export const UPSCALER_BINARIES = ['realesrgan-ncnn-vulkan', 'realesrgan'];
+/* Finding and running Real-ESRGAN lives in upscale.mjs, which is the tool
+   built around it; this one only borrows it for the last step of a cutout. One
+   copy of "where is it, which model, which scale" is the point -- the -m and
+   -n defects fixed there were present here too. */
+export { locateUpscaler, UPSCALER_BINARIES } from './upscale.mjs';
 
 export const HELP = `
   node tools/builder/cutout.mjs --in <folder-or-file> [options]
@@ -64,7 +70,7 @@ export const HELP = `
                         that is a folder, so a styled batch can be cut out in
                         place beside its artwork
     --upscale           after the cutout, upscale to ${UPSCALE_TARGET}px on the longest side
-                        with Real-ESRGAN. Needs one of ${UPSCALER_BINARIES.join(' or ')}
+                        with Real-ESRGAN (${UPSCALE_MODEL}). Needs one of ${UPSCALER_NAMES.join(' or ')}
                         on PATH; if it is not there this stops and says so
                         rather than quietly writing an un-upscaled file
     --only <a,b,c>      just these slugs, comma separated
@@ -89,17 +95,17 @@ export const HELP = `
       --only bruce-lee,tupac,gizmo --upscale
 `;
 
-/** Where the upscaler is, or null. */
+/**
+ * Where the upscaler is, or null.
+ *
+ * Was a bare -h probe returning the NAME, which was not enough: the binary
+ * looks for its models relative to the working directory, so knowing only that
+ * "realesrgan-ncnn-vulkan" resolves somewhere told us nothing about where its
+ * models were, and a cutout run from the repo root failed to find them. The
+ * full path answers both questions.
+ */
 export function findUpscaler(spawnSync = realSpawnSync) {
-  for (const bin of UPSCALER_BINARIES) {
-    try {
-      const probe = spawnSync(bin, ['-h'], { encoding: 'utf8', windowsHide: true });
-      /* -h exits non-zero on some builds, so presence is judged by the process
-         having run at all rather than by its status. */
-      if (probe && !probe.error) return bin;
-    } catch (e) { /* not this one */ }
-  }
-  return null;
+  return findUpscalerAt(spawnSync);
 }
 
 export const UPSCALER_MISSING = `
@@ -238,11 +244,18 @@ export async function run(argv, deps = {}) {
   if (opts.upscale) {
     upscaler = findUpscaler(spawnSync);
     if (!upscaler) { error(UPSCALER_MISSING); return 1; }
+    /* Same moment, same reason: a models folder that is not there fails every
+       upscale, and finding that out after twenty paid cutouts is too late. */
+    if (!fs.existsSync(upscaler.models)) {
+      error(`\n  Found ${upscaler.bin} but no models folder beside it at:\n    ${upscaler.models}\n`
+        + `  The portable build ships models/ in the same folder as the .exe.\n`);
+      return 1;
+    }
   }
 
   log(`\n  ${todo.length} to cut out, ${planned.length - todo.length} already done, `
     + `${concurrency} at a time`);
-  log(`  service ${base}${upscaler ? `  upscaler ${upscaler}` : ''}`);
+  log(`  service ${base}${upscaler ? `  upscaler ${upscaler.bin} (${UPSCALE_MODEL})` : ''}`);
   if (fromBatch) log('  (reading the styled picture out of each slug folder)');
   log('');
 
@@ -353,10 +366,13 @@ export async function run(argv, deps = {}) {
 /**
  * Upscale a cutout to 4K on the longest side, keeping its alpha.
  *
- * Real-ESRGAN only knows whole-number scales, so the nearest one at or above
- * the target is used and the result is brought back to exactly the target with
- * sharp -- an overshoot then a clean downscale is sharper than asking for too
- * little and stretching.
+ * Real-ESRGAN knows one scale that matters -- 4x, its native one -- so it is
+ * always asked for that and the result is brought back to exactly the target
+ * with sharp. An overshoot then a clean downscale is sharper than asking the
+ * binary for a smaller factor, which only makes it downsample the same 4x
+ * output itself, with a worse filter.
+ *
+ * For a folder of finished artwork that needs no cutout, use upscale.mjs.
  */
 export async function upscaleTo4K(inPath, outPath, { upscaler, spawnSync, sharpFn = sharp }) {
   try {
@@ -367,13 +383,24 @@ export async function upscaleTo4K(inPath, outPath, { upscaler, spawnSync, sharpF
       await sharpFn(inPath).toFile(outPath);
       return { scale: 1, px: [meta.width, meta.height], note: 'already 4K or larger' };
     }
-    const scale = Math.min(4, Math.max(2, Math.ceil(UPSCALE_TARGET / longest)));
+    /* Always 4x, never the 2 or 3 that -s also accepts. Every model in the
+       portable build is a 4x network; -s 2 runs that same network and then
+       downsamples inside the binary, and sharp's Lanczos below does that part
+       better. Overshoot, then come down cleanly. */
     const tmp = `${outPath}.tmp.png`;
-    const res = spawnSync(upscaler, ['-i', inPath, '-o', tmp, '-s', String(scale)], {
-      encoding: 'utf8', windowsHide: true,
-    });
+    const res = spawnSync(upscaler.bin, [
+      '-i', inPath, '-o', tmp,
+      '-s', String(MODEL_SCALE),
+      /* -n and -m are both explicit, and both were bugs by omission. Without
+         -n the binary picks realesr-animevideov3, an anime VIDEO model, to
+         enlarge painted artwork. Without -m it looks for ./models relative to
+         the WORKING DIRECTORY, so this worked only when run from the folder
+         the exe happens to live in. */
+      '-n', UPSCALE_MODEL,
+      '-m', upscaler.models,
+    ], { encoding: 'utf8', windowsHide: true });
     if (res.error) return { error: res.error.message };
-    if (res.status !== 0) return { error: `${upscaler} exited ${res.status}: ${String(res.stderr || '').slice(0, 160)}` };
+    if (res.status !== 0) return { error: `${path.basename(upscaler.bin)} exited ${res.status}: ${String(res.stderr || '').slice(0, 160)}` };
     const up = await sharpFn(tmp).metadata();
     const upLongest = Math.max(up.width || 0, up.height || 0);
     if (upLongest > UPSCALE_TARGET) {
@@ -386,7 +413,10 @@ export async function upscaleTo4K(inPath, outPath, { upscaler, spawnSync, sharpF
     }
     try { fs.unlinkSync(tmp); } catch (e) { /* leave it */ }
     const final = await sharpFn(outPath).metadata();
-    return { scale, px: [final.width, final.height], upscaler };
+    return {
+      scale: MODEL_SCALE, px: [final.width, final.height],
+      model: UPSCALE_MODEL, upscaler: upscaler.bin,
+    };
   } catch (e) {
     return { error: e.message };
   }

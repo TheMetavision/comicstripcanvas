@@ -26,6 +26,11 @@ import {
   run as cutoutRun, findUpscaler, transparencyOf, postCutout, HELP as CUTOUT_HELP,
   UPSCALER_MISSING,
 } from './cutout.mjs';
+import {
+  run as upscaleRun, planFor, fitLong, listArtwork, originalFor, locateUpscaler,
+  modelInstalled, installedModels, classifyUpscaleFailure,
+  DEFAULT_TARGET, DEFAULT_MODEL, MODEL_SCALE, RESIZE_ONLY_FRACTION, ORIGINAL_SUFFIX,
+} from './upscale.mjs';
 
 let pass = 0, fail = 0;
 const ok = (c, l, e = '') => {
@@ -486,7 +491,16 @@ say('\n10. cutout.mjs, WITH THE SERVICE STUBBED\n');
   ok(/github.com\/xinntao\/Real-ESRGAN/.test(up.join('\n')), 'with where to get it');
   ok(!fs.existsSync(outUp), 'before anything was cut out, so nothing is lost');
   ok(findUpscaler(() => ({ error: new Error('ENOENT') })) === null, 'findUpscaler says so too');
-  ok(findUpscaler(() => ({ status: 0 })) === 'realesrgan-ncnn-vulkan', 'and finds one that is there');
+
+  /* It now answers with the PATH, not the name. A bare name was never enough:
+     the binary resolves its models against the working directory, so the tool
+     has to know which folder the exe came out of in order to pass -m. */
+  const located = findUpscaler(() => ({ status: 0, stdout: 'C:\\Tools\\realesrgan\\realesrgan-ncnn-vulkan.exe\r\n' }));
+  ok(located && /realesrgan-ncnn-vulkan\.exe$/.test(located.bin), 'and finds one that is there', located?.bin);
+  ok(located && located.models === path.join('C:\\Tools\\realesrgan', 'models'),
+    'with the models folder beside it', located?.models);
+  ok(findUpscaler(() => ({ status: 0, stdout: '' })) === null,
+    'a finder that exits clean but names nothing is still nothing');
 
   delete process.env.CUTOUT_SERVICE_URL;
   delete process.env.CUTOUT_TOKEN;
@@ -868,6 +882,277 @@ say('\n14. INPUT NORMALISATION\n');
   });
   ok(tries === 3, 'a 503 is tried again until it works', String(tries));
   ok(flakyCode === 0, 'and the run comes out clean', String(flakyCode));
+}
+
+/* ----------------------------------------------------- 15. upscale.mjs, planning */
+
+say('\n15. UPSCALE — WHICH ROUTE, AND HOW FAR\n');
+{
+  /* The shape is kept whatever the route. */
+  ok(String(fitLong(3504, 2336, 3600)) === '3600,2400', 'the long edge lands exactly on the target',
+    String(fitLong(3504, 2336, 3600)));
+  ok(String(fitLong(1024, 1536, 3600)) === '2400,3600', 'and it is the LONG edge, whichever way up',
+    String(fitLong(1024, 1536, 3600)));
+
+  /* Already big enough: not touched, not resized down. */
+  const big = planFor({ width: 4096, height: 4096 }, 3600);
+  ok(big.action === 'skip', 'a file at or above the target is left alone', big.action);
+
+  /* The 165 files this margin exists for. 3504 is 97% of 3600: the model has
+     nothing to add across a 2.7% stretch, and would cost 17 seconds saying so. */
+  const near = planFor({ width: 3504, height: 2336 }, 3600);
+  ok(near.action === 'resize', '3504 -> 3600 skips the model entirely', near.action);
+  ok(String(near.to) === '3600,2400', 'and lands on the target', String(near.to));
+  ok(3504 >= 3600 * RESIZE_ONLY_FRACTION, 'because it is inside the margin');
+
+  /* Just outside the margin is a model job. */
+  const edge = planFor({ width: 3239, height: 2159 }, 3600);
+  ok(edge.action === 'model', 'one pixel outside the margin goes through the model', edge.action);
+
+  const far = planFor({ width: 1024, height: 1536 }, 3600);
+  ok(far.action === 'model', 'a 1024x1536 icon goes through the model', far.action);
+  ok(far.reachable === true, 'and 4x is more than enough to reach 3600');
+  ok(String(far.to) === '2400,3600', 'so it comes back down to exactly the target', String(far.to));
+
+  /* Cannot get there in one pass: reported, and NOT chained. */
+  const short = planFor({ width: 500, height: 400 }, 3600);
+  ok(short.action === 'model' && short.reachable === false, 'a file 4x still cannot lift is flagged');
+  ok(String(short.to) === '2000,1600', 'and is left at its 4x size rather than passed twice',
+    String(short.to));
+
+  /* Every file in the actual library clears 3600 in one pass; the smallest
+     long edge in it is 908. This is the boundary that decides that. */
+  ok(planFor({ width: 908, height: 1732 }, 3600).reachable === true,
+    'the smallest file in the library reaches 3600 in one pass');
+  ok(planFor({ width: 899, height: 600 }, 3600).reachable === false,
+    'below 900 on the long edge it would not');
+
+  ok(planFor({ width: 0, height: 0 }, 3600).action === 'failed', 'no dimensions is a row, not a crash');
+}
+
+/* ------------------------------------------------- 16. upscale.mjs, what it walks */
+
+say('\n16. UPSCALE — WHAT IT WALKS\n');
+{
+  const root = path.join(TMP, 'lib');
+  const mk = (p) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, 'x'); };
+  mk(path.join(root, 'Walter White', 'walter-white.png'));
+  mk(path.join(root, 'Walter White', `walter-white${ORIGINAL_SUFFIX}.png`));
+  mk(path.join(root, 'Walter White', 'Old design', 'walter-white.png'));
+  mk(path.join(root, 'Ayrton Senna', 'ayrton-senna-icon.png'));
+  mk(path.join(root, 'Ayrton Senna', 'notes.txt'));
+  mk(path.join(root, '_runs', '2026-01-01.json'));
+  mk(path.join(root, 'Deep', 'Nested', 'folder', 'thing.jpg'));
+
+  const found = listArtwork(root).map((f) => f.rel.replace(/\\/g, '/'));
+  ok(found.length === 3, 'three images found', found.join(', '));
+  ok(found.includes('Walter White/walter-white.png'), 'the artwork itself');
+  ok(found.includes('Deep/Nested/folder/thing.jpg'), 'however deep it sits');
+  ok(!found.some((f) => /Old design/.test(f)), '"Old design" is never walked into');
+  ok(!found.some((f) => f.includes(ORIGINAL_SUFFIX)), `a ${ORIGINAL_SUFFIX} backup is not upscaled again`);
+  ok(!found.some((f) => f.includes('_runs')), 'and neither is our own run log folder');
+  ok(!found.some((f) => /notes\.txt/.test(f)), 'non-images are left out');
+
+  ok(originalFor(path.join('a', 'b.png')) === path.join('a', `b${ORIGINAL_SUFFIX}.png`),
+    'the backup sits beside the file, keeping its extension');
+  ok(originalFor(path.join('a', 'b.jpg')) === path.join('a', `b${ORIGINAL_SUFFIX}.jpg`),
+    'including for a jpeg');
+
+  /* The slug is the filename, so --only speaks the language the folders do. */
+  ok(listArtwork(root).some((f) => f.slug === 'ayrton-senna-icon'), '--only matches on the filename');
+
+  /* A real library folder holds more than the library: the icon set this was
+     built for has 1214 images in it, of which only 205 are the artwork. The
+     rest are print exports, product mockups and reference photographs, and
+     upscaling those would be hours of work nobody wanted. */
+  const pngOnly = listArtwork(root, { exts: ['.png'] }).map((f) => f.rel);
+  ok(pngOnly.length === 2, '--ext png leaves the jpegs alone', String(pngOnly.length));
+  ok(!pngOnly.some((f) => /\.jpg$/.test(f)), 'none of them a jpeg');
+  ok(listArtwork(root, { exts: ['jpg'] }).length === 1, 'and a bare extension works too');
+}
+
+/* ------------------------------------------------ 17. upscale.mjs, finding the exe */
+
+say('\n17. UPSCALE — FINDING THE BINARY AND ITS MODELS\n');
+{
+  const exe = 'C:\\Tools\\realesrgan\\realesrgan-ncnn-vulkan.exe';
+  const asked = [];
+  const where = (cmd, args) => { asked.push(`${cmd} ${args.join(' ')}`); return { status: 0, stdout: `${exe}\r\n` }; };
+  const got = locateUpscaler(where);
+  ok(got.bin === exe, 'the full path, not the bare name', got.bin);
+  ok(got.models === path.join('C:\\Tools\\realesrgan', 'models'), 'models resolved from the exe, not the CWD', got.models);
+  ok(/^(where|which) realesrgan/.test(asked[0]), 'asked the platform where it is', asked[0]);
+
+  ok(locateUpscaler(() => ({ status: 1, stdout: '' })) === null, 'a non-zero finder means not installed');
+  ok(locateUpscaler(() => { throw new Error('no such command'); }) === null, 'and a thrown finder is not a crash');
+
+  /* Model presence is judged against the folder, not a hardcoded list. */
+  const have = new Set([
+    path.join('m', 'realesrgan-x4plus.param'),
+    path.join('m', `realesr-animevideov3-x${MODEL_SCALE}.param`),
+  ]);
+  const exists = (p) => have.has(p);
+  ok(modelInstalled('m', 'realesrgan-x4plus', exists), 'a plain model is found by its param file');
+  ok(modelInstalled('m', 'realesr-animevideov3', exists),
+    'animevideov3 is found despite shipping one network per scale');
+  ok(!modelInstalled('m', 'realesrgan-x4plus-anime', exists), 'and one that is absent is absent');
+
+  const listed = installedModels('m', () => ['realesrgan-x4plus.param', 'realesrgan-x4plus.bin',
+    'realesr-animevideov3-x2.param', 'realesr-animevideov3-x4.param']);
+  ok(String(listed) === 'realesr-animevideov3,realesrgan-x4plus',
+    'the installed list is de-duplicated across scales', String(listed));
+  ok(String(installedModels('nope', () => { throw new Error('ENOENT'); })) === '',
+    'and an unreadable models folder is an empty list');
+}
+
+/* --------------------------------------------- 18. upscale.mjs, retrying the GPU */
+
+say('\n18. UPSCALE — WHICH FAILURES ARE WORTH ASKING AGAIN\n');
+{
+  ok(classifyUpscaleFailure(new Error('vkAllocateMemory failed')).kind === 'transient',
+    'a Vulkan allocation failure is a wobble, not a verdict');
+  ok(classifyUpscaleFailure(new Error('out of device memory')).kind === 'transient',
+    'so is running the GPU out of room');
+  ok(classifyUpscaleFailure(new Error('decode: unsupported PNG')).kind === 'failed',
+    'a file the decoder cannot read is not');
+  ok(classifyUpscaleFailure(Object.assign(new Error('nope'), { status: 404 })).kind === 'refused',
+    'and the shared rules still apply underneath');
+}
+
+/* ------------------------------------------ 19. upscale.mjs, end to end on disk */
+
+say('\n19. UPSCALE — END TO END, IN PLACE\n');
+{
+  const root = path.join(TMP, 'run');
+  const dir = path.join(root, 'Near Enough');
+  fs.mkdirSync(dir, { recursive: true });
+  const near = path.join(dir, 'near-enough.png');
+  /* 3300 is inside the 90% margin of 3600, so this one never sees the GPU. */
+  await sharp({ create: { width: 3300, height: 2200, channels: 3, background: '#3a6ea5' } })
+    .png().toFile(near);
+
+  const modelDir = path.join(root, 'Needs Model');
+  fs.mkdirSync(modelDir, { recursive: true });
+  const small = path.join(modelDir, 'needs-model.png');
+  await sharp({ create: { width: 1000, height: 600, channels: 3, background: '#a53a6e' } })
+    .png().toFile(small);
+
+  /* --dry-run must not spawn anything at all. The stub proves it by throwing. */
+  const dryOut = [];
+  const dryCode = await upscaleRun(['--in', root, '--target', '3600', '--dry-run'], {
+    spawnSync: () => { throw new Error('the dry run spawned a process'); },
+    log: (s) => dryOut.push(String(s)), error: (s) => dryOut.push(String(s)),
+  });
+  const dryText = dryOut.join('\n');
+  ok(dryCode === 0, 'the dry run comes out clean', String(dryCode));
+  ok(/resize/.test(dryText) && /model/.test(dryText), 'and names both routes');
+  ok(/1 would go through the model, 1 resize only/.test(dryText),
+    'counting each correctly', (dryText.match(/\d+ would go through the model.*/) || [''])[0]);
+  ok(!fs.existsSync(originalFor(near)), 'nothing was backed up');
+  ok((await sharp(near).metadata()).width === 3300, 'and nothing was written');
+
+  /* The real thing. spawnSync stands in for the GPU and writes a 4x file, so
+     the arguments it is handed are checked exactly as the binary would see
+     them -- which is where the -n and -m defects lived. */
+  const fourX = await sharp({ create: { width: 4000, height: 2400, channels: 3, background: '#a53a6e' } })
+    .png().toBuffer();
+  const spawned = [];
+  const fakeGpu = (bin, args) => {
+    spawned.push({ bin, args });
+    const out = args[args.indexOf('-o') + 1];
+    fs.writeFileSync(out, fourX);
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const where = () => ({ status: 0, stdout: `C:\\Tools\\realesrgan\\realesrgan-ncnn-vulkan.exe\r\n` });
+  const spawnSync = (cmd, args) =>
+    (/^(where|which)$/.test(cmd) ? where() : fakeGpu(cmd, args));
+
+  const out = [];
+  const code = await upscaleRun(['--in', root, '--target', '3600'], {
+    spawnSync, log: (s) => out.push(String(s)), error: (s) => out.push(String(s)),
+  });
+  ok(code === 0, 'the run succeeds', String(code));
+
+  const nearMeta = await sharp(near).metadata();
+  ok(nearMeta.width === 3600 && nearMeta.height === 2400,
+    'the near-enough file is resized to the target', `${nearMeta.width}x${nearMeta.height}`);
+  ok(spawned.length === 1, 'and the GPU was asked exactly once, for the other one', String(spawned.length));
+
+  const smallMeta = await sharp(small).metadata();
+  ok(smallMeta.width === 3600 && smallMeta.height === 2160,
+    'the model file overshoots to 4x then comes down to the target',
+    `${smallMeta.width}x${smallMeta.height}`);
+
+  const args = spawned[0].args.join(' ');
+  ok(/-n realesrgan-x4plus/.test(args), 'the model is named explicitly, not left to default to anime video', args);
+  ok(new RegExp(`-s ${MODEL_SCALE}(\\s|$)`).test(args), 'always the native 4x');
+  ok(/-m .*realesrgan.models/.test(args.replace(/\\/g, '/')), 'and -m points at the models beside the exe');
+
+  /* The originals are kept, and they are the originals. */
+  ok(fs.existsSync(originalFor(near)), 'the original is kept beside the result');
+  const keptMeta = await sharp(originalFor(near)).metadata();
+  ok(keptMeta.width === 3300, 'untouched, at its original size', `${keptMeta.width}x${keptMeta.height}`);
+  ok(fs.existsSync(path.join(root, '_runs')), 'a run log is written, as the other tools do');
+
+  /* Resume: the backup is the marker. */
+  const again = [];
+  const againCode = await upscaleRun(['--in', root, '--target', '3600'], {
+    spawnSync: () => { throw new Error('should not run again'); },
+    log: (s) => again.push(String(s)), error: (s) => again.push(String(s)),
+  });
+  ok(againCode === 0 && /Nothing to do/.test(again.join('\n')),
+    'a second run does nothing, because the backups say it is done');
+
+  /* --force redoes it -- FROM THE BACKUP. Upscaling an upscale is the one
+     thing a redo must never do. */
+  spawned.length = 0;
+  const forced = [];
+  await upscaleRun(['--in', root, '--target', '3600', '--force'], {
+    spawnSync, log: (s) => forced.push(String(s)), error: (s) => forced.push(String(s)),
+  });
+  ok(spawned.length === 1, '--force runs the model again', String(spawned.length));
+  const inArg = spawned[0].args[spawned[0].args.indexOf('-i') + 1];
+  ok(inArg === originalFor(small), 'and reads the ORIGINAL, not the result of the last run', inArg);
+  const forcedKept = await sharp(originalFor(small)).metadata();
+  ok(forcedKept.width === 1000, 'so the kept original is never overwritten by an upscale',
+    `${forcedKept.width}x${forcedKept.height}`);
+}
+
+/* --------------------------------------- 20. upscale.mjs, refusing to guess */
+
+say('\n20. UPSCALE — WHEN IT WILL NOT PROCEED\n');
+{
+  const root = path.join(TMP, 'noexe');
+  fs.mkdirSync(root, { recursive: true });
+  await sharp({ create: { width: 800, height: 600, channels: 3, background: '#111' } })
+    .png().toFile(path.join(root, 'small.png'));
+
+  const out = [];
+  const code = await upscaleRun(['--in', root], {
+    spawnSync: () => ({ status: 1, stdout: '' }),
+    log: (s) => out.push(String(s)), error: (s) => out.push(String(s)),
+  });
+  ok(code === 1, 'no Real-ESRGAN stops the run before any file is touched', String(code));
+  ok(/github.com\/xinntao\/Real-ESRGAN/.test(out.join('\n')), 'and says where to get it');
+  ok(!fs.existsSync(originalFor(path.join(root, 'small.png'))), 'nothing was backed up or replaced');
+
+  const bad = [];
+  const badCode = await upscaleRun(['--in', path.join(TMP, 'does-not-exist')], {
+    log: (s) => bad.push(String(s)), error: (s) => bad.push(String(s)),
+  });
+  ok(badCode === 1 && /must be a folder that exists/.test(bad.join('\n')),
+    'a folder that is not there is said plainly');
+
+  ok(DEFAULT_TARGET === 3600 && DEFAULT_MODEL === 'realesrgan-x4plus',
+    'the defaults are the ones the report named', `${DEFAULT_TARGET}, ${DEFAULT_MODEL}`);
+
+  const ext = [];
+  const extCode = await upscaleRun(['--in', root, '--ext', 'tiff'], {
+    log: (s) => ext.push(String(s)), error: (s) => ext.push(String(s)),
+  });
+  ok(extCode === 1 && /--ext does not know \.tiff/.test(ext.join('\n')),
+    'an extension it cannot read is refused rather than silently matching nothing',
+    (ext.join('\n').match(/--ext does not know.*/) || [''])[0]);
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

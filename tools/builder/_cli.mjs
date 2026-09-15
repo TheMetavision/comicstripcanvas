@@ -290,6 +290,11 @@ export function classifyFailure(err) {
  */
 export async function withRetry(fn, {
   attempts = 3, base = 1000, sleepFn = sleep, onRetry = null, random = Math.random,
+  /* Overridable because "worth asking again" is not the same question for a
+     billed HTTP call as it is for a local GPU process: the shared classifier
+     knows about safety refusals and 429s, and knows nothing about a Vulkan
+     allocation failing under memory pressure, which is a wobble. */
+  classify = classifyFailure,
 } = {}) {
   let last = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -297,7 +302,7 @@ export async function withRetry(fn, {
       return await fn(attempt);
     } catch (err) {
       last = err;
-      const { kind, reason } = classifyFailure(err);
+      const { kind, reason } = classify(err);
       if (kind !== 'transient' || attempt === attempts) {
         err.attempts = attempt;
         err.failureKind = kind;
