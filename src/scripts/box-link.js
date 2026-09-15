@@ -20,9 +20,53 @@
  * Nothing here touches the SVG. The caller redraws.
  */
 
-/** Where a box's group sits, given its home and its accumulated offset. */
-export const boxTransform = (b) =>
-  `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})`;
+/**
+ * Where a box's group sits, given its home, its accumulated offset, and how
+ * much taller a multi-line caption has asked it to be.
+ *
+ * The growth is a TRANSFORM, not a redrawn path. The speech boxes are plain
+ * polygons -- M, L and Z, no curves -- so stretching one vertically is a scale
+ * on y, and doing it here means the path data stays exactly the data the
+ * template shipped. Nothing has to parse it, and nothing can round it wrong.
+ *
+ * It grows upwards: the translate moves the top up by the full growth and the y
+ * scale gives the same amount back, so the BOTTOM edge lands where it always
+ * did. That edge is where the tail is, and a tail that drifts stops pointing at
+ * the thing it is supposed to point at.
+ *
+ * The no-growth branch returns the string this function has always returned,
+ * character for character -- `scale(s)` and not `scale(s,s)`, which raster to
+ * the same pixels but would make every existing design's SVG a different file.
+ */
+export const boxTransform = (b) => {
+  const grow = b.grow || 0;
+  if (!grow) return `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})`;
+  const s = b.scale || 1;
+  const sy = (b.height + grow) / b.height;
+  return `translate(${b.x + b.dx},${b.y + b.dy - grow}) scale(${s},${s * sy})`;
+};
+
+/**
+ * The box's inner area once growth has been applied, in canvas units.
+ *
+ * The same scale the transform does, arithmetically: everything is measured
+ * from the bottom edge, because that is the edge that does not move.
+ *
+ * With no growth this returns the inner rect untouched, which is what keeps
+ * boxArea's answer -- and therefore the auto-fit, and therefore the rendered
+ * font size -- identical for every design that has no breaks in it.
+ *
+ * @returns {{top: number, height: number}} in the same units as b.y
+ */
+export function grownInner(b) {
+  const n = b.inner;
+  const top = b.y + (b.dy || 0) + n.y;
+  const grow = b.grow || 0;
+  if (!grow) return { top, height: n.h };
+  const bottom = b.y + (b.dy || 0) + b.height;
+  const sy = (b.height + grow) / b.height;
+  return { top: bottom - (bottom - top) * sy, height: n.h * sy };
+}
 
 /**
  * Move one box by (sx, sy), taking its own text along if that text asked to go.
