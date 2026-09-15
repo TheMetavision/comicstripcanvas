@@ -165,11 +165,17 @@ say('\n3. NEITHER BUDGET CAN SPEND THE OTHER\n');
 
   /* A default-origin call is a customer call, which is what makes every
      existing caller keep the meaning it had. Called with no `now` either, the
-     way the live code calls it — so this lands on today's real day key rather
-     than on NOW's, and both sides of the assertion have to agree about that. */
-  await bumpGlobal(store, 1);
-  const defaulted = await readGlobal(store);
-  const defaultedStudio = await readGlobal(store, new Date(), STUDIO);
+     way the live code calls it.
+
+     ITS OWN STORE, and that is not tidiness. The first cut of this shared the
+     store above and asserted the count was 1 — which held only while NOW's day
+     and the real today were different days, and stopped holding the morning the
+     date rolled over onto NOW's. A test that passes because of what day it is
+     is a test that will fail on a day nobody is looking. */
+  const fresh = memStore();
+  await bumpGlobal(fresh, 1);
+  const defaulted = await readGlobal(fresh);
+  const defaultedStudio = await readGlobal(fresh, new Date(), STUDIO);
   ok(defaulted.origin === CUSTOMER && defaulted.calls === 1,
     'bumpGlobal with no origin is a customer call', `${defaulted.origin} ${defaulted.calls}`);
   ok(defaultedStudio.calls === 0, 'and lands nowhere near the studio counter',

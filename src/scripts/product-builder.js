@@ -26,6 +26,12 @@
  */
 
 import { PRICES } from '../data/products';
+/* The arithmetic behind "Link boxes", kept where it can be read and checked --
+   see the header of box-link.js for why this one earned a file of its own. */
+import {
+  boxTransform, dragBoxes, planRecentre, applyRecentre, canLinkBoxes,
+  sceneLinkFlag, linkFromScene, fieldMovesWithBox, applyFieldMovesWithBox,
+} from './box-link.js';
 /* How a photograph is prepared before it goes up to be styled. Shared with
    tools/builder/style.mjs, because the two had drifted: a 5302px photograph
    the shop styles happily came back from the CLI as "the model returned no
@@ -367,6 +373,20 @@ export function initProductBuilder() {
   for (const k of ['cover', 'cover-fullbleed']) TEMPLATES[k].panels = [TEMPLATES[k].art];
 
   let T, TK, state, selected, pickTarget = null, bg, tint = { h: 0, s: 100 }, nodes = {}, moveMode = false;
+  /* Do the speech boxes move as one?
+   *
+   * Only ever offered where there is more than one box to link, which today is
+   * the icon templates and nothing else: a cover has a single caption box and a
+   * strip has none, so the control is absent there rather than disabled.
+   *
+   * A TOGGLE rather than a modifier key held during the drag, and the two
+   * requirements that settled it are the ones a modifier cannot meet: this has
+   * to work on touch, where there is no modifier to hold, and it has to persist
+   * into the retained scene, which a transient key state is not. A toggle is
+   * also the thing you can see: linked is a mode the artwork is in, and a mode
+   * nobody can see is a mode people trip over.
+   */
+  let boxesLinked = false;
   let fmt = 'poster';
   /* Customise mode only: the design arrives over the network, so there is a
      moment where the builder is mounted and has nothing to show. The gate
@@ -633,7 +653,7 @@ export function initProductBuilder() {
 
     T.boxes.forEach((b) => {
       // the path data is in reference units, so it must be scaled as well as placed
-      const g = mk('g', { transform: `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})` });
+      const g = mk('g', { transform: boxTransform(b) });
       const sh = mk('path', { d: b.shadow, fill: b.shadowColour });
       g.appendChild(sh);
       const fills = (b.fills || [{ d: b.fill, colour: b.fillColour }]).map((f) => {
@@ -653,10 +673,19 @@ export function initProductBuilder() {
       g.addEventListener('pointermove', (e) => {
         if (!bd) return;
         const nx = bd.dx + (e.clientX - bd.px) * bd.k, ny = bd.dy + (e.clientY - bd.py) * bd.k;
+        /* The step this move makes, which is what the others follow. Taken as a
+           delta rather than by assigning each box the same dx: the boxes do not
+           start level, and copying one's offset onto the other would snap them
+           together the instant a linked drag began. A shared delta preserves
+           whatever gap the design already has, exactly. */
         const sx = nx - b.dx, sy = ny - b.dy;
-        b.dx = nx; b.dy = ny;
-        g.setAttribute('transform', `translate(${b.x + b.dx},${b.y + b.dy}) scale(${b.scale || 1})`);
-        T.text.forEach((f) => { if (f.boxRef === b.id && f.linked) { f.pos.x += sx; f.pos.y += sy; } });
+        /* The dragged box goes through the same mover as the ones following it,
+           delta and all, rather than having its offset assigned here. An earlier
+           cut set b.dx directly and then redrew it, which is correct for the box
+           and silently drops "Move with box" for the words inside it -- the one
+           thing that only happens on the box you are actually holding, so the
+           one least likely to be noticed. */
+        redrawBoxes(dragBoxes(T.boxes, T.text, b, sx, sy, boxesLinked));
         layoutAllText();
       });
       const bend = () => { bd = null; };
@@ -787,6 +816,20 @@ export function initProductBuilder() {
   function recentreText(f) {
     f.pos = defaultPos(f);
     layoutText(f);
+  }
+
+  /** Write the transform for boxes whose offsets have just changed. */
+  function redrawBoxes(moved) {
+    for (const b of moved || []) {
+      const n = nodes['b-' + b.id];
+      if (n) n.g.setAttribute('transform', boxTransform(b));
+    }
+  }
+
+  /** Put the boxes back -- as a pair while linked. See planRecentre. */
+  function recentreBoxes() {
+    redrawBoxes(applyRecentre(planRecentre(T.boxes, boxesLinked), T.text));
+    layoutAllText();
   }
 
   function anchorOf(f) {
@@ -3102,6 +3145,37 @@ export function initProductBuilder() {
     });
     const bb = $('boxFields'); bb.innerHTML = '';
     $('boxBox').hidden = !T.boxes.length;
+
+    /* Two boxes or more, or there is nothing to link. That is the whole guard
+       against this appearing on a cover (one caption box) or a strip (none) --
+       they share this component, and the control is absent there rather than
+       present and inert. */
+    if (canLinkBoxes(T.boxes)) {
+      const lw = document.createElement('div'); lw.className = 'b-fld';
+      const lrow = document.createElement('div'); lrow.className = 'b-row';
+      const lcb = document.createElement('input'); lcb.type = 'checkbox';
+      lcb.id = 'box-link'; lcb.checked = boxesLinked;
+      lcb.className = 'h-[18px] w-[18px] flex-none accent-comic-red';
+      const llab = document.createElement('label'); llab.htmlFor = 'box-link';
+      llab.className = 'b-lab';
+      llab.textContent = 'Link boxes';
+      lcb.title = 'Drag either box and both move together, keeping the gap between them';
+      llab.title = lcb.title;
+      /* Nothing moves when this changes, in either direction. Turning it off
+         has to leave the boxes exactly where they are -- a toggle that shuffled
+         the artwork on the way out would make people afraid to try it. */
+      lcb.addEventListener('change', () => { boxesLinked = lcb.checked; });
+      lrow.append(lcb, llab); lw.appendChild(lrow);
+
+      const rrow = document.createElement('div'); rrow.className = 'b-row';
+      const rbtn = document.createElement('button'); rbtn.type = 'button';
+      rbtn.className = 'b-btn w-full';
+      rbtn.textContent = 'Recentre boxes';
+      rbtn.title = 'Put the boxes back where the template has them — as a pair while linked';
+      rbtn.addEventListener('click', recentreBoxes);
+      rrow.appendChild(rbtn); lw.appendChild(rrow);
+      bb.appendChild(lw);
+    }
     T.boxes.forEach((b) => {
       const w = document.createElement('div'); w.className = 'b-fld';
       const top = document.createElement('div'); top.className = 'b-fld-top';
@@ -3463,6 +3537,13 @@ export function initProductBuilder() {
           removeBackground: s ? { on: s.cut, spread: s.tol, soften: s.feather } : null,
         };
       }),
+      /* Whether the boxes move as one. A scene-level fact rather than a
+         per-box one: it describes the pair, and writing it on each box would
+         invite two boxes that disagree about it. The renderer never reads it --
+         the positions it prints are the offsets above, already resolved -- so
+         this is here purely so a design reopened for Replace artwork or
+         Customise comes back in the mode it was drawn in. */
+      boxesLinked: sceneLinkFlag(T.boxes, boxesLinked),
       boxes: T.boxes.map((b) => ({
         id: b.id, offset: { x: Math.round(b.dx), y: Math.round(b.dy) },
         fillColour: b.fillColour, keyLineColour: b.shadowColour,
@@ -3474,6 +3555,11 @@ export function initProductBuilder() {
       text: T.text.map((f) => ({
         id: f.id, value: f.value, colours: f.colours,
         keyLine: f.stroke || null, keyLineScale: f.strokeScale, sizeScale: f.sizeScale,
+        /* "Move with box", which was never recorded and so was lost on every
+           reopen. It has to survive now: linked boxes that carried their words
+           while being drawn, and then came back not carrying them, would look
+           like the link itself was broken. */
+        movesWithBox: fieldMovesWithBox(f),
         offset: { x: Math.round(f.dx), y: Math.round(f.dy) },
         /* Where the field ACTUALLY sits, which offset above has not described
            since Move text started writing f.pos instead of f.dx. Recorded so a
@@ -4593,6 +4679,7 @@ export function initProductBuilder() {
          carried positions has its fields where the template puts them, which
          is where they were drawn. */
       if (t.pos && Number.isFinite(t.pos.x) && Number.isFinite(t.pos.y)) f.pos = { x: t.pos.x, y: t.pos.y };
+      applyFieldMovesWithBox(f, t.movesWithBox);
     }
 
     for (const b of r.boxes || []) {
@@ -4602,6 +4689,9 @@ export function initProductBuilder() {
       if (b.fillColour) box.fillColour = b.fillColour;
       if (b.keyLineColour) box.shadowColour = b.keyLineColour;
     }
+    /* Absent on every design drawn before this existed, which reads as
+       unlinked -- the behaviour those designs were made with. */
+    boxesLinked = linkFromScene(T.boxes, r);
 
     /* The burst colour, through the same setter the picker uses, so the swatch
        row and the custom input agree with the artwork. setBg needs the scene
