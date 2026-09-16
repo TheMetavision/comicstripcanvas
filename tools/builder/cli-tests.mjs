@@ -28,8 +28,10 @@ import {
 } from './cutout.mjs';
 import {
   run as upscaleRun, planFor, fitLong, listArtwork, originalFor, locateUpscaler,
-  modelInstalled, installedModels, classifyUpscaleFailure,
+  modelInstalled, installedModels, classifyUpscaleFailure, upscaleFile,
+  isLockError, renameWithRetry, listStaged, promoteStaged, primaryForStaged,
   DEFAULT_TARGET, DEFAULT_MODEL, MODEL_SCALE, RESIZE_ONLY_FRACTION, ORIGINAL_SUFFIX,
+  STAGED_SUFFIX, RENAME_ATTEMPTS,
 } from './upscale.mjs';
 
 let pass = 0, fail = 0;
@@ -1153,6 +1155,205 @@ say('\n20. UPSCALE — WHEN IT WILL NOT PROCEED\n');
   ok(extCode === 1 && /--ext does not know \.tiff/.test(ext.join('\n')),
     'an extension it cannot read is refused rather than silently matching nothing',
     (ext.join('\n').match(/--ext does not know.*/) || [''])[0]);
+}
+
+/* ------------------------------ 21. upscale.mjs, the Windows file lock */
+
+say('\n21. UPSCALE — A LOCKED FILE IS A WOBBLE, NOT A FAILURE\n');
+{
+  const lock = (code) => Object.assign(new Error(`${code}: resource busy or locked, rename`), { code });
+
+  ok(isLockError(lock('EBUSY')), 'EBUSY is a lock');
+  ok(isLockError(lock('EPERM')), 'so is EPERM');
+  ok(!isLockError(lock('ENOENT')), 'a missing file is not');
+  ok(!isLockError(new Error('decode failed')), 'and neither is a bad image');
+
+  ok(classifyUpscaleFailure(lock('EBUSY')).kind === 'transient',
+    'so the retry policy treats it as worth asking again',
+    classifyUpscaleFailure(lock('EBUSY')).reason);
+
+  /* Succeeds on a later attempt. */
+  let tries = 0;
+  const waits = [];
+  const flaky = { renameSync: () => { tries++; if (tries < 3) throw lock('EBUSY'); } };
+  const attempt = await renameWithRetry('a', 'b', {
+    fsFn: flaky, sleepFn: async (ms) => { waits.push(ms); }, base: 10,
+  });
+  ok(tries === 3 && attempt === 3, 'a rename blocked twice succeeds on the third go', `${tries} tries`);
+  ok(String(waits) === '10,20', 'and backs off between them', String(waits));
+
+  /* Gives up eventually, rather than spinning. */
+  let forever = 0;
+  let threw = null;
+  try {
+    await renameWithRetry('a', 'b', {
+      fsFn: { renameSync: () => { forever++; throw lock('EBUSY'); } },
+      sleepFn: async () => {}, base: 1,
+    });
+  } catch (e) { threw = e; }
+  ok(forever === RENAME_ATTEMPTS, `it stops after ${RENAME_ATTEMPTS} attempts`, String(forever));
+  ok(threw && threw.code === 'EBUSY', 'and reports the lock it could not outwait');
+
+  /* A non-lock error is not retried at all. */
+  let once = 0;
+  try {
+    await renameWithRetry('a', 'b', {
+      fsFn: { renameSync: () => { once++; throw lock('ENOENT'); } }, sleepFn: async () => {},
+    });
+  } catch (e) { /* expected */ }
+  ok(once === 1, 'a real error is thrown on the first attempt, not retried five times', String(once));
+}
+
+/* ------------------------- 22. upscale.mjs, the result outlives the failure */
+
+say('\n22. UPSCALE — A FINISHED RESULT IS NEVER DELETED BY A FAILURE\n');
+{
+  const dir = path.join(TMP, 'ebusy');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'subject.png');
+  await sharp({ create: { width: 3300, height: 2200, channels: 3, background: '#246' } }).png().toFile(file);
+
+  const staged = path.join(dir, `subject${STAGED_SUFFIX}.png`);
+  const backup = originalFor(file);
+
+  /* Real fs, except the final rename is jammed open the way Defender jams it. */
+  let renames = 0;
+  const jammed = new Proxy(fs, {
+    get: (t, k) => (k === 'renameSync'
+      ? (from, to) => {
+        renames++;
+        if (path.basename(from).includes(STAGED_SUFFIX)) {
+          throw Object.assign(new Error('EBUSY: resource busy or locked, rename'), { code: 'EBUSY' });
+        }
+        return t.renameSync(from, to);
+      }
+      : t[k]),
+  });
+
+  let err = null;
+  try {
+    await upscaleFile({ file, rel: 'subject.png' }, planFor({ width: 3300, height: 2200 }, 3600), {
+      target: 3600, sharpFn: sharp, fsFn: jammed, sleepFn: async () => {},
+    });
+  } catch (e) { err = e; }
+
+  ok(err && err.code === 'EBUSY', 'the lock is reported', err?.code);
+  ok(err && err.recoverable === true, 'and flagged as recoverable');
+  ok(err && err.stagedAt === staged, 'with the staged result named', err?.stagedAt && path.basename(err.stagedAt));
+
+  /* The three facts that matter after a failure like this. */
+  ok(fs.existsSync(staged), 'THE FINISHED RESULT IS STILL ON DISK — not deleted by the catch');
+  ok(fs.existsSync(backup), 'the original is safe in its backup');
+  ok(!fs.existsSync(file), 'and the primary name is empty, which is what the promotion pass looks for');
+  const sm = await sharp(staged).metadata();
+  ok(Math.max(sm.width, sm.height) === 3600, 'the staged file is the real, finished result', `${sm.width}x${sm.height}`);
+  ok(!fs.existsSync(path.join(dir, 'subject.upscale-tmp.png')), 'the model scratch is still cleaned up');
+
+  /* A partial write, by contrast, must NOT survive -- it would look finished. */
+  const dir2 = path.join(TMP, 'partial');
+  fs.mkdirSync(dir2, { recursive: true });
+  const f2 = path.join(dir2, 'broken.png');
+  await sharp({ create: { width: 3300, height: 2200, channels: 3, background: '#333' } }).png().toFile(f2);
+  let err2 = null;
+  try {
+    await upscaleFile({ file: f2, rel: 'broken.png' }, planFor({ width: 3300, height: 2200 }, 3600), {
+      target: 3600, fsFn: fs, sleepFn: async () => {},
+      /* blows up after the staged file is part-written, before it is read back */
+      sharpFn: (input) => {
+        const s = sharp(input);
+        const orig = s.toFile.bind(s);
+        s.toFile = async (p) => { fs.writeFileSync(p, 'half a png'); throw new Error('disk gave out'); };
+        s.resize = () => s;
+        s.png = () => s;
+        s.metadata = () => sharp(input).metadata();
+        return s;
+      },
+    });
+  } catch (e) { err2 = e; }
+  ok(err2 && !err2.recoverable, 'a write that never finished is not called recoverable');
+  ok(!fs.existsSync(path.join(dir2, `broken${STAGED_SUFFIX}.png`)),
+    'and the half-written file is removed, so nothing can promote it later');
+  ok(fs.existsSync(f2), 'with the original left exactly where it was');
+}
+
+/* ------------------------------- 23. upscale.mjs, promoting on the next run */
+
+say('\n23. UPSCALE — THE NEXT RUN PUTS IT BACK\n');
+{
+  const root = path.join(TMP, 'promote');
+  const dir = path.join(root, 'Subject');
+  fs.mkdirSync(dir, { recursive: true });
+
+  /* Exactly the state this morning's run left six files in. */
+  const primary = path.join(dir, 'subject.png');
+  const staged = path.join(dir, `subject${STAGED_SUFFIX}.png`);
+  await sharp({ create: { width: 3600, height: 2400, channels: 3, background: '#a33' } }).png().toFile(staged);
+  await sharp({ create: { width: 3504, height: 2336, channels: 3, background: '#a33' } }).png().toFile(originalFor(primary));
+
+  ok(primaryForStaged(staged) === primary, 'a staged name says which file it belongs to');
+  ok(primaryForStaged(path.join(dir, 'ordinary.png')) === null, 'and an ordinary name is not one');
+  ok(listStaged(root).length === 1, 'the walker finds it', String(listStaged(root).length));
+  ok(listArtwork(root).every((f) => !f.rel.includes(STAGED_SUFFIX)),
+    'while the artwork walker steps over it — it is scratch, not a picture');
+
+  const out = [];
+  const r1 = await promoteStaged(root, { target: 3600, log: (s) => out.push(String(s)) });
+  ok(r1.promoted.length === 1, 'it is promoted', JSON.stringify(r1.promoted[0]?.px));
+  ok(fs.existsSync(primary) && !fs.existsSync(staged), 'the staged file becomes the primary');
+  ok((await sharp(primary).metadata()).width === 3600, 'at its finished size');
+
+  /* --- the guards --- */
+  const mk = async (name, w, h, withBackup) => {
+    const p = path.join(dir, `${name}.png`);
+    await sharp({ create: { width: w, height: h, channels: 3, background: '#555' } }).png()
+      .toFile(path.join(dir, `${name}${STAGED_SUFFIX}.png`));
+    if (withBackup) await sharp({ create: { width: 100, height: 100, channels: 3, background: '#555' } })
+      .png().toFile(originalFor(p));
+    return p;
+  };
+
+  await mk('orphan', 3600, 2400, false);          // no -original
+  await mk('wrongsize', 2000, 1000, true);        // not at target
+  const r2 = await promoteStaged(root, { target: 3600 });
+  ok(r2.promoted.length === 0, 'neither is promoted', String(r2.promoted.length));
+  ok(r2.skipped.some((s) => /no -original/.test(s.why)),
+    'a staged file with no backup is left alone — nothing proves where it belongs');
+  ok(r2.skipped.some((s) => /not at 3600/.test(s.why)),
+    'and one at the wrong size is left alone rather than quietly installed');
+  ok(fs.existsSync(path.join(dir, `orphan${STAGED_SUFFIX}.png`)), 'both are still on disk');
+
+  /* Never bury newer work. */
+  const nw = path.join(dir, 'newer.png');
+  await sharp({ create: { width: 3600, height: 2400, channels: 3, background: '#080' } }).png()
+    .toFile(path.join(dir, `newer${STAGED_SUFFIX}.png`));
+  await sharp({ create: { width: 100, height: 100, channels: 3, background: '#080' } }).png().toFile(originalFor(nw));
+  await sharp({ create: { width: 3600, height: 2400, channels: 3, background: '#008' } }).png().toFile(nw);
+  fs.utimesSync(nw, new Date(), new Date());     // the file in place is the newer one
+  const r3 = await promoteStaged(root, { target: 3600 });
+  ok(!r3.promoted.some((p) => /newer/.test(p.file)), 'a newer file in place is not overwritten');
+  ok(r3.skipped.some((s) => /newer/.test(s.staged) && /newer/.test(s.why)), 'and the reason says so');
+
+  /* End to end: the run promotes before it plans, so nothing is reprocessed. */
+  const root2 = path.join(TMP, 'promote-run');
+  const d2 = path.join(root2, 'Thing');
+  fs.mkdirSync(d2, { recursive: true });
+  const p2 = path.join(d2, 'thing.png');
+  await sharp({ create: { width: 3600, height: 2400, channels: 3, background: '#360' } }).png()
+    .toFile(path.join(d2, `thing${STAGED_SUFFIX}.png`));
+  await sharp({ create: { width: 3504, height: 2336, channels: 3, background: '#360' } }).png()
+    .toFile(originalFor(p2));
+
+  const runOut = [];
+  const code = await upscaleRun(['--in', root2, '--target', '3600'], {
+    spawnSync: () => { throw new Error('nothing should need the GPU'); },
+    log: (s) => runOut.push(String(s)), error: (s) => runOut.push(String(s)),
+  });
+  const text = runOut.join('\n');
+  ok(code === 0, 'the run comes out clean', String(code));
+  ok(/Recovered 1 result/.test(text), 'it says what it recovered',
+    (text.match(/Recovered.*/) || [''])[0]);
+  ok(fs.existsSync(p2), 'the file is in place');
+  ok(/Nothing to do/.test(text), 'and is then SKIPPED, not upscaled a second time');
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

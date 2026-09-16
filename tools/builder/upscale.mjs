@@ -167,6 +167,25 @@ export function installedModels(models, readdir = fs.readdirSync) {
 const isOriginal = (file) =>
   path.basename(file, path.extname(file)).toLowerCase().endsWith(ORIGINAL_SUFFIX);
 
+export const STAGED_SUFFIX = '.upscale-new';
+export const TMP_SUFFIX = '.upscale-tmp';
+
+/* A working file, not artwork. Without this they are picked up as images in
+   their own right -- `cat.upscale-new.png` has a .png extension and does not
+   end in -original -- and the tool would cheerfully upscale its own scratch. */
+const isWorkFile = (name) => {
+  const stem = path.basename(name, path.extname(name)).toLowerCase();
+  return stem.endsWith(STAGED_SUFFIX) || stem.endsWith(TMP_SUFFIX);
+};
+
+/** The primary file a staged result belongs to. */
+export function primaryForStaged(stagedPath) {
+  const ext = path.extname(stagedPath);
+  const stem = path.basename(stagedPath, ext);
+  if (!stem.toLowerCase().endsWith(STAGED_SUFFIX)) return null;
+  return path.join(path.dirname(stagedPath), stem.slice(0, -STAGED_SUFFIX.length) + ext);
+}
+
 /**
  * Every image under `root`, recursively.
  *
@@ -193,7 +212,7 @@ export function listArtwork(root, deps = {}) {
       }
       if (!e.isFile()) continue;
       if (!want.has(path.extname(e.name).toLowerCase())) continue;
-      if (isOriginal(e.name)) continue;
+      if (isOriginal(e.name) || isWorkFile(e.name)) continue;
       out.push({
         file: full,
         rel: path.relative(root, full),
@@ -208,6 +227,88 @@ export function listArtwork(root, deps = {}) {
 /** Where this file's backup lives, and therefore whether it has been done. */
 export const originalFor = (file) =>
   path.join(path.dirname(file), `${path.basename(file, path.extname(file))}${ORIGINAL_SUFFIX}${path.extname(file)}`);
+
+/**
+ * Every staged result left behind by a run that could not put it in place.
+ *
+ * Walks the same folders as listArtwork -- same exclusions, same reasons -- and
+ * looks only at the working files it deliberately skips.
+ */
+export function listStaged(root, deps = {}) {
+  const { readdir = fs.readdirSync } = deps;
+  const skip = new Set(SKIP_DIRS.map((s) => s.toLowerCase()));
+  const out = [];
+  const walk = (dir) => {
+    let entries;
+    try { entries = readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of entries.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (skip.has(e.name.toLowerCase()) || e.name.startsWith('_')) continue;
+        walk(full);
+        continue;
+      }
+      if (!e.isFile()) continue;
+      const stem = path.basename(e.name, path.extname(e.name)).toLowerCase();
+      if (stem.endsWith(STAGED_SUFFIX)) out.push(full);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Put back what a lock stopped last time.
+ *
+ * A staged file is promoted only when all of it holds:
+ *
+ *   - it has a -original beside it, so a run really did get as far as taking
+ *     the backup and the primary name really is the one it belongs to;
+ *   - the primary is missing, or older than the staged file, so promoting it
+ *     cannot bury newer work;
+ *   - sharp can read it and it is AT the target, so a partial write or a
+ *     result from a run with a different --target is left alone rather than
+ *     quietly installed.
+ *
+ * Anything that fails those is reported and left exactly where it is. This is
+ * a recovery, and a recovery that guesses is worse than one that does nothing.
+ */
+export async function promoteStaged(root, {
+  target, fsFn = fs, sharpFn = sharp, sleepFn = realSleep, log = () => {},
+} = {}) {
+  const promoted = [], skipped = [];
+  for (const staged of listStaged(root)) {
+    const primary = primaryForStaged(staged);
+    if (!primary) continue;
+    const backup = originalFor(primary);
+    const rel = path.relative(root, staged);
+
+    if (!fsFn.existsSync(backup)) { skipped.push({ staged: rel, why: 'no -original beside it' }); continue; }
+
+    let meta;
+    try { meta = await sharpFn(staged).metadata(); }
+    catch (e) { skipped.push({ staged: rel, why: `unreadable: ${e.message}` }); continue; }
+    const long = Math.max(meta.width || 0, meta.height || 0);
+    if (long !== target) { skipped.push({ staged: rel, why: `${meta.width}x${meta.height} is not at ${target}` }); continue; }
+
+    if (fsFn.existsSync(primary)) {
+      let older = false;
+      try { older = fsFn.statSync(primary).mtimeMs < fsFn.statSync(staged).mtimeMs; }
+      catch (e) { skipped.push({ staged: rel, why: `could not compare times: ${e.message}` }); continue; }
+      if (!older) { skipped.push({ staged: rel, why: 'the file in place is newer' }); continue; }
+      try { fsFn.unlinkSync(primary); }
+      catch (e) { skipped.push({ staged: rel, why: `could not clear the older file: ${e.message}` }); continue; }
+    }
+
+    try {
+      await renameWithRetry(staged, primary, { fsFn, sleepFn });
+      promoted.push({ file: path.relative(root, primary), px: [meta.width, meta.height] });
+    } catch (e) {
+      skipped.push({ staged: rel, why: `still locked: ${e.code || e.message}` });
+    }
+  }
+  return { promoted, skipped };
+}
 
 /* --------------------------------------------------------------- the plan */
 
@@ -253,9 +354,50 @@ export function planFor({ width, height }, target, fraction = RESIZE_ONLY_FRACTI
 
 /* -------------------------------------------------------------- the doing */
 
+/* ---------------------------------------------------- the Windows lock */
+
+/**
+ * Windows hands a file to a virus scanner and to Explorer's thumbnailer the
+ * moment it is closed, and for the fraction of a second they hold it open a
+ * rename onto it fails. It is not a fault -- the file is fine and the next
+ * attempt works -- but it arrives as an exception like any other.
+ *
+ * Observed in production: six of twenty-two files in one run failed on the
+ * final rename with EBUSY, all of them large PNGs that sharp had just written.
+ */
+export const isLockError = (err) => err?.code === 'EBUSY' || err?.code === 'EPERM';
+
+/** Attempts and the first backoff; 5 over 100+200+400+800 ms is about 1.5s. */
+export const RENAME_ATTEMPTS = 5;
+export const RENAME_BACKOFF_MS = 100;
+
+/**
+ * Rename, waiting out a lock.
+ *
+ * @returns {Promise<number>} which attempt succeeded, so a caller can say so
+ */
+export async function renameWithRetry(from, to, {
+  fsFn = fs, sleepFn = realSleep, attempts = RENAME_ATTEMPTS, base = RENAME_BACKOFF_MS, onRetry = null,
+} = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fsFn.renameSync(from, to);
+      return attempt;
+    } catch (err) {
+      if (!isLockError(err) || attempt >= attempts) throw err;
+      const wait = base * (2 ** (attempt - 1));
+      if (onRetry) onRetry({ attempt, wait, code: err.code });
+      await sleepFn(wait);
+    }
+  }
+}
+
 /** A GPU that has run out of room is worth asking again; a bad PNG is not. */
 export function classifyUpscaleFailure(err) {
   const message = String(err?.message || err || '');
+  /* A lock that outlasted the rename retries is still a lock, not a verdict on
+     the file -- so the outer retry gets a turn at it too. */
+  if (isLockError(err)) return { kind: 'transient', reason: `${err.code}: file locked by another process` };
   if (/vulkan|vkallocate|out of (device |host )?memory|device lost|allocation failed|VK_ERROR/i.test(message)) {
     return { kind: 'transient', reason: message.slice(0, 120) };
   }
@@ -273,6 +415,7 @@ export function classifyUpscaleFailure(err) {
 export async function upscaleFile(item, plan, opts) {
   const {
     bin, models, model, target, spawnSync = realSpawnSync, sharpFn = sharp, fsFn = fs,
+    sleepFn = realSleep, onLockRetry = null,
   } = opts;
 
   const file = item.file;
@@ -284,11 +427,12 @@ export async function upscaleFile(item, plan, opts) {
   const stem = path.join(path.dirname(file), path.basename(file, ext));
   const tmp = `${stem}.upscale-tmp.png`;
   const staged = `${stem}.upscale-new${ext}`;
-  const cleanup = () => {
-    for (const f of [tmp, staged]) {
-      try { if (fsFn.existsSync(f)) fsFn.unlinkSync(f); } catch (e) { /* leave it */ }
-    }
-  };
+  const drop = (f) => { try { if (fsFn.existsSync(f)) fsFn.unlinkSync(f); } catch (e) { /* leave it */ } };
+
+  /* Set the moment the staged file has been written AND read back at its full
+     size. Before that it is a partial write and worth nothing; after it, it is
+     the finished result and must outlive any failure. */
+  let stagedReady = false;
 
   try {
     let interim = source;
@@ -323,10 +467,16 @@ export async function upscaleFile(item, plan, opts) {
     }
 
     const final = await sharpFn(staged).metadata();
+    stagedReady = true;
 
+    /* The backup FIRST, so an interruption leaves the original findable. From
+       here the primary name is empty and `staged` is the only copy of the
+       result -- which is why the catch below must not touch it. */
     if (!hadBackup) fsFn.renameSync(file, backup);
-    fsFn.renameSync(staged, file);
-    cleanup();
+    await renameWithRetry(staged, file, {
+      fsFn, sleepFn, onRetry: onLockRetry ? (info) => onLockRetry({ ...info, file }) : null,
+    });
+    drop(tmp);
 
     return {
       action: plan.action,
@@ -340,7 +490,22 @@ export async function upscaleFile(item, plan, opts) {
       redone: hadBackup,
     };
   } catch (err) {
-    cleanup();
+    /* The model's intermediate always goes: it is huge and regenerable. */
+    drop(tmp);
+
+    if (!stagedReady) {
+      /* A partial write is worse than nothing -- left on disk it would look
+         like a finished result to the promotion pass on the next run. */
+      drop(staged);
+      throw err;
+    }
+
+    /* Finished, but not in place. This used to be deleted here, and the only
+       reason a production run did not lose six upscales to that line is that
+       the same lock which blocked the rename also blocked the delete. The
+       result stays; the next run promotes it. */
+    err.stagedAt = staged;
+    err.recoverable = true;
     throw err;
   }
 }
@@ -386,6 +551,18 @@ export async function run(argv, deps = {}) {
   if (unknownExt.length) {
     error(`  --ext does not know ${unknownExt.join(', ')}. Known: ${IMAGE_EXTS.join(', ')}`);
     return 1;
+  }
+
+  /* Before anything is planned: put back whatever a lock stopped last time.
+     Doing it here rather than at the end means the plan below sees the file in
+     its finished state and skips it, instead of upscaling it a second time. */
+  if (!dryRun) {
+    const rescue = await promoteStaged(root, { target, sharpFn, sleepFn: sleep, log });
+    if (rescue.promoted.length) {
+      log(`\n  Recovered ${rescue.promoted.length} result(s) left staged by an earlier run:`);
+      for (const p of rescue.promoted) log(`    ${p.file}  ${p.px[0]}x${p.px[1]}`);
+    }
+    for (const s of rescue.skipped) error(`  left alone: ${s.staged} — ${s.why}`);
   }
 
   const all = listArtwork(root, { exts });
@@ -534,6 +711,9 @@ export async function run(argv, deps = {}) {
         if (item.plan.action === 'model') calls++;
         return upscaleFile(item, item.plan, {
           bin: found?.bin, models: found?.models, model, target, spawnSync, sharpFn,
+          sleepFn: sleep,
+          onLockRetry: ({ attempt, wait, code }) =>
+            log(`    ${item.rel}: ${code} on rename, attempt ${attempt}, waiting ${wait}ms`),
         });
       }, {
         attempts: 2,
@@ -552,6 +732,14 @@ export async function run(argv, deps = {}) {
       const { kind, reason } = classifyUpscaleFailure(err);
       row.result = kind === 'refused' ? 'refused' : 'failed';
       row.detail = reason;
+      /* Say where the work went. Without this the operator sees a failure and
+         assumes the upscale has to be done again, when in fact it is finished
+         and one rename away from being in place. */
+      if (err.stagedAt) {
+        row.stagedAt = err.stagedAt;
+        row.detail += ` — result is at ${path.basename(err.stagedAt)}, `
+          + `the rename failed; run again to promote it (no reprocessing)`;
+      }
     }
     row.ms = now() - t0;
     rows.push(row);
@@ -587,6 +775,13 @@ export async function run(argv, deps = {}) {
     totals: readRunTotals(root), log,
   });
 
+  const stagedLeft = rows.filter((r) => r.stagedAt);
+  if (stagedLeft.length) {
+    log(`  ${stagedLeft.length} result(s) are finished but could not be renamed into place —`);
+    log(`  nothing was reprocessed and nothing was lost. Run the same command again`);
+    log(`  and they will be promoted before anything else happens:`);
+    for (const r of stagedLeft) log(`    ${path.basename(r.stagedAt)}`);
+  }
   if (summary.short) {
     log(`  ${summary.short} did not reach ${target}px in one ${MODEL_SCALE}x pass — see the table. `
       + `Not chained.`);
