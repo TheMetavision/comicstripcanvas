@@ -29,9 +29,21 @@ import { PRICES } from '../data/products';
 /* The arithmetic behind "Link boxes", kept where it can be read and checked --
    see the header of box-link.js for why this one earned a file of its own. */
 import {
-  boxTransform, dragBoxes, planRecentre, applyRecentre, canLinkBoxes,
+  boxTransform, grownInner, dragBoxes, planRecentre, applyRecentre, canLinkBoxes,
   sceneLinkFlag, linkFromScene, fieldMovesWithBox, applyFieldMovesWithBox,
 } from './box-link.js';
+/* Manual line breaks, kept out here for the same reason box-link is: they are
+   rules about strings, and a rule about strings should be testable without
+   mounting a component. See the header of text-lines.js, particularly the note
+   about a value with no break in it coming back exactly as it went in. */
+import {
+  MAX_TEXT_LINES, LINE_HEIGHT, splitLines, explicitLines, linesFor,
+  wantedGrowth, clampGrowth,
+} from './text-lines.js';
+/* How far above a box's top the artwork's safe margin sits, as a fraction of
+   the canvas. A box grows upward until it reaches this and then stops; the
+   shrink loop takes the strain from there. */
+const BOX_SAFE_FRACTION = 0.02;
 /* How a photograph is prepared before it goes up to be styled. Shared with
    tools/builder/style.mjs, because the two had drifted: a 5302px photograph
    the shop styles happily came back from the CLI as "the model returned no
@@ -793,11 +805,50 @@ export function initProductBuilder() {
      the next one begins -- otherwise a wrapped second line lands underneath it. */
   function boxArea(b, boxes) {
     boxes = boxes || T.boxes;      // resize runs before T exists, so pass them in
-    const n = b.inner, top = b.y + (b.dy || 0) + n.y, left = b.x + (b.dx || 0) + n.x;
+    /* grownInner is the inner rect after a multi-line caption has stretched the
+       box upward. With no growth it hands back b.inner unchanged, so every
+       number below -- and therefore the auto-fit, and therefore the rendered
+       font size -- is what it has always been for a design with no breaks. */
+    const g = grownInner(b);
+    const n = b.inner, top = g.top, left = b.x + (b.dx || 0) + n.x;
     const below = boxes.filter((o) => o !== b && (o.y + (o.dy || 0)) > (b.y + (b.dy || 0))).map((o) => o.y + (o.dy || 0));
     const limit = below.length ? Math.min(...below) - b.height * 0.06 : Infinity;
-    const h = Math.max(n.h * 0.35, Math.min(n.h, limit - top));
+    const h = Math.max(g.height * 0.35, Math.min(g.height, limit - top));
     return { cx: left + n.w / 2, cy: top + h / 2, w: n.w, h };
+  }
+
+  /* ---------- how tall a box has to be for the breaks in it ---------- */
+
+  /** The highest a box's top may climb: the artwork's safe margin. */
+  const safeTop = () => (T.canvas ? T.canvas.height : 0) * BOX_SAFE_FRACTION;
+
+  /**
+   * Set b.grow for one box from the breaks in the fields that live in it.
+   *
+   * Slot-anchored fields are left out on purpose: a slot is a fixed sub-area of
+   * the box with its own geometry, and stretching the whole box to suit one
+   * slot would move every other slot in it.
+   *
+   * @returns {boolean} whether the value changed, so the caller can skip a redraw
+   */
+  function applyGrowth(b) {
+    const mine = T.text.filter((f) => f.boxRef === b.id && !f.slot);
+    const want = wantedGrowth(mine, MAX_TEXT_LINES);
+    const grow = clampGrowth(want, b.y + (b.dy || 0), safeTop());
+    const was = b.grow || 0;
+    if (grow === was) return false;
+    b.grow = grow;
+    return true;
+  }
+
+  /** Grow every box that needs it, and redraw the ones that changed. */
+  function growBoxes() {
+    for (const b of T.boxes) {
+      if (applyGrowth(b)) {
+        const n = nodes['b-' + b.id];
+        if (n) n.g.setAttribute('transform', boxTransform(b));
+      }
+    }
   }
   /* Where a text field sits when nobody has moved it.
      Its own centre for a fixed field, the middle of its slot or box for one
@@ -844,6 +895,17 @@ export function initProductBuilder() {
     return { cx: f.pos.x, cy: f.pos.y, w: f.boxW, h: f.boxH };
   }
   function layoutText(f) {
+    /* Before the anchor is taken, not after: the anchor is measured off the
+       box, and a caption that has just gained a break needs the box to be the
+       taller one by the time it is measured. Costs nothing when nothing
+       changed -- applyGrowth returns false and no attribute is written. */
+    if (f.boxRef && T.boxes) {
+      const b = T.boxes.find((x) => x.id === f.boxRef);
+      if (b && applyGrowth(b)) {
+        const bn = nodes['b-' + b.id];
+        if (bn) bn.g.setAttribute('transform', boxTransform(b));
+      }
+    }
     const el = nodes['t-' + f.id], a = anchorOf(f);
     // Asking for bigger text means asking for a bigger element, so the allowance
     // scales too -- otherwise auto-fit immediately claws back whatever you added.
@@ -852,9 +914,14 @@ export function initProductBuilder() {
     let size = f.fontSize * grow, lines = [f.value];
     const fam = FONTOF(f.id);
     const measure = (txt, s) => textWidth(txt, s, fam);
+    /* The author's own breaks, decided once and outside the loop: they do not
+       depend on the size, and re-splitting on every pass would be forty copies
+       of the same answer. A value with no break gives [value], so the loop
+       below runs exactly as it did before this feature. */
+    const segs = splitLines(f.value, MAX_TEXT_LINES);
     for (let pass = 0; pass < 40; pass++) {
-      lines = f.wrap ? wrap(f.value, size, a.w * 0.90, measure) : [f.value];
-      const tall = lines.length * size * 1.16 > a.h;
+      lines = linesFor(segs, f.wrap, (t) => wrap(t, size, a.w * 0.90, measure), MAX_TEXT_LINES);
+      const tall = lines.length * size * LINE_HEIGHT > a.h;
       const wide = lines.some((l) => measure(l, size) > a.w * 0.92);
       if (!tall && !wide) break;
       size *= 0.94;
@@ -863,7 +930,7 @@ export function initProductBuilder() {
     el.style.fill = f.colours[0];
     el.style.stroke = f.stroke || 'none';
     el.style.strokeWidth = (f.stroke ? size * SR * 2 * (f.strokeScale || 1) : 0) + 'px';
-    const lh = size * 1.16, top = a.cy - (lines.length - 1) * lh / 2;
+    const lh = size * LINE_HEIGHT, top = a.cy - (lines.length - 1) * lh / 2;
     lines.forEach((ln, i) => {
       /* Explicit baseline, no dominant-baseline anywhere. See baselineEm. */
       const ts = mk('tspan', { x: a.cx, y: top + i * lh + baselineEm(fam) * size });
@@ -887,7 +954,11 @@ export function initProductBuilder() {
     if (cur) lines.push(cur);
     return lines;
   }
-  function layoutAllText() { T.text.forEach(layoutText); }
+  /* Boxes first, then text. Every box settles on its height before any field
+     measures against one, so a two-line caption in a box that shares its space
+     with another (boxArea's `limit`) sees the arrangement it will actually be
+     laid out in rather than the one it started from. */
+  function layoutAllText() { if (T.boxes) growBoxes(); T.text.forEach(layoutText); }
   function remeasure() { if (T) layoutAllText(); }
   try {
     if (document.fonts && typeof document.fonts.load === 'function') {
@@ -3085,9 +3156,34 @@ export function initProductBuilder() {
         top.appendChild(ks);
       }
       const row = document.createElement('div'); row.className = 'b-row';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.value = f.value;
+      /* A textarea, not an input, because Enter has to mean "break the line
+         here" and an <input type=text> cannot carry a newline at all -- it
+         strips them on paste and submits on Enter. Everything else about it is
+         kept deliberately input-shaped: one row until there is a reason for
+         two, and no drag handle. */
+      const inp = document.createElement('textarea');
+      inp.value = f.value;
       inp.className = 'b-text';
-      inp.addEventListener('input', () => { f.value = inp.value; layoutText(f); });
+      inp.rows = explicitLines(f.value, MAX_TEXT_LINES);
+      inp.style.resize = 'none';
+      inp.style.overflow = 'hidden';
+      inp.setAttribute('aria-label', `${f.label || f.id} text`);
+      inp.title = `Enter starts a new line — up to ${MAX_TEXT_LINES} lines.`;
+      inp.addEventListener('input', () => {
+        /* The cap is enforced HERE, on the way in, rather than left to the
+           layout. linesFor would quietly drop a fourth line, and text that is
+           typed and then vanishes reads as the builder losing your words. */
+        const capped = splitLines(inp.value, MAX_TEXT_LINES).join('\n');
+        if (capped !== inp.value) {
+          const at = Math.min(inp.selectionStart, capped.length);
+          inp.value = capped;
+          try { inp.setSelectionRange(at, at); } catch (e) { /* not focused */ }
+        }
+        f.value = inp.value;
+        const rows = explicitLines(inp.value, MAX_TEXT_LINES);
+        if (inp.rows !== rows) inp.rows = rows;
+        layoutText(f);
+      });
       row.appendChild(inp);
       if (f.boxRef) {
         const lk = document.createElement('div'); lk.className = 'b-row';

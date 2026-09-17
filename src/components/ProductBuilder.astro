@@ -542,8 +542,13 @@ const builderData = JSON.stringify({
   .csc-builder .b-colour {
     @apply h-[30px] w-[38px] flex-none cursor-pointer border-[3px] border-black bg-none p-0;
   }
+  /* A textarea since captions gained manual line breaks. display:block and a
+     fixed line-height are what keep it looking like the single-line input it
+     replaced: without them a textarea sits on the text baseline and leaves a
+     gap under it, and its rows attribute computes against a line-height the
+     browser picks for itself. */
   .csc-builder .b-text {
-    @apply min-w-0 flex-1 border-[3px] border-black bg-off-white p-2 font-source text-[15px] text-black;
+    @apply block min-w-0 flex-1 border-[3px] border-black bg-off-white p-2 font-source text-[15px] leading-[1.2] text-black;
   }
   .csc-builder .b-fld {
     @apply mb-2.5 border-[3px] border-black bg-dark-grey p-2.5;
