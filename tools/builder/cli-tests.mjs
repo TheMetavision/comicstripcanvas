@@ -24,6 +24,7 @@ import {
 } from '../../netlify/functions/_shared/photo-input.mjs';
 import {
   run as cutoutRun, findUpscaler, transparencyOf, postCutout, HELP as CUTOUT_HELP,
+  applyMask,
   UPSCALER_MISSING,
 } from './cutout.mjs';
 import {
@@ -1354,6 +1355,87 @@ say('\n23. UPSCALE — THE NEXT RUN PUTS IT BACK\n');
     (text.match(/Recovered.*/) || [''])[0]);
   ok(fs.existsSync(p2), 'the file is in place');
   ok(/Nothing to do/.test(text), 'and is then SKIPPED, not upscaled a second time');
+}
+
+/* ------------------------- 24. cutout.mjs, the mask that silently vanished */
+
+say('\n24. applyMask KEEPS THE MASK\n');
+{
+  /* The bug this exists for produced a PERFECTLY VALID PNG that was simply
+     opaque. No error, no warning, no crash -- the picture looked right and had
+     had its transparency quietly dropped, so a cutout that removed nothing read
+     downstream as a cutout that found nothing unusual to remove. A day went
+     into measuring "mask quality" that was really measuring no mask at all.
+     `sharp(x).removeAlpha().joinChannel(a)` reads correctly and is wrong on
+     sharp 0.35.4 / libvips 8.18.6: the joined band is dropped.
+
+     So the assertions are the two things the eye cannot check: that an alpha
+     channel came back, and that it is THE MASK rather than some other alpha. */
+
+  /* A subject on a background, and a mask that keeps the left half. */
+  const W = 240, H = 160;
+  const picture = await sharp({ create: { width: W, height: H, channels: 3, background: '#4488cc' } })
+    .png().toBuffer();
+
+  /* The service's answer, at a SMALLER working size -- the whole point is that
+     the mask is computed small and applied big. */
+  const mw = 60, mh = 40;
+  const raw = Buffer.alloc(mw * mh * 4);
+  for (let y = 0; y < mh; y++) {
+    for (let x = 0; x < mw; x++) {
+      const i = (y * mw + x) * 4;
+      raw[i] = 200; raw[i + 1] = 30; raw[i + 2] = 30;
+      raw[i + 3] = x < mw / 2 ? 255 : 0;
+    }
+  }
+  const serviceAnswer = await sharp(raw, { raw: { width: mw, height: mh, channels: 4 } })
+    .png().toBuffer();
+
+  const out = await applyMask(picture, serviceAnswer);
+  const meta = await sharp(out).metadata();
+
+  ok(meta.channels === 4, 'the result has four channels', 'ch=' + meta.channels);
+  ok(meta.hasAlpha === true, 'and an alpha channel — a 3-channel result is the silent failure',
+    'hasAlpha=' + meta.hasAlpha);
+  ok(meta.width === W && meta.height === H,
+    'at the PICTURE\'s size, not the mask\'s', `${meta.width}x${meta.height}`);
+
+  /* transparencyOf is the gate the batch tool already runs, so the mask has to
+     satisfy THAT, not merely exist. */
+  const t = await transparencyOf(out);
+  ok(t.hasAlpha === true, 'transparencyOf agrees there is an alpha channel');
+  ok(Math.abs(t.clearFraction - 0.5) < 0.02,
+    'and that half the picture was cleared, matching the mask that was sent',
+    'clearFraction=' + t.clearFraction.toFixed(4));
+
+  /* The same measurement taken from the service's own answer. Applying a mask
+     must not change how much it covers -- only what it is applied to. */
+  const src = await transparencyOf(serviceAnswer);
+  ok(Math.abs(t.clearFraction - src.clearFraction) < 0.02,
+    'the applied mask covers what the service\'s mask covered',
+    `applied ${t.clearFraction.toFixed(4)} vs service ${src.clearFraction.toFixed(4)}`);
+
+  /* The original pixels must survive underneath, or the mask was applied to
+     the wrong thing. */
+  const kept = await sharp(out).extract({ left: 4, top: 4, width: 1, height: 1 })
+    .raw().toBuffer();
+  ok(kept[0] === 0x44 && kept[1] === 0x88 && kept[2] === 0xcc,
+    'and the picture underneath is the original, not the service\'s pixels',
+    `#${[...kept.slice(0, 3)].map((n) => n.toString(16).padStart(2, '0')).join('')}`);
+
+  /* A source that ALREADY has alpha is the other half of the trap: joinChannel
+     would append a fifth band and leave the old alpha in charge. */
+  const already = await sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 0x44, g: 0x88, b: 0xcc, alpha: 1 } },
+  }).png().toBuffer();
+  const out2 = await applyMask(already, serviceAnswer);
+  const meta2 = await sharp(out2).metadata();
+  const t2 = await transparencyOf(out2);
+  ok(meta2.channels === 4, 'an already-RGBA source also comes back with four, not five',
+    'ch=' + meta2.channels);
+  ok(Math.abs(t2.clearFraction - 0.5) < 0.02,
+    'and takes the NEW mask, not the alpha it arrived with',
+    'clearFraction=' + t2.clearFraction.toFixed(4));
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

@@ -42,6 +42,63 @@ export const JPEG_QUALITY = 90;
 /** The gates the site applies to a result before it will use it. */
 export const CUTOUT_MIN_COVERAGE = 0.05;
 export const CUTOUT_MAX_COVERAGE = 0.90;
+
+/* ------------------------------------------------- the working resolution */
+
+/**
+ * The longest side the SERVICE is asked to look at.
+ *
+ * ── What this is NOT for ───────────────────────────────────────────────────
+ *
+ * This was originally justified by the service being expensive per pixel: a
+ * 5400px cover "measured 193-247 seconds". That reading was wrong, and it is
+ * worth writing down why, because it very nearly bought the wrong fix.
+ *
+ * Those numbers were a THROTTLED shared-CPU machine, not a pixel cost. Same
+ * app, same image, identical bytes, server-side ms (2026-09-22):
+ *
+ *   1237x1536 (1.9 MP)     7.3 s   on the first calls
+ *   1237x1536 (1.9 MP)   135.6 s   a few minutes into the same run
+ *
+ * Eighteen times slower for the same request. Fly's shared CPUs run on a burst
+ * balance: the early calls go at burst speed, and once it drains the machine
+ * is pinned to its baseline share for as long as it keeps working. A batch is
+ * precisely the load that drains it, which is why every measurement taken
+ * during a batch looked like a pixel cost -- and why it "scaled" so oddly that
+ * 3.4 MP came back in 83 s while 1.9 MP took 136 s.
+ *
+ * The fix for that was the machine, not the resolution: services/cutout is now
+ * performance-2x, and the same series runs 7.4-8.2 s flat across fifteen
+ * consecutive calls with no drift.
+ *
+ * ── What this IS for ───────────────────────────────────────────────────────
+ *
+ * With the throttling gone the pixel cost is real but modest, and measured:
+ * 17.1 MP takes 17.4 s against 1.9 MP at 7.6 s. So working small is still
+ * worth roughly 2.3x on a large cover -- a genuine saving, just not the four
+ * minutes it was once credited with.
+ *
+ * It is safe to take because an alpha matte is a low-frequency thing next to
+ * the picture it belongs to. The edge it draws is already soft -- a band of
+ * partial alpha a few pixels wide -- so computing it small and scaling it back
+ * up lands in the same place, because there was never any high-frequency
+ * detail in the mask to lose. What is lost is only the service's ability to
+ * resolve detail FINER than the working grid: one flyaway hair, the gap
+ * between two strands. At 1536 those are sub-pixel on a 5400px source.
+ *
+ * Checked rather than assumed, on a 3712x4608 cover: median edge-midpoint
+ * shift 0.95 px, 9 of 12 profiles within 1.13 px, and no consistent direction
+ * to the shift -- which is what rules out misregistration rather than merely
+ * hoping. Alpha differs on 9.9% of pixels by a mean of 7/255.
+ *
+ * So: mask at 1536, apply at full size. The picture keeps every one of its
+ * pixels -- only the MASK is computed small, and only the mask is scaled.
+ *
+ * Note this is the BATCH tool only. The serverless path in
+ * style-photo-background.mjs still sends the full styled image, and a live 4K
+ * cover through it measured 17.4 s. Porting this there is a separate change.
+ */
+export const CUTOUT_WORKING_SIDE = 1536;
 /** What "4K" means here: the longest side, matching the print pipeline. */
 export const UPSCALE_TARGET = 3840;
 
@@ -123,6 +180,126 @@ export const UPSCALER_MISSING = `
 
   Then run the same command again. Nothing was written, so no cutout is lost.
 `;
+
+/**
+ * What to send the service, given what we have.
+ *
+ * Returns null when the source is already at or under the working side --
+ * there is nothing to gain by resizing it and something to lose, so it goes
+ * as it is and the mask comes back at its native size.
+ *
+ * @returns {[number, number] | null}
+ */
+export function workingSize(width, height, side = CUTOUT_WORKING_SIDE) {
+  const w = Number(width) || 0, h = Number(height) || 0;
+  const long = Math.max(w, h);
+  if (!long || long <= side) return null;
+  const k = side / long;
+  return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
+}
+
+/**
+ * Put a mask computed at one size onto a picture at another.
+ *
+ * The alpha channel is lifted out of the service's answer, stretched to the
+ * full picture with Lanczos, and joined to the ORIGINAL pixels. Three things
+ * matter here and all three are easy to get wrong:
+ *
+ *   - fit:'fill' with both dimensions given. The mask must land on exactly the
+ *     picture's grid; 'inside' would re-derive the numbers and can miss by a
+ *     pixel, which puts the whole mask half a pixel out of register.
+ *
+ *   - the picture must be REDUCED to three channels before the mask is joined,
+ *     or joinChannel appends a fifth band to an already-RGBA source and the
+ *     original alpha, not the new mask, is what survives.
+ *
+ *   - and that reduction has to be MATERIALISED, not merely requested. This is
+ *     the one that cost a day. `sharp(x).removeAlpha().joinChannel(a)` reads
+ *     correctly and is silently wrong on sharp 0.35.4 / libvips 8.18.6: the
+ *     joined band is dropped and a 3-channel, fully opaque PNG comes back, with
+ *     no error and no warning. It does it whether or not the source had an
+ *     alpha channel to remove. Going out to a raw RGB buffer forces removeAlpha
+ *     to resolve before joinChannel is applied, and the mask survives.
+ *
+ * The failure mode is nasty precisely because it is invisible: the picture
+ * looks right, it is just entirely opaque, so a cutout that removed nothing
+ * reads downstream as a cutout that removed nothing UNUSUAL. transparencyOf()
+ * is what catches it, and the caller should keep checking.
+ *
+ * @param {Buffer} fullBytes   the picture, at full size
+ * @param {Buffer} maskedPng   the service's cutout, at the working size
+ * @returns {Promise<Buffer>}  the picture at full size, with that mask
+ */
+export async function applyMask(fullBytes, maskedPng, { sharpFn = sharp } = {}) {
+  const meta = await sharpFn(fullBytes).metadata();
+  const width = meta.width, height = meta.height;
+
+  const alpha = await sharpFn(maskedPng)
+    .ensureAlpha()
+    .extractChannel('alpha')
+    .resize(width, height, { kernel: 'lanczos3', fit: 'fill' })
+    .raw()
+    .toBuffer();
+
+  const rgb = await sharpFn(fullBytes)
+    .removeAlpha()
+    .toColourspace('srgb')
+    .raw()
+    .toBuffer();
+
+  return sharpFn(rgb, { raw: { width, height, channels: 3 } })
+    .joinChannel(alpha, { raw: { width, height, channels: 1 } })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * A cutout of a big picture, without asking the service to look at a big
+ * picture.
+ *
+ * The coverage and bbox that come back describe the WORKING image, which is
+ * the same picture at a different scale -- coverage is a fraction and survives
+ * as it is; the bbox is in working pixels and is scaled back so callers that
+ * gate on it are comparing like with like.
+ */
+export async function cutoutViaWorkingResolution(fullBytes, {
+  base, token, fetchFn = fetch, sharpFn = sharp, timeoutMs = CUTOUT_TIMEOUT_MS,
+  side = CUTOUT_WORKING_SIDE, quality = JPEG_QUALITY,
+} = {}) {
+  const meta = await sharpFn(fullBytes).metadata();
+  const small = workingSize(meta.width, meta.height, side);
+
+  /* Small already: the ordinary path, and no mask to scale. */
+  if (!small) {
+    const jpeg = await sharpFn(fullBytes).jpeg({ quality }).toBuffer();
+    const cut = await postCutout(jpeg, { base, token, fetchFn, timeoutMs });
+    return { ...cut, workedAt: [meta.width, meta.height], scaled: false };
+  }
+
+  const [sw, sh] = small;
+  const jpeg = await sharpFn(fullBytes)
+    .resize(sw, sh, { kernel: 'lanczos3', fit: 'fill' })
+    .jpeg({ quality })
+    .toBuffer();
+
+  const cut = await postCutout(jpeg, { base, token, fetchFn, timeoutMs });
+  const png = await applyMask(fullBytes, cut.png, { sharpFn });
+
+  /* Back into the full picture's coordinates, so a caller cannot tell the
+     difference between this and a full-size cutout except by the clock. */
+  const k = meta.width / sw;
+  const bbox = cut.bbox ? cut.bbox.map((n) => Math.round(n * k)) : null;
+
+  return {
+    png,
+    coverage: cut.coverage,
+    bbox,
+    width: meta.width,
+    height: meta.height,
+    workedAt: [sw, sh],
+    scaled: true,
+  };
+}
 
 /** Send one image to the service, exactly as the serverless path does. */
 export async function postCutout(bytes, { base, token, fetchFn = fetch, timeoutMs = CUTOUT_TIMEOUT_MS }) {

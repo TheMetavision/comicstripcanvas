@@ -32,9 +32,37 @@ primary_region = 'lhr'
     soft_limit = 2
     hard_limit = 2
 
-# 2 GB and two CPUs, matching what the model needs: a 5504 x 3072 RGBA buffer
-# is 65 MB on its own, and onnxruntime wants room around it.
+# Dedicated CPU, because shared CPU was not slow -- it was slow LATER.
+#
+# Measured 2026-09-22 against this app, one image, identical bytes each time,
+# server-side ms straight out of the app log:
+#
+#   1237x1536 (1.9 MP)    7.3 s   on the first calls
+#   1237x1536 (1.9 MP)  135.6 s   after a few minutes of work
+#   3712x4608 (17.1 MP)  25.2 s   on the first calls
+#
+# The same request, eighteen times slower. That is a shared-CPU burst balance
+# draining: the first calls run at burst speed, and once the balance is gone
+# the machine is throttled to its baseline share for as long as it keeps
+# working. A batch is exactly the shape of load that exhausts it, so the
+# numbers that mattered were always the late ones.
+#
+# It also explains why the cost stopped tracking pixels. Throttled, 3.4 MP came
+# back in 83 s while 1.9 MP took 136 s -- size barely matters once there is no
+# CPU to give. The historical "193-247 s for a 5400px cover" was this, not the
+# pixel count, and the 220 s "cold start" was the same thing: a real cold start
+# measures 30 s.
+#
+# performance-2x is two DEDICATED cores, so there is no balance to drain and
+# the late calls look like the early ones. 4 GB because the extra headroom is
+# what the size actually needs: a 5400px source is a 145 MB RGBA buffer before
+# onnxruntime's working set, against 65 MB for the 5504x3072 this was sized for.
+#
+# The cost of this is small because the machine still stops. Fly bills per
+# second while running: performance-2x is $64.39 per 30 days if pinned up,
+# which is $0.088/hour, and a 250-icon batch is well under an hour of machine
+# time. min_machines_running stays 0 for that reason -- see the note above.
 [[vm]]
-  memory = '2gb'
-  cpu_kind = 'shared'
+  memory = '4gb'
+  cpu_kind = 'performance'
   cpus = 2
