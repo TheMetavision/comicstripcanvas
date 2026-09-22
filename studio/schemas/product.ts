@@ -1,4 +1,5 @@
 import { defineType, defineField } from 'sanity';
+import RenderStatus from '../components/RenderStatus';
 
 /**
  * One entry in an artwork history: what was replaced, when, and by what.
@@ -48,6 +49,17 @@ export default defineType({
   title: 'Product',
   type: 'document',
   fields: [
+    /* Sits first so the banner is the first thing above the Publish button.
+       Written by studio-save when it hands off to the renderer and cleared by
+       the renderer once the artwork is attached; while it is set, a render is
+       in flight and publishing would strand that artwork on the draft. */
+    defineField({
+      name: 'renderStartedAt',
+      title: 'Render in progress',
+      type: 'datetime',
+      readOnly: true,
+      components: { field: RenderStatus },
+    }),
     defineField({
       name: 'title',
       title: 'Title',

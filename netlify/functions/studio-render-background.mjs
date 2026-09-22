@@ -253,9 +253,13 @@ export default async (req) => {
         /* A product that has just gained a scene has just become customisable,
            so it needs a price for it. setIfMissing, never set: a product priced
            by hand keeps its number, and this only fills the blank. */
+        /* The pictures are on the document now, so the "don't publish yet"
+           banner has done its job. unset rather than a flag: absent is the
+           normal state, and a field that is only ever absent or a timestamp
+           cannot drift into a third meaning. */
         await sanity.patch(docId)
           .setIfMissing({ fullBleed: {}, customiseFee: CUSTOMISE_FEE_DEFAULT })
-          .set(patch).commit();
+          .set(patch).unset(['renderStartedAt']).commit();
         attached = `${docId} (fullBleed.listingImage ${displaced ? 'replaced' : 'set'}, fullBleed.printFile set)`;
       } else {
         /* This is also the migration, in two directions. A product rendered before
@@ -279,9 +283,10 @@ export default async (req) => {
         if (history.recorded) patch.artworkHistory = history.history;
         // Same here: a scene is what makes a product customisable, so this is
         // the moment it needs a fee. An existing one is left alone.
+        // Banner off: the pictures are attached. See the first patch above.
         await sanity.patch(docId)
           .setIfMissing({ customiseFee: CUSTOMISE_FEE_DEFAULT })
-          .set(patch).commit();
+          .set(patch).unset(['renderStartedAt']).commit();
 
         attached = `${docId} (images[0] ${listing.mode === 'displaced' ? 'TAKEN OVER from a curated image' : listing.mode === 'first' ? 'added' : 'replaced'}` +
           `${listing.removedLegacy ? ', stale web-master removed' : ''}, printFile set)`;

@@ -371,6 +371,11 @@ export default async (req) => {
       await sanity.patch(docId)
         .setIfMissing(style === FULL_BLEED ? { fullBleed: {} } : {})
         .set(style === FULL_BLEED ? { 'fullBleed.artworkHistory': history } : { artworkHistory: history })
+        /* The renderer attaches to the DRAFT and publishing is what promotes
+           it, so a publish while this is in flight publishes the PREVIOUS
+           picture and strands the new one. The Studio shows a banner for as
+           long as this is set; the renderer clears it on attach. */
+        .set({ renderStartedAt: new Date().toISOString() })
         .commit();
       wrote = target.needsDraftFrom ? 'created a draft from the published product'
         : (target.wasPublished ? 'updated the existing draft of a published product'
@@ -389,6 +394,7 @@ export default async (req) => {
         isPersonalised: false,
         images: [],
         artworkHistory: [entry],
+        renderStartedAt: new Date().toISOString(),
       });
       wrote = 'created a new draft product';
     }
