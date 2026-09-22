@@ -127,15 +127,29 @@
 
 # SLUG CASING FIX — nine products reached production with a capital first letter,
 # which collided case-insensitively with their lower-case twin and left one of
-# each pair with no reachable URL. These six were renamed; the three remaining
-# (Kobe-bryant, Mad-max, England-world-cup-1966) are true duplicates within one
-# category and are awaiting a decision.
-# From here on, previousSlugs[] on the product generates these automatically —
-# see src/integrations/slug-redirects.mjs. These six are written by hand because
-# they predate the field.
-/store/Walter-white  /store/walter-white-icon/  301
-/store/Ed-sheeran  /store/ed-sheeran-icon/  301
-/store/Muhammad-ali  /store/muhammad-ali-icon/  301
-/store/Grease  /store/grease-icon/  301
-/store/The-warriors  /store/the-warriors-icon/  301
-/store/Michael-jordan  /store/michael-jordan/  301
+# each pair with no reachable URL.
+#
+# THE SIX RULES BELOW DO NOT FIRE, and are kept only as a record. Netlify folds
+# the case of a request path BEFORE it matches redirects, so /store/Walter-white
+# has already become /store/walter-white by the time these are consulted and a
+# rule keyed on the capitalised path can never match. Verified against
+# production: /store/Walter-white and /store/ED-SHEERAN both 301 to the
+# lower-case path, not to the target named here.
+#
+# No traffic is lost by their not firing. Every capitalised URL folds to its
+# lower-case path, and in all nine cases a live product already holds that
+# path — the cover for walter-white, ed-sheeran and muhammad-ali, the strip for
+# grease and the-warriors, the surviving half of each resolved pair for
+# kobe-bryant, mad-max and england-world-cup-1966. Verified against production:
+# all nine return 200 and serve their own artwork. An old icon URL now lands on
+# the cover or strip of the same subject rather than on nothing.
+#
+# src/integrations/slug-redirects.mjs now refuses to generate rules of this
+# shape, and refuses any whose source is a live product's slug.
+#
+#/store/Walter-white  /store/walter-white-icon/  301
+#/store/Ed-sheeran  /store/ed-sheeran-icon/  301
+#/store/Muhammad-ali  /store/muhammad-ali-icon/  301
+#/store/Grease  /store/grease-icon/  301
+#/store/The-warriors  /store/the-warriors-icon/  301
+#/store/Michael-jordan  /store/michael-jordan/  301

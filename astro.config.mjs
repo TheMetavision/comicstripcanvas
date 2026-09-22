@@ -12,8 +12,13 @@ import slugRedirects from './src/integrations/slug-redirects.mjs';
 const redirectClient = createClient({
   projectId: 'lwbwahym', dataset: 'production', apiVersion: '2026-04-11', useCdn: false,
 });
-const PREVIOUS_SLUGS_QUERY =
-  '*[_type == "product" && count(previousSlugs) > 0]{"slug": slug.current, previousSlugs}';
+/* Both halves in one query: the products that were renamed, and EVERY slug in
+   use. The second is what stops a generated redirect shadowing a live product
+   -- see the header of slug-redirects.mjs for the one that would have. */
+const PREVIOUS_SLUGS_QUERY = `{
+  "renamed": *[_type == "product" && count(previousSlugs) > 0]{"slug": slug.current, previousSlugs},
+  "allSlugs": *[_type == "product" && defined(slug.current)].slug.current
+}`;
 
 export default defineConfig({
   site: 'https://comicstripcanvas.co.uk',
