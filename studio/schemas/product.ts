@@ -58,8 +58,71 @@ export default defineType({
       name: 'slug',
       title: 'Slug',
       type: 'slug',
-      options: { source: 'title', maxLength: 96 },
-      validation: (Rule) => Rule.required(),
+      /*
+       * slugify AND validation, both, and the validation is the important half.
+       *
+       * Generate has always lowercased. What nothing stopped was somebody
+       * TYPING into this field, and nine products reached production with a
+       * capital first letter that way -- `Walter-white` beside `walter-white`,
+       * `Mad-max` beside `mad-max`. A slug that differs from another only by
+       * case is not a different URL once a filesystem or a CDN folds it, so
+       * each pair collapsed to one page and left the other product with no
+       * reachable URL at all. Nothing warned, at any layer.
+       *
+       * These rules are the ones in netlify/functions/_shared/slug.mjs. They
+       * are repeated rather than imported because this Studio is a separate
+       * package with its own build, and a cross-package import here would be a
+       * build-time risk taken for six lines. slug-tests.mjs reads this file and
+       * fails if the two drift apart.
+       */
+      options: {
+        source: 'title',
+        maxLength: 96,
+        slugify: (input: string) =>
+          String(input ?? '')
+            .toLowerCase()
+            .trim()
+            .replace(/&/g, ' and ')
+            .normalize('NFKD')
+            .replace(/[̀-ͯ]/g, '')
+            .replace(/['’`]/g, '')
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 90)
+            .replace(/-+$/, ''),
+      },
+      validation: (Rule) =>
+        Rule.required().custom((value?: { current?: string }) => {
+          const slug = value?.current;
+          if (!slug) return 'A slug is required';
+          if (slug !== slug.toLowerCase()) {
+            return 'Slugs must be lower case — a capital letter makes a second URL that collides with the lower-case one, and one of the two products becomes unreachable';
+          }
+          if (/^-|-$/.test(slug)) return 'Slugs must not start or end with a hyphen';
+          if (/--/.test(slug)) return 'Slugs must not contain two hyphens in a row';
+          if (/[^a-z0-9-]/.test(slug)) return 'Slugs may only contain a-z, 0-9 and hyphens';
+          return true;
+        }),
+    }),
+    defineField({
+      name: 'previousSlugs',
+      title: 'Previous slugs',
+      description:
+        'Every slug this product used to have. The build turns each one into a 301 to the current slug, '
+        + 'so renaming a product is one edit here instead of two — this field and a hand-written line in _redirects.',
+      type: 'array',
+      of: [{ type: 'string' }],
+      options: { layout: 'tags' },
+      validation: (Rule) =>
+        Rule.unique().custom((list?: string[], context?: any) => {
+          const current = context?.document?.slug?.current;
+          for (const s of list ?? []) {
+            if (typeof s !== 'string' || !s.trim()) return 'Empty entries are not allowed';
+            if (s === current) return `"${s}" is the current slug — a redirect to itself is a loop`;
+            if (s !== s.toLowerCase()) return `"${s}" must be lower case`;
+          }
+          return true;
+        }),
     }),
     defineField({
       name: 'category',

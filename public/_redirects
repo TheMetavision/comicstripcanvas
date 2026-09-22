@@ -124,3 +124,18 @@
 # query string (?session_id=...) through, which is harmless here.
 /personalise-confirmation  /personalise  301
 /personalise-confirmation/  /personalise  301
+
+# SLUG CASING FIX — nine products reached production with a capital first letter,
+# which collided case-insensitively with their lower-case twin and left one of
+# each pair with no reachable URL. These six were renamed; the three remaining
+# (Kobe-bryant, Mad-max, England-world-cup-1966) are true duplicates within one
+# category and are awaiting a decision.
+# From here on, previousSlugs[] on the product generates these automatically —
+# see src/integrations/slug-redirects.mjs. These six are written by hand because
+# they predate the field.
+/store/Walter-white  /store/walter-white-icon/  301
+/store/Ed-sheeran  /store/ed-sheeran-icon/  301
+/store/Muhammad-ali  /store/muhammad-ali-icon/  301
+/store/Grease  /store/grease-icon/  301
+/store/The-warriors  /store/the-warriors-icon/  301
+/store/Michael-jordan  /store/michael-jordan/  301

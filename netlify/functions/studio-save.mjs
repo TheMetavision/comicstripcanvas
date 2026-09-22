@@ -1,6 +1,7 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { DPI, printGeometry } from './_shared/scene.mjs';
+import { productSlug } from './_shared/slug.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { startRender } from './_shared/studio-render-trigger.mjs';
 import { CLASSIC, FULL_BLEED, isStyle, styleForTemplate, sceneKey, styleLabel } from './_shared/artwork-styles.mjs';
@@ -91,11 +92,11 @@ const newId = () => {
   return 'studio-' + [...b].map((n) => n.toString(16).padStart(2, '0')).join('');
 };
 
-const slugify = (s) =>
-  s.toLowerCase().trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 90) || 'untitled-design';
+/* The slug rules live in _shared/slug.mjs, with the Studio schema enforcing
+   the same ones on anything typed by hand. This path was never the source of
+   the capitalised slugs in production -- it has always lowercased -- but there
+   is no reason for a second copy of the rule to exist and drift. */
+const slugify = (s) => productSlug(s);
 
 let sanityClient;
 function getSanity() {
