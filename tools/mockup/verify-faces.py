@@ -63,8 +63,20 @@ SIG_CLUSTERS = 6
 SIG_TOLERANCE = 14.0
 # Saturation a composited pixel must have before it can be a survivor at all.
 SURVIVOR_MIN_SAT = 60
-# How far inside the quad the test starts: one pixel of inset, one of feather.
-QUAD_MARGIN = 2
+# How far inside the quad the artwork is REQUIRED to be the only thing present.
+#
+# Three deliberate allowances stack up at the boundary, and the test has to
+# start beyond all of them or it fails the pipeline for doing what it was told:
+#
+#     2px   the edge mask may reach this far inside the clicked quad
+#     1px   FACE_INSET, so the artwork stops short of its own boundary
+#     1px   the 3x3 feather on the warp mask, which is part artwork part scene
+#     ----
+#     4px   and one more, so the limit is not also the measurement
+#
+# Checked rather than assumed: with the edge mask clipped to 2px, every
+# remaining hit sat between 3.0 and 4.0px from the quad edge and none deeper.
+QUAD_MARGIN = 5
 
 
 def signature(scene, face):

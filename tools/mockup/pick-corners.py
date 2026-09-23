@@ -139,8 +139,19 @@ EDGE_PINK_HI = (178, 255, 255)
 EDGE_FLAT_MAX = 8.0
 # How far either side of a quad boundary an edge strip may live.
 EDGE_BAND = 95
-# Anything further inside the face than this is artwork, however flat it is.
-EDGE_INSIDE_MARGIN = 18
+# How far inside the clicked quad the edge mask may reach. The quad IS the face
+# boundary -- someone put those corners on it, at zoom, looking at it -- so
+# anything beyond a pixel or two inside is face, whatever colour it happens to
+# be.
+#
+# This was 18, which is invisible on a portrait canvas and a band on a landscape
+# one. Portrait canvases show their wrapped edge at the SIDES, where 18px of
+# over-reach is lost against a 600px-tall face; landscape canvases show it top
+# and bottom, where the same 18px is a visible stripe across a 430px one. The
+# mask claimed those stripes, the face mask lost them, the artwork never covered
+# them, and the edge recolour painted them carrying the placeholder's own
+# luminance -- which is what the bands across the Mad Max landscapes were.
+EDGE_INSIDE_MARGIN = 2
 # Strips smaller than this are speckle.
 EDGE_MIN_AREA = 400
 # Dilations outward, to cover the antialiased outer rows. See the note below.
@@ -256,7 +267,11 @@ def edge_mask(img, quads, is_poster):
         if np.array_equal(merged, out):
             break
         out = merged
-    return out
+
+    # Last word, after every growth and claim above. The dilations and the creep
+    # each run after their own deep-exclusion, so without this a pixel could be
+    # added back inside the quad by a later step than the one that excluded it.
+    return cv2.bitwise_and(out, cv2.bitwise_not(deep))
 
 
 def write_edge_masks(scenes_dir, scenes, out_dir, log=print):
