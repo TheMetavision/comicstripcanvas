@@ -1,5 +1,7 @@
 # Renders and their shading are regenerated artefacts, not source. scenes.json
 # IS source -- it is the only record of where the canvases are.
 out/
+edges/
 shading/
 upload-backup-*.json
+__pycache__/

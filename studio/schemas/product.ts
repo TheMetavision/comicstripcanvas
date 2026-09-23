@@ -137,6 +137,23 @@ export default defineType({
         }),
     }),
     defineField({
+      name: 'edgeColour',
+      title: 'Canvas edge colour',
+      description:
+        'The wrapped edge of the canvas in the lifestyle mockups. Leave empty and the mockup '
+        + 'picks a prominent colour out of the artwork itself, which is right most of the time. '
+        + 'Set it when it is not: "prominent" is a judgement, and an algorithm that scores '
+        + 'colour against area will sometimes land on a caption box rather than the thing the '
+        + 'design is actually about. Hex, e.g. #f9dd3c.',
+      type: 'string',
+      validation: (Rule) =>
+        Rule.custom((value?: string) => {
+          if (!value) return true;                 // empty is the normal state
+          if (!/^#[0-9a-fA-F]{6}$/.test(value)) return 'Use a six-digit hex colour, e.g. #f9dd3c';
+          return true;
+        }),
+    }),
+    defineField({
       name: 'category',
       title: 'Category',
       type: 'string',

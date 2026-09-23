@@ -43,23 +43,35 @@ import sys
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 try:
     import cv2
     import numpy as np
 except ImportError:
     sys.exit("This needs opencv-python and numpy:\n    python -m pip install opencv-python numpy")
 
+# Beside this file, hence the sys.path line above: the edge colour is wanted by
+# the batch and by anyone checking a single product's answer, so it lives in its
+# own module rather than halfway down this one.
+from edge_colour import prominent_colour, hex_to_bgr  # noqa: E402
+
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_SCENES = r"C:\Users\chris\Documents\Comic Strip Canvas\Mockup Scenes"
 DEFAULT_CORNERS = os.path.join(HERE, "scenes.json")
 DEFAULT_SHADING = os.path.join(HERE, "shading")
+DEFAULT_EDGES = os.path.join(HERE, "edges")
 DEFAULT_OUT = os.path.join(HERE, "out")
 
 PROJECT = "lwbwahym"
 DATASET = "production"
 OUT_LONG_SIDE = 2000
 JPEG_QUALITY = 92
+# How far an edge pixel may stray from the strip's average brightness. Wide
+# enough for a real highlight, tight enough that a blown one does not turn the
+# edge white.
+EDGE_SHADE_CLIP = (0.45, 1.65)
 
 # scene file -> output name. Two scenes per output name, one per orientation.
 OUTPUTS = ["room", "studio", "poster"]
@@ -120,6 +132,44 @@ def warp_into(art, scene, corners, shading=None):
             + warped.astype(np.float32) * mask[..., None]).astype(np.uint8)
 
 
+def recolour_edge(scene, mask, hex_colour):
+    """
+    Paint the canvas edge in the product's own colour, keeping the light on it.
+
+    The scene's edge is a flat pink lit by the room -- brighter where it faces a
+    softbox, darker in shadow, with a soft falloff down its length. Flooding the
+    mask with a new colour throws all of that away and the edge stops being a
+    surface: it reads as a sticker laid over the photograph.
+
+    So only the COLOUR is replaced and the LUMINANCE is kept. Each pixel's
+    brightness relative to the strip's own average becomes a multiplier on the
+    target colour, so a spot that was 12% brighter than the rest of the edge is
+    still 12% brighter afterwards. The lighting is the scene's; the hue is the
+    product's.
+
+    Measured relative to the strip's mean rather than to absolute brightness,
+    because the two studio depths are lit differently -- the 38mm edge catches
+    more light than the 18mm -- and an absolute mapping would make one of them
+    wrong in every scene.
+    """
+    if mask is None or not mask.any():
+        return scene
+    target = np.array(hex_to_bgr(hex_colour), dtype=np.float32)
+
+    grey = cv2.cvtColor(scene, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    sel = mask > 0
+    mean = float(grey[sel].mean()) or 1.0
+    ratio = np.clip(grey / mean, EDGE_SHADE_CLIP[0], EDGE_SHADE_CLIP[1])
+
+    painted = np.clip(target[None, None, :] * ratio[..., None], 0, 255).astype(np.uint8)
+
+    # Feathered by a pixel so the strip meets the wall and the face cleanly;
+    # the mask came from a colour key and its border is a shade ragged.
+    a = cv2.GaussianBlur(mask, (3, 3), 0).astype(np.float32) / 255.0
+    return (scene.astype(np.float32) * (1 - a[..., None])
+            + painted.astype(np.float32) * a[..., None]).astype(np.uint8)
+
+
 def load_shading(shading_dir, key):
     path = os.path.join(shading_dir, key + ".png")
     if not os.path.exists(path):
@@ -141,7 +191,7 @@ def fit_long_side(img, long_side):
     return cv2.resize(img, (max(1, round(w * k)), max(1, round(h * k))), interpolation=interp)
 
 
-def render_product(product, scenes, corners, shading_dir, out_dir, force, log):
+def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, force, log):
     slug = product["slug"]
     ref = product.get("listing") or product.get("first")
     url = asset_url(ref)
@@ -161,7 +211,16 @@ def render_product(product, scenes, corners, shading_dir, out_dir, force, log):
         return None
     ah, aw = art.shape[:2]
     orientation = "landscape" if aw >= ah else "portrait"
-    log(f"  {slug}: artwork {aw}x{ah} -> {orientation} scenes")
+
+    # The override wins whenever it is set. "Prominent" is a judgement, and the
+    # scorer will sometimes land on a caption box rather than the thing the
+    # design is about; one Studio edit beats arguing with the algorithm.
+    override = (product.get("edgeColour") or "").strip()
+    if override:
+        edge_hex, why = override, "edgeColour on the product"
+    else:
+        edge_hex, why = prominent_colour(art), "extracted from the artwork"
+    log(f"  {slug}: artwork {aw}x{ah} -> {orientation} scenes, edge {edge_hex} ({why})")
 
     os.makedirs(dest, exist_ok=True)
     written = []
@@ -179,6 +238,12 @@ def render_product(product, scenes, corners, shading_dir, out_dir, force, log):
         for q in info["quads"]:
             sh = load_shading(shading_dir, f"{scene_name}__{q['name']}")
             composed = warp_into(art, composed, q["corners"], sh)
+        # After the faces, not before: the warp writes over the face and would
+        # otherwise take a freshly painted edge with it wherever the quad and
+        # the strip overlap by a pixel.
+        edge = cv2.imread(os.path.join(edges_dir, scene_name + ".png"), cv2.IMREAD_GRAYSCALE)
+        if edge is not None and edge.any():
+            composed = recolour_edge(composed, edge, edge_hex)
         out = fit_long_side(composed, OUT_LONG_SIDE)
         path = os.path.join(dest, name + ".jpg")
         cv2.imwrite(path, out, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -194,6 +259,7 @@ def main():
     ap.add_argument("--scenes", default=DEFAULT_SCENES)
     ap.add_argument("--corners", default=DEFAULT_CORNERS)
     ap.add_argument("--shading", default=DEFAULT_SHADING)
+    ap.add_argument("--edges", default=DEFAULT_EDGES)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true", help="redo slugs that already have output")
@@ -208,7 +274,7 @@ def main():
          + ('slug.current in $slugs' if args.slug else 'category == $category')
          + ']{_id, title, "slug": slug.current, category, '
          '"listing": images[_key == "listing"][0].asset._ref, '
-         '"first": images[0].asset._ref} | order(slug asc)')
+         '"first": images[0].asset._ref, edgeColour} | order(slug asc)')
     params = {"slugs": args.slug} if args.slug else {"category": args.category}
     products = groq(q, params) or []
     print(f"  {len(products)} product(s)")
@@ -220,7 +286,9 @@ def main():
             dest = os.path.join(args.out, p["slug"])
             state = "would skip (done)" if all(
                 os.path.exists(os.path.join(dest, n + ".jpg")) for n in OUTPUTS) and not args.force else "would render"
-            print(f"     {p['slug']:34s} {which:10s} {state}")
+            ov = (p.get("edgeColour") or "").strip()
+            print(f"     {p['slug']:34s} {which:10s} {state}"
+                  + (f"  edge {ov} (override)" if ov else ""))
             if not ref:
                 print("        no image on this product")
         print("\n  dry run: nothing written")
@@ -228,7 +296,7 @@ def main():
 
     results = []
     for p in products:
-        r = render_product(p, args.scenes, corners, args.shading, args.out, args.force, print)
+        r = render_product(p, args.scenes, corners, args.shading, args.edges, args.out, args.force, print)
         if r:
             results.append(r)
     made = sum(len(r.get("written", [])) for r in results)
