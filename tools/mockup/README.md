@@ -3,6 +3,12 @@
 Puts a product's artwork into a photographed scene and writes the result onto
 the product in Sanity.
 
+> **House rule:** never write files in this repo with PowerShell
+> `Set-Content` / `Out-File`. Both can add a UTF-8 BOM and, on a
+> read-modify-write, re-encode non-ASCII characters through the ANSI codepage —
+> which silently corrupted `verify-faces.py` once. Use an editor, or Node/Python
+> writing UTF-8 without a BOM.
+
 ## What ships
 
 **Posters only.** One mockup per product, from the poster scene matching the
@@ -60,6 +66,14 @@ Plan the upload, then do it:
     node tools/mockup/upload.mjs --category comic-book-icons --scenes poster --dry-run
     node tools/mockup/upload.mjs --category comic-book-icons --scenes poster
 
+Stage a real upload in batches, or target individual products:
+
+    node tools/mockup/upload.mjs --category comic-book-icons --scenes poster --limit 5
+    node tools/mockup/upload.mjs --slug walter-white-icon --slug zz-top --scenes poster
+
+`--limit` takes the first *n* by slug, so the same *n* come back on a repeat.
+`--slug` is repeatable and takes precedence over `--category`.
+
 Tests:
 
     python tools/mockup/test_aspect_gate.py
@@ -87,14 +101,27 @@ meant a strip-then-upload, with the product pages carrying no mockup in
 between.
 
 Every mutation names a mockup key or inserts after one. The images array is
-never rewritten wholesale, so `images[0]` and the `listing` entry are not
-merely preserved, they are never addressed. A product whose `images[0]` is
-missing, or is itself a mockup, is skipped rather than rearranged.
+never rewritten wholesale, so the `listing` entry is not merely preserved, it
+is never addressed.
+
+New entries anchor on `images[_key=="listing"]`, **never on an index**.
+`images[0]` is a position, and a position is only the listing entry until
+something moves — a Studio reorder, an image added by hand — after which
+"after images[0]" means "after whatever is first now" and the mockup lands in
+front of the product image on the store grid. A product with no `listing` key
+is skipped and named, rather than anchored somewhere plausible.
 
 Everything is written to `drafts.<id>`, so nothing reaches a customer until
-somebody opens the Studio and presses Publish. Every run — dry runs included —
-writes `upload-backup-<timestamp>.json` with each touched document's `images[]`
-as it was, before anything is sent.
+somebody opens the Studio and presses Publish. Where no draft exists it is
+created from the published document with `createIfNotExists`, **in the same
+transaction as the patch** — sent separately, a patch could arrive against a
+document that was never created (the create failing, or the draft being
+discarded in the Studio in between), which is an error partway through a batch.
+Where a draft already exists the create is a no-op and whatever is in that
+draft survives untouched.
+
+Every run — dry runs included — writes `upload-backup-<timestamp>.json` with
+each touched document's `images[]` as it was, before anything is sent.
 
 ### The alt text is a contract
 

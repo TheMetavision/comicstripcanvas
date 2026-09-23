@@ -7,6 +7,12 @@ import path from 'node:path';
  *
  *   node tools/mockup/upload.mjs --category comic-book-icons --scenes poster --dry-run
  *   node tools/mockup/upload.mjs --category comic-book-icons --scenes poster
+ *   node tools/mockup/upload.mjs --category comic-book-icons --scenes poster --limit 5
+ *   node tools/mockup/upload.mjs --slug walter-white-icon --slug zz-top
+ *
+ * --limit takes the first n by slug, so a real upload can be staged a few
+ * products at a time and the same few come back on a repeat. --slug is
+ * repeatable and takes precedence over --category.
  *
  * Reads tools/mockup/out/<slug>/<scene>.jpg and writes each into a FIXED SLOT
  * on the product's images[]:
@@ -33,6 +39,19 @@ import path from 'node:path';
  * listing first, then poster, room, studio, whichever exist. New entries are
  * inserted after the last slot that precedes them, so the order holds however
  * many of them are being written and in whatever order they arrive.
+ *
+ * Anchored by KEY -- images[_key=="listing"] -- never by index. A product with
+ * no listing key is skipped and named, because "after images[0]" means "after
+ * whatever happens to be first", and one Studio reorder later that is the
+ * wrong place.
+ *
+ * ── Drafts are created and patched together ────────────────────────────────
+ *
+ * createIfNotExists carrying the published content goes in the SAME
+ * transaction as the patches, so a patch can never arrive against a document
+ * that was not created. Where a draft already exists the create is a no-op and
+ * whatever is already in that draft survives: nothing here addresses anything
+ * but mockup keys.
  *
  * ── The alt is a contract ──────────────────────────────────────────────────
  *
@@ -76,6 +95,7 @@ const DRY = flag('dry-run');
 const SLUGS = many('slug');
 const CATEGORY = opt('category');
 const OUT_DIR = opt('out', path.join('tools', 'mockup', 'out'));
+const LIMIT = opt('limit') === null ? null : Number(opt('limit'));
 
 const PROJECT = 'lwbwahym';
 const DATASET = 'production';
@@ -132,18 +152,27 @@ async function mutate(mutations) {
 
 /**
  * Where a new slot goes: after the last slot before it that already exists,
- * and after images[0] otherwise.
+ * and after the listing entry otherwise.
+ *
+ * By KEY, never by index. images[0] is a position, and a position is only the
+ * listing entry until something moves -- a Studio reorder, an image added by
+ * hand, a draft edited by somebody who does not know this script exists. Then
+ * "after images[0]" quietly means "after whatever is first now", and the
+ * mockup lands in front of the product image rather than behind it. The key
+ * says what it means, and a product that has not got one is refused rather
+ * than guessed at.
  *
  * Computed against the keys the document will have by the time this mutation
  * is applied, not the keys it has now, because the patches are sent in order
- * and an earlier one may have created the anchor this one needs.
+ * within one transaction and an earlier one may have created the anchor this
+ * one needs.
  */
 function anchorFor(name, present) {
   const i = NAMES.indexOf(name);
   for (let j = i - 1; j >= 0; j -= 1) {
     if (present.has(keyFor(NAMES[j]))) return `images[_key=="${keyFor(NAMES[j])}"]`;
   }
-  return 'images[0]';
+  return `images[_key=="${LISTING_KEY}"]`;
 }
 
 /** The patches for one product, in the order they must be applied. */
@@ -179,7 +208,33 @@ function patchesFor(draftId, title, images, assets) {
   return out;
 }
 
-export { NAMES, keyFor, altFor, anchorFor, patchesFor };
+/**
+ * Everything one product needs, as a single transaction.
+ *
+ * @param draftId    drafts.<published id>
+ * @param title      for the alt text
+ * @param published  the FULL published document -- required when `draft` is
+ *                   null, because it is what the draft is created from
+ * @param draft      the existing draft, or null
+ * @param assets     {scene: assetId}
+ *
+ * The create and the patches travel together on purpose. Sent separately, a
+ * patch can arrive against a document that was never created -- the create
+ * having failed, or the draft having been discarded in the Studio in between --
+ * and a patch to a missing document is an error partway through a batch.
+ */
+function transactionFor(draftId, title, published, draft, assets) {
+  const mutations = [];
+  if (!draft) mutations.push({ createIfNotExists: { ...published, _id: draftId } });
+  // The array actually being patched: the draft's when there is one, since it
+  // may already differ from what is published.
+  const current = (draft && draft.images) || (published && published.images) || [];
+  const ps = patchesFor(draftId, title, current, assets);
+  for (const { patch } of ps) mutations.push({ patch });
+  return { mutations, ps };
+}
+
+export { NAMES, keyFor, altFor, anchorFor, patchesFor, transactionFor, LISTING_KEY };
 
 const main = async () => {
   const unknown = SCENES.filter((s) => !NAMES.includes(s));
@@ -191,6 +246,10 @@ const main = async () => {
     console.error('  give --slug (repeatable) or --category');
     process.exit(1);
   }
+  if (LIMIT !== null && (!Number.isInteger(LIMIT) || LIMIT < 1)) {
+    console.error(`  --limit takes a whole number of products, not '${opt('limit')}'`);
+    process.exit(1);
+  }
   const where = SLUGS.length ? 'slug.current in $slugs' : 'category == $category';
   const products = await groq(
     `*[_type == "product" && !(_id in path("drafts.**")) && ${where}]{
@@ -198,14 +257,20 @@ const main = async () => {
      } | order(slug asc)`,
     SLUGS.length ? { slugs: SLUGS } : { category: CATEGORY },
   ) || [];
-  console.log(`  ${products.length} product(s)${DRY ? '  (dry run)' : ''}   scenes: ${SCENES.join(', ')}`);
+  const found = products.length;
+  // Applied after the query and before anything is planned, so --limit 5 means
+  // "the first five by slug", the same five every time. Staging a real upload
+  // in batches is only useful if the batches are predictable.
+  if (LIMIT !== null) products.length = Math.min(products.length, LIMIT);
+  console.log(`  ${products.length} product(s)${found !== products.length ? ` of ${found} (--limit ${LIMIT})` : ''}`
+    + `${DRY ? '  (dry run)' : ''}   scenes: ${SCENES.join(', ')}`);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = path.join('tools', 'mockup', `upload-backup-${stamp}.json`);
   const backup = [];
   const plan = [];
   let missingRenders = 0;
-  let badSlotZero = 0;
+  const noListing = [];
 
   for (const p of products) {
     const dir = path.join(OUT_DIR, p.slug);
@@ -222,29 +287,28 @@ const main = async () => {
     }
 
     const images = p.images || [];
-    const first = images[0];
-    if (!first) {
-      badSlotZero += 1;
-      console.log(`  ${p.slug}: images[] is empty — skipped, slot 0 must already hold the product image`);
-      continue;
-    }
-    if (typeof first._key === 'string' && first._key.startsWith('mockup-')) {
-      badSlotZero += 1;
-      console.log(`  ${p.slug}: images[0] is a mockup (${first._key}) — skipped rather than rearranged`);
+    // The anchor is the listing entry, by key. No index fallback: a product
+    // without one is a product whose image order this script cannot reason
+    // about, and inserting somewhere plausible is how a mockup ends up in
+    // front of the product image on the store grid.
+    if (!images.some((im) => im?._key === LISTING_KEY)) {
+      noListing.push(p.slug);
+      console.log(`  ${p.slug}: no images[_key=="${LISTING_KEY}"] — skipped, nothing safe to anchor to`);
       continue;
     }
 
     const existing = SCENES.filter((n) => images.some((im) => im?._key === keyFor(n)));
     backup.push({ _id: p._id, slug: p.slug, title: p.title, images });
     plan.push({ product: p, files, images });
-    const slot0 = first._key === LISTING_KEY ? 'listing' : (first._key || 'unkeyed');
     console.log(`  ${p.slug}: ${existing.length ? `replace ${existing.join(', ')}` : 'insert'}`
-      + ` ${SCENES.map(keyFor).join(', ')}  (slot 0 = ${slot0}, ${images.length} image(s) now)`);
+      + ` ${SCENES.map(keyFor).join(', ')}  (${images.length} image(s) now)`);
   }
 
   // Written before anything is sent, and on a dry run too.
   fs.writeFileSync(backupPath, JSON.stringify({ when: stamp, dryRun: DRY, scenes: SCENES, documents: backup }, null, 2));
-  console.log(`\n  ${plan.length} product(s) to write, ${missingRenders} without renders, ${badSlotZero} with an unusable slot 0`);
+  console.log(`\n  ${plan.length} product(s) to write, ${missingRenders} without renders, `
+    + `${noListing.length} without a listing entry to anchor to`);
+  if (noListing.length) console.log(`  no listing key: ${noListing.join(', ')}`);
   console.log(`  backup of ${backup.length} document(s) -> ${backupPath}`);
 
   if (DRY) {
@@ -267,18 +331,13 @@ const main = async () => {
 
     const draftId = `drafts.${product._id}`;
     const draft = await groq('*[_id == $id][0]{_id, images}', { id: draftId });
-    if (!draft) {
-      // createIfNotExists from the published document, so the draft starts as a
-      // faithful copy and the patches below are the only difference.
-      const full = await groq('*[_id == $id][0]', { id: product._id });
-      await mutate([{ createIfNotExists: { ...full, _id: draftId } }]);
-    }
-    // Against the DRAFT's images, which may already differ from the published
-    // ones -- that is the array being patched.
-    const current = (draft && draft.images) || images;
-    const ps = patchesFor(draftId, product.title, current, assets);
-    for (const { patch } of ps) await mutate([{ patch }]);
-    console.log(`  ${product.slug}: ${ps.map((x) => `${x.op} ${keyFor(x.name)}`).join(', ')} -> ${draftId}`);
+
+    // The full published document, only when there is no draft to create from.
+    const published = draft ? { images } : await groq('*[_id == $id][0]', { id: product._id });
+    const { mutations, ps } = transactionFor(draftId, product.title, published, draft, assets);
+    await mutate(mutations);
+    console.log(`  ${product.slug}: ${draft ? 'existing draft' : 'draft created'}, `
+      + `${ps.map((x) => `${x.op} ${keyFor(x.name)}`).join(', ')} -> ${draftId}`);
   }
   console.log('\n  done. Nothing is live until the drafts are published.');
 };
