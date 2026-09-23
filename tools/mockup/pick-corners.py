@@ -273,9 +273,17 @@ class Picker:
                 int((y + self.pad_y - self.oy) * self.zoom))
 
     def clamp(self, win_w, win_h):
+        """Keep the canvas somewhere in view, without pinning it.
+
+        The old version clamped the offset into [0, canvas - visible], which
+        with a visible region larger than the canvas collapsed to exactly 0 --
+        forcing the very alignment that the crop-and-stretch then got wrong.
+        Now it only stops the canvas being dragged entirely off screen, and
+        panning into the surrounding grey is allowed, because that grey is
+        where the off-frame corners are."""
         vis_w, vis_h = win_w / self.zoom, win_h / self.zoom
-        self.ox = max(0.0, min(self.ox, max(0.0, self.w - vis_w)))
-        self.oy = max(0.0, min(self.oy, max(0.0, self.h - vis_h)))
+        self.ox = max(-vis_w * 0.9, min(self.ox, self.w - vis_w * 0.1))
+        self.oy = max(-vis_h * 0.9, min(self.oy, self.h - vis_h * 0.1))
 
     def on_mouse(self, event, x, y, flags, _):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -301,10 +309,32 @@ class Picker:
         if not self.fitted:
             self.fit(win_w, win_h)
         self.clamp(win_w, win_h)
-        vis_w, vis_h = int(win_w / self.zoom), int(win_h / self.zoom)
-        x0, y0 = int(self.ox), int(self.oy)
-        crop = self.img[y0:y0 + vis_h, x0:x0 + vis_w]
-        view = cv2.resize(crop, (win_w, win_h), interpolation=cv2.INTER_NEAREST)
+
+        # One affine, exactly the one to_window describes.
+        #
+        # This used to crop the array and resize the crop to fill the window.
+        # Numpy clips a slice at the array bounds without saying so, so whenever
+        # the visible region ran past the canvas -- which padding makes the
+        # NORMAL case at fit zoom -- a narrower crop was stretched to the full
+        # window width. The view was then horizontally scaled by win_w/actual_w
+        # while to_image went on dividing by self.zoom, and every click landed
+        # wrong by the ratio between them.
+        #
+        # It is a quiet failure: the picture looks right, the corners look like
+        # they are on the canvas, and the error only appears much later as
+        # artwork that does not fit its frame. Eight quads were clicked through
+        # it. The factor depended on the window's aspect -- 0.96 at 1400x900,
+        # 0.90 at 1600x964, 0.78 at 1920x1000 -- so it was invisible to anyone
+        # who did not happen to resize.
+        #
+        # warpAffine samples wherever it is asked and fills the rest with the
+        # border colour, so there is no clipping and nothing to stretch: the
+        # view IS to_window applied to the canvas, and to_image is its exact
+        # inverse for any window shape, zoom or pan.
+        m = np.float32([[self.zoom, 0, -self.ox * self.zoom],
+                        [0, self.zoom, -self.oy * self.zoom]])
+        view = cv2.warpAffine(self.img, m, (win_w, win_h), flags=cv2.INTER_NEAREST,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=PAD_COLOUR)
 
         # Where the photograph actually ends. Without this the padding reads as
         # more scene, and a corner placed just outside the frame looks like a
