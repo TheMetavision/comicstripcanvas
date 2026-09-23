@@ -43,6 +43,9 @@ except ImportError:
     sys.exit("This needs opencv-python and numpy:\n    python -m pip install opencv-python numpy")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scene_guard  # noqa: E402
 DEFAULT_SCENES = r"C:\Users\chris\Documents\Comic Strip Canvas\Mockup Scenes"
 DEFAULT_CORNERS = os.path.join(HERE, "scenes.json")
 
@@ -160,6 +163,7 @@ def main():
     args = ap.parse_args()
 
     data = json.load(open(args.corners, encoding="utf-8"))
+    scene_guard.require(args.scenes, data)
     SIDE = ["top", "right", "bottom", "left"]
     LABEL = ["TL", "TR", "BR", "BL"]
     worst = 0.0

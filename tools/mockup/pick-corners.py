@@ -87,6 +87,9 @@ SCENES = {
 
 CORNER_LABELS = ["top-left", "top-right", "bottom-right", "bottom-left"]
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scene_guard  # noqa: E402
+
 # ── the mesh, for things that are not flat ─────────────────────────────────
 #
 # Four corners define a plane, and a poster lying on a table is not one: it
@@ -528,6 +531,7 @@ def main():
     if args.edges_only:
         if not existing:
             sys.exit('No quads yet — pick corners before keying edges.')
+        scene_guard.require(args.scenes, existing)
         write_edge_masks(args.scenes, existing, os.path.join(os.path.dirname(args.out), 'edges'))
         return
 

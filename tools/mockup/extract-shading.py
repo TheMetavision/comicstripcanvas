@@ -47,6 +47,9 @@ except ImportError:
     sys.exit("This needs opencv-python and numpy:\n    python -m pip install opencv-python numpy")
 
 HERE = os.path.dirname(__file__)
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scene_guard  # noqa: E402
 DEFAULT_SCENES = r"C:\Users\chris\Documents\Comic Strip Canvas\Mockup Scenes"
 DEFAULT_CORNERS = os.path.join(HERE, "scenes.json")
 DEFAULT_OUT = os.path.join(HERE, "shading")
@@ -121,6 +124,7 @@ def main():
         sys.exit(f"No corners yet: {args.corners}\nRun tools/mockup/pick-corners.py first.")
     with open(args.corners, encoding="utf-8") as f:
         scenes = json.load(f)
+    scene_guard.require(args.scenes, scenes)
     os.makedirs(args.out, exist_ok=True)
 
     src_path = os.path.join(args.scenes, SOURCE_ARTWORK)

@@ -1,10 +1,13 @@
 """Pink survivors near the canvas edge, measured on the real composite."""
 import cv2, numpy as np, json, os, sys, importlib.util
 HERE="tools/mockup"
+sys.path.insert(0, HERE)
+import scene_guard
 spec=importlib.util.spec_from_file_location("r", os.path.join(HERE,"render.py"))
 r=importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 S=r"C:\Users\chris\Documents\Comic Strip Canvas\Mockup Scenes"
 scenes=json.load(open(os.path.join(HERE,"scenes.json"),encoding="utf-8"))
+scene_guard.require(S, scenes)
 TARGET="#f9dd3c"
 # A neutral artwork: nothing in it is pink, so every pink pixel found is scene.
 art=np.full((1200,900,3), 128, np.uint8)

@@ -39,7 +39,9 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -56,6 +58,7 @@ except ImportError:
 # own module rather than halfway down this one.
 from edge_colour import prominent_colour, hex_to_bgr  # noqa: E402
 import rect_aspect  # noqa: E402
+import scene_guard  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -83,6 +86,12 @@ EDGE_CORE_PX = 1
 # rectangular subject; the catalogue's real mismatches are 11-32%, so this is
 # not a hair trigger, it is a floor well under anything that matters.
 ASPECT_TOLERANCE = 0.03
+# How far a face's proportions may drift from the value recorded in
+# scenes.json before it is worth saying so. Tighter than ASPECT_TOLERANCE
+# because this one is not a judgement about shape, it is a tripwire: the
+# number it watches is exact, so anything outside a couple of percent means
+# the corners or the scene have actually moved.
+ACCEPTED_ASPECT_DRIFT = 0.02
 
 # ── seating the artwork in the scene ───────────────────────────────────────
 # How far inside its own boundary the artwork stops.
@@ -93,6 +102,24 @@ ASPECT_TOLERANCE = 0.03
 # artwork -- which is exactly the thin line of original scene that survived
 # between the print and the canvas edge. The two layers now meet, and overlap.
 FACE_INSET = 0
+# How far the artwork is allowed to overhang a quad side that has no edge
+# mask on it -- the far side of a canvas, where the wrap is hidden and
+# there is nothing to recolour over the join.
+#
+# On a side WITH an edge mask the seam is covered: the artwork stops at the
+# mask and the mask is repainted in the product's own colour, so the two
+# meet inside a repainted strip. The far side has no such strip. The
+# artwork simply stops on the clicked line, and a clicked line is good to
+# about a pixel -- so wherever it falls a pixel inside the real boundary, a
+# hairline of the ORIGINAL scene shows between artwork and wall. On the
+# studio-portrait 38mm right edge that hairline is the placeholder canvas,
+# pale against a pale wall, and it reads as a badly cut-out photograph.
+#
+# Two pixels of outward overlap covers it. The cost is that the artwork may
+# overhang the true edge by up to two pixels onto the wall behind; the
+# benefit is that it can never leave a gap. Against an out-of-focus wall an
+# overhang is invisible and a gap is not, so the asymmetry is worth taking.
+FAR_SIDE_OVERLAP_PX = 2
 # The band of shade just inside the face boundary, and how dark it goes.
 INNER_SHADOW_PX = 6
 INNER_SHADOW_STRENGTH = 0.18
@@ -151,9 +178,32 @@ def quad_aspect(corners):
 
 
 def aspect_warning(scene_name, quad_name, corners, art_w, art_h, image_size,
-                   tolerance=ASPECT_TOLERANCE):
+                   accepted=None, tolerance=ASPECT_TOLERANCE,
+                   drift=ACCEPTED_ASPECT_DRIFT):
     """
     Say so when the artwork will not fit the face without distorting.
+
+    -- unless the mismatch has already been accepted ------------------------
+
+    These scenes do not match the catalogue's shapes and are not going to. The
+    originals were chosen over regenerated ones that would have fitted, which
+    makes every mismatch here a decision rather than a defect, and a decision
+    does not need announcing again on each of three hundred products.
+
+    So a face may carry `acceptedAspect` in scenes.json, and a face that has one
+    is judged against THAT instead of against the artwork: quiet while it stays
+    put, loud the moment it moves. The check keeps its whole point -- a scene
+    swapped underneath it, or a corner re-clicked badly, still shouts -- while
+    the settled mismatch stops being news.
+
+    The recorded number is the quad's IMAGE-space aspect, not the estimated true
+    one, and that is deliberate. The true estimate is the right number for "will
+    this artwork fit", but it is recovered from four points and carries up to
+    +/-4% of jitter spread on these very faces; gating at +/-2% on a number that
+    moves +/-4% by itself would fire on noise and teach everyone to ignore it.
+    The image aspect is arithmetic on the corners -- exact, repeatable, and it
+    changes when and only when the corners or the scene do, which is precisely
+    what this gate is watching for.
 
     Judged on the rectangle's TRUE proportions, not the quad's proportions in
     the image. Those are the same thing only for a canvas square to the camera,
@@ -177,6 +227,17 @@ def aspect_warning(scene_name, quad_name, corners, art_w, art_h, image_size,
     if not want or not img:
         return None
 
+    if accepted:
+        moved = abs(img / accepted - 1.0)
+        if moved <= drift:
+            return None
+        return (f"  ASPECT MOVED  {scene_name} / {quad_name}: this face was accepted at "
+                f"{accepted:.4f}:1 and now measures {img:.4f}:1 -- {moved * 100:.1f}% off, "
+                f"outside the {drift * 100:.0f}% it is allowed.\n"
+                f"                The scene or its corners have changed since the shape was "
+                f"signed off. Re-check the corners before rendering a batch, then re-record "
+                f"with --accept-aspects.")
+
     head = (f"  ASPECT  {scene_name} / {quad_name}: image {img:.3f}:1")
     if est["aspect"] is None:
         return (f"{head}, true aspect NOT ESTIMATED -- {est['note']}."
@@ -190,6 +251,41 @@ def aspect_warning(scene_name, quad_name, corners, art_w, art_h, image_size,
         return None
     verb = "squashed" if true < want else "stretched"
     return f"{detail} -- {verb} {off * 100:.0f}%"
+
+
+def record_accepted_aspects(scenes_dir, corners_path, corners):
+    """
+    Write every face's current shape into scenes.json as the accepted one.
+
+    Signing off the set as it stands. Run it when the scenes are the ones that
+    are going to be used and their mismatch with the catalogue has been looked
+    at and allowed -- after which those faces go quiet, and only a face that
+    MOVES says anything.
+
+    The previous file is kept, because this silences a warning and anything that
+    silences a warning should be reversible without a re-click.
+    """
+    backup = corners_path.replace(".json", f".preAccept-{time.strftime('%Y%m%dT%H%M%S')}.json")
+    shutil.copy2(corners_path, backup)
+    n = 0
+    for name, info in corners.items():
+        scene = cv2.imread(os.path.join(scenes_dir, name + ".png"))
+        if scene is None:
+            print(f"  {name}: cannot read the scene, skipped")
+            continue
+        for q in info["quads"]:
+            before = q.get("acceptedAspect")
+            a = quad_aspect(quad_of(q))
+            q["acceptedAspect"] = round(a, 4)
+            n += 1
+            was = f"  (was {before:.4f})" if before else ""
+            print(f"  {name:20s} {q['name']:22s} accepted at {a:.4f}:1{was}")
+    with open(corners_path, "w", encoding="utf-8") as f:
+        json.dump(corners, f, indent=2)
+    print(f"\n  {n} face(s) recorded; a face that moves more than "
+          f"{ACCEPTED_ASPECT_DRIFT * 100:.0f}% from these will still warn.")
+    print(f"  previous scenes.json kept as {os.path.basename(backup)}")
+    return 0
 
 
 def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0):
@@ -356,7 +452,8 @@ def quad_of(q):
     return q.get("cornersRefined") or q["corners"]
 
 
-def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET):
+def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET,
+                    overlap=FAR_SIDE_OVERLAP_PX):
     """
     Where the artwork is allowed to land: the clicked quad, minus the edge.
 
@@ -378,8 +475,14 @@ def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET):
     a picture whose contents are unknown, so it is now the only evidence used:
 
         the quad polygon
+        grown outward by FAR_SIDE_OVERLAP_PX
         minus the edge mask, so nothing lands on the wrapped edge
-        inset by a pixel, so the artwork stops just short of its own boundary
+
+    The growth happens BEFORE the edge mask is subtracted, which is what makes
+    it selective without needing to know which side is which: on a side with an
+    edge mask the mask takes the grown strip straight back off again, so the
+    artwork still stops exactly where the wrap begins. Only the sides with
+    nothing to stop them -- the far ones -- actually keep their two pixels.
 
     The edge mask keeps its colour keying, and should: that one separates a
     solid edge from a picture by FLATNESS, which is a property of the edge
@@ -388,6 +491,9 @@ def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET):
     h, w = scene.shape[:2]
     face = np.zeros((h, w), np.uint8)
     cv2.fillConvexPoly(face, np.array(corners, np.int32), 255)
+
+    if overlap > 0:
+        face = cv2.dilate(face, np.ones((2 * overlap + 1,) * 2, np.uint8))
 
     if edge_mask is not None and edge_mask.any():
         face = cv2.bitwise_and(face, cv2.bitwise_not(edge_mask))
@@ -540,7 +646,8 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         gain = SCENE_SHADING_GAIN.get(name, 1.0)
         for q in info["quads"]:
             msg = aspect_warning(scene_name, q["name"], quad_of(q), aw, ah,
-                                 (scene.shape[1], scene.shape[0]))
+                                 (scene.shape[1], scene.shape[0]),
+                                 accepted=q.get("acceptedAspect"))
             if not msg:
                 continue
             warned.append(msg)
@@ -548,7 +655,7 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
             # is a property of the face and the shape of the artwork going into
             # it, so a 250-product batch would otherwise print the same seven
             # lines 250 times and bury everything that is actually per-product.
-            key = (scene_name, q["name"], orientation)
+            key = (scene_name, q["name"], orientation, msg.startswith("  ASPECT MOVED"))
             if seen_aspects is None or key not in seen_aspects:
                 log(msg)
                 if seen_aspects is not None:
@@ -592,12 +699,20 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true", help="redo slugs that already have output")
+    ap.add_argument("--accept-aspects", action="store_true",
+                    help="record each face's current shape in scenes.json as accepted, "
+                         "and stop warning about it")
     args = ap.parse_args()
+
+    with open(args.corners, encoding="utf-8") as f:
+        corners = json.load(f)
+    scene_guard.require(args.scenes, corners)
+
+    if args.accept_aspects:
+        return record_accepted_aspects(args.scenes, args.corners, corners)
 
     if not args.slug and not args.category:
         sys.exit("Give --slug or --category.")
-    with open(args.corners, encoding="utf-8") as f:
-        corners = json.load(f)
 
     q = ('*[_type == "product" && !(_id in path("drafts.**")) && '
          + ('slug.current in $slugs' if args.slug else 'category == $category')
@@ -637,9 +752,16 @@ def main():
     # long batch will have scrolled them away hours before it finishes.
     if seen_aspects:
         affected = sum(1 for r in results if r.get("aspectWarnings"))
-        print(f"  {len(seen_aspects)} face/orientation pair(s) do not match the artwork's shape, "
-              f"across {affected} of {len(results)} product(s).")
-        print("  Each one is being stretched to fit -- see the ASPECT lines above.")
+        moved = [k for k in seen_aspects if k[3]]
+        if moved:
+            print(f"  {len(moved)} face(s) have MOVED since their shape was accepted, "
+                  f"across {affected} of {len(results)} product(s).")
+            print("  That is a changed scene or a bad re-click, not a shape decision. "
+                  "See the ASPECT MOVED lines above.")
+        else:
+            print(f"  {len(seen_aspects)} face/orientation pair(s) do not match the artwork's shape, "
+                  f"across {affected} of {len(results)} product(s).")
+            print("  Each one is being stretched to fit -- see the ASPECT lines above.")
     return 0
 
 

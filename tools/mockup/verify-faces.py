@@ -53,6 +53,8 @@ spec = importlib.util.spec_from_file_location("render", os.path.join(HERE, "rend
 R = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(R)
 cv2 = R.cv2
+sys.path.insert(0, HERE)
+import scene_guard  # noqa: E402
 
 SCENES = R.DEFAULT_SCENES
 # Only clusters this saturated count as signature: the grey stand-in artwork
@@ -97,6 +99,7 @@ def signature(scene, face):
 
 def main():
     corners = json.load(open(os.path.join(HERE, "scenes.json"), encoding="utf-8"))
+    scene_guard.require(SCENES, corners)
     # Flat grey with a faint grid: nothing in it is saturated, so nothing in it
     # can be mistaken for the placeholder.
     # At the aspects the catalogue actually has. An earlier version used one
@@ -122,8 +125,8 @@ def main():
                 composed = R.warp_mesh(art, composed, q["mesh"], sh,
                                        shade_gain=R.POSTER_SHADING_GAIN)
             else:
-                sil = R.face_silhouette(scene, q["corners"], edge)
-                composed = R.warp_into(art, composed, q["corners"], sh, silhouette=sil,
+                sil = R.face_silhouette(scene, R.quad_of(q), edge)
+                composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
                                        shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
         if edge is not None and edge.any():
             composed = R.recolour_edge(composed, edge, "#f9dd3c")
@@ -139,8 +142,8 @@ def main():
         for q in info["quads"]:
             # The quad, not the face mask. See the note at the top.
             region = np.zeros(scene.shape[:2], np.uint8)
-            cv2.fillConvexPoly(region, np.array(q["corners"], np.int32), 255)
-            face = R.face_silhouette(scene, q["corners"], edge)
+            cv2.fillConvexPoly(region, np.array(R.quad_of(q), np.int32), 255)
+            face = R.face_silhouette(scene, R.quad_of(q), edge)
             sig = signature(scene, face)
             # The outermost row is a deliberate blend. warp_into feathers its
             # mask by 3x3 so the warp's own jaggies do not show against a hard
