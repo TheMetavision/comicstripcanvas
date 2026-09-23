@@ -43,6 +43,7 @@ tools/builder/web-out/
 # artefacts, one per run, hundreds of KB each -- keep them where they land,
 # just not in the repository.
 tools/builder/mockup-backup-*.json
+tools/previous-slugs-backup-*.json
 
 artwork/
 photos/
