@@ -1,0 +1,5 @@
+# Renders and their shading are regenerated artefacts, not source. scenes.json
+# IS source -- it is the only record of where the canvases are.
+out/
+shading/
+upload-backup-*.json

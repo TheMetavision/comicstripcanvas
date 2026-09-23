@@ -1,0 +1,200 @@
+{
+  "poster-portrait": {
+    "orientation": "portrait",
+    "quads": [
+      {
+        "name": "poster",
+        "corners": [
+          [
+            229.0,
+            110.0
+          ],
+          [
+            895.0,
+            74.0
+          ],
+          [
+            1111.0,
+            910.0
+          ],
+          [
+            297.0,
+            990.0
+          ]
+        ]
+      }
+    ]
+  },
+  "room-portrait": {
+    "orientation": "portrait",
+    "quads": [
+      {
+        "name": "room",
+        "corners": [
+          [
+            773.0,
+            116.0
+          ],
+          [
+            1120.0,
+            74.0
+          ],
+          [
+            1127.0,
+            691.0
+          ],
+          [
+            773.0,
+            681.0
+          ]
+        ]
+      }
+    ]
+  },
+  "studio-portrait": {
+    "orientation": "portrait",
+    "quads": [
+      {
+        "name": "standard-18mm",
+        "corners": [
+          [
+            349.0,
+            122.0
+          ],
+          [
+            796.0,
+            153.0
+          ],
+          [
+            796.0,
+            910.0
+          ],
+          [
+            392.0,
+            937.0
+          ]
+        ]
+      },
+      {
+        "name": "premium-gallery-38mm",
+        "corners": [
+          [
+            898.0,
+            152.0
+          ],
+          [
+            1304.0,
+            182.0
+          ],
+          [
+            1304.0,
+            893.0
+          ],
+          [
+            911.0,
+            887.0
+          ]
+        ]
+      }
+    ]
+  },
+  "poster-landscape": {
+    "orientation": "landscape",
+    "quads": [
+      {
+        "name": "poster",
+        "corners": [
+          [
+            216.0,
+            166.0
+          ],
+          [
+            1095.0,
+            145.0
+          ],
+          [
+            1222.0,
+            791.0
+          ],
+          [
+            141.0,
+            855.0
+          ]
+        ]
+      }
+    ]
+  },
+  "room-landscape": {
+    "orientation": "landscape",
+    "quads": [
+      {
+        "name": "room",
+        "corners": [
+          [
+            255.0,
+            126.0
+          ],
+          [
+            881.0,
+            180.0
+          ],
+          [
+            881.0,
+            566.0
+          ],
+          [
+            255.0,
+            581.0
+          ]
+        ]
+      }
+    ]
+  },
+  "studio-landscape": {
+    "orientation": "landscape",
+    "quads": [
+      {
+        "name": "standard-18mm",
+        "corners": [
+          [
+            134.0,
+            323.0
+          ],
+          [
+            698.0,
+            287.0
+          ],
+          [
+            714.0,
+            808.0
+          ],
+          [
+            132.0,
+            769.0
+          ]
+        ]
+      },
+      {
+        "name": "premium-gallery-38mm",
+        "corners": [
+          [
+            818.0,
+            267.0
+          ],
+          [
+            1403.0,
+            324.0
+          ],
+          [
+            1404.0,
+            760.0
+          ],
+          [
+            834.0,
+            804.0
+          ]
+        ]
+      }
+    ]
+  }
+}
