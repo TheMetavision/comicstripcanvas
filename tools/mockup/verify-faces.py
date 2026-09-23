@@ -14,6 +14,21 @@ parts of the placeholder near the edge resemble a dark room, so they were cut
 out of the mask, so the warp never covered them, so the placeholder showed
 through in strips. The check that would have caught it is this one.
 
+── Two things this got wrong, and they are the point ──────────────────────
+
+It measured inside the FACE MASK, which is the quad minus the edge mask. The
+face mask is derived from the edge mask, so any error in the edge mask was
+invisible to a test scoped by it: when the edge keying over-reached and claimed
+bands inside the quad, those bands were dropped from the face, never covered by
+artwork, painted by the edge recolour -- and not looked at, because they were
+not in the region the test had decided to examine. A test must not take its
+scope from the thing it is testing. It now measures inside the QUAD.
+
+And it used artwork shaped like the quad, so the artwork fitted the quad by
+construction. The catalogue is 3:2 and 2:3 and the quads are not -- the studio
+landscape canvases are 1.22:1 against artwork at 1.50:1 -- so the shapes that
+matter were never the shapes being tried.
+
 ── How it decides ─────────────────────────────────────────────────────────
 
 The signature is taken from the scene itself: the face region of the untouched
@@ -23,11 +38,8 @@ cannot accidentally match hot pink, so every hit is placeholder rather than a
 coincidence of the product's own palette -- which is also why this cannot be
 run against a real product's render and mean anything.
 
-Measured inside the quad, minus the edge mask, minus the inset, and minus one
-more row for the feather: the edge is recoloured rather than covered, the inset
-ring is deliberately left to the scene, and the outermost row is a deliberate
-blend between artwork and scene so that the warp's jaggies do not show against
-a hard canvas edge. None of those three is the artwork's job.
+Measured inside the QUAD, pulled in by a couple of pixels for the inset and the
+feather -- and deliberately NOT by the edge mask, for the reason above.
 """
 import importlib.util
 import json
@@ -51,6 +63,8 @@ SIG_CLUSTERS = 6
 SIG_TOLERANCE = 14.0
 # Saturation a composited pixel must have before it can be a survivor at all.
 SURVIVOR_MIN_SAT = 60
+# How far inside the quad the test starts: one pixel of inset, one of feather.
+QUAD_MARGIN = 2
 
 
 def signature(scene, face):
@@ -71,15 +85,22 @@ def main():
     corners = json.load(open(os.path.join(HERE, "scenes.json"), encoding="utf-8"))
     # Flat grey with a faint grid: nothing in it is saturated, so nothing in it
     # can be mistaken for the placeholder.
-    art = np.full((1200, 900, 3), 128, np.uint8)
-    art[::40, :] = 96
-    art[:, ::40] = 96
+    # At the aspects the catalogue actually has. An earlier version used one
+    # portrait stand-in and let it stretch, which fits any quad by construction
+    # and so could not detect a face the artwork fails to fill.
+    def stand_in(w, h):
+        a = np.full((h, w, 3), 128, np.uint8)
+        a[::40, :] = 96
+        a[:, ::40] = 96
+        return a
+    ARTWORKS = {"landscape": stand_in(1500, 1000), "portrait": stand_in(1000, 1500)}
 
     total = 0
     for name, info in corners.items():
         scene = cv2.imread(os.path.join(SCENES, name + ".png"))
         edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
 
+        art = ARTWORKS["landscape" if info["orientation"] == "landscape" else "portrait"]
         composed = scene
         for q in info["quads"]:
             sh = R.load_shading(os.path.join(HERE, "shading"), f"{name}__{q['name']}")
@@ -102,6 +123,9 @@ def main():
         # requiring saturation costs nothing and removes the whole false class.
         sat_after = cv2.cvtColor(composed, cv2.COLOR_BGR2HSV)[..., 1]
         for q in info["quads"]:
+            # The quad, not the face mask. See the note at the top.
+            region = np.zeros(scene.shape[:2], np.uint8)
+            cv2.fillConvexPoly(region, np.array(q["corners"], np.int32), 255)
             face = R.face_silhouette(scene, q["corners"], edge)
             sig = signature(scene, face)
             # The outermost row is a deliberate blend. warp_into feathers its
@@ -111,7 +135,7 @@ def main():
             # exactly 1.0px from the boundary, i.e. that row and nothing else.
             # Measured inside it, so the check is about coverage rather than
             # about the anti-aliasing it deliberately has.
-            inner = cv2.erode(face, np.ones((3, 3), np.uint8))
+            inner = cv2.erode(region, np.ones((2 * QUAD_MARGIN + 1,) * 2, np.uint8))
             if sig is None:
                 print(f"  {name:20s} {q['name']:22s} no saturated placeholder here, nothing to check")
                 continue
