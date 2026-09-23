@@ -73,6 +73,12 @@ JPEG_QUALITY = 92
 # edge white.
 EDGE_SHADE_CLIP = (0.45, 1.65)
 
+# How far a face's shape may differ from the artwork's before it is worth
+# saying. Three percent is about where a stretch stops being deniable on a
+# rectangular subject; the catalogue's real mismatches are 11-32%, so this is
+# not a hair trigger, it is a floor well under anything that matters.
+ASPECT_TOLERANCE = 0.03
+
 # ── seating the artwork in the scene ───────────────────────────────────────
 # How far inside its own boundary the artwork stops.
 FACE_INSET = 1
@@ -116,6 +122,47 @@ def fetch_image(url):
     with urllib.request.urlopen(url, timeout=120) as r:
         buf = np.frombuffer(r.read(), np.uint8)
     return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+
+
+def quad_aspect(corners):
+    """
+    The aspect of the canvas face, as if it were facing the camera.
+
+    Opposite edges of a quad in perspective are different lengths -- the near
+    one is longer -- so each pair is averaged. That is not a true rectification,
+    which would need the vanishing points, but the error is second-order at
+    these angles and the answer only has to be good enough to notice a third.
+    """
+    c = np.array(corners, dtype=np.float64)
+    w = (np.linalg.norm(c[1] - c[0]) + np.linalg.norm(c[2] - c[3])) / 2
+    h = (np.linalg.norm(c[3] - c[0]) + np.linalg.norm(c[2] - c[1])) / 2
+    return w / h if h else 0.0
+
+
+def aspect_warning(scene_name, quad_name, corners, art_w, art_h,
+                   tolerance=ASPECT_TOLERANCE):
+    """
+    Say so when the artwork will not fit the face without distorting.
+
+    warp_into maps the whole artwork rectangle onto the whole quad, so a face
+    whose shape differs from the artwork's is filled by STRETCHING it. Nothing
+    fails, nothing is uncovered, and the output looks fine until you notice the
+    proportions are wrong -- which is how a 32% stretch on the portrait poster
+    survived a test run and a review of nine images.
+
+    Returns a sentence, or None when the two shapes agree.
+    """
+    want = art_w / art_h if art_h else 0.0
+    got = quad_aspect(corners)
+    if not want or not got:
+        return None
+    ratio = got / want
+    off = abs(ratio - 1.0)
+    if off <= tolerance:
+        return None
+    verb = "squashed" if ratio < 1 else "stretched"
+    return (f"  ASPECT  {scene_name} / {quad_name}: face is {got:.3f}:1, "
+            f"artwork is {want:.3f}:1 — {verb} {off * 100:.0f}%")
 
 
 def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0):
@@ -390,7 +437,8 @@ def fit_long_side(img, long_side):
     return cv2.resize(img, (max(1, round(w * k)), max(1, round(h * k))), interpolation=interp)
 
 
-def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, force, log):
+def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, force, log,
+                   seen_aspects=None):
     slug = product["slug"]
     ref = product.get("listing") or product.get("first")
     url = asset_url(ref)
@@ -423,6 +471,7 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
 
     os.makedirs(dest, exist_ok=True)
     written = []
+    warned = []
     for name in OUTPUTS:
         scene_name = f"{name}-{orientation}"
         info = corners.get(scene_name)
@@ -435,6 +484,20 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
             continue
         edge = cv2.imread(os.path.join(edges_dir, scene_name + ".png"), cv2.IMREAD_GRAYSCALE)
         gain = SCENE_SHADING_GAIN.get(name, 1.0)
+        for q in info["quads"]:
+            msg = aspect_warning(scene_name, q["name"], q["corners"], aw, ah)
+            if not msg:
+                continue
+            warned.append(msg)
+            # Once per scene and orientation, not once per product. The mismatch
+            # is a property of the face and the shape of the artwork going into
+            # it, so a 250-product batch would otherwise print the same seven
+            # lines 250 times and bury everything that is actually per-product.
+            key = (scene_name, q["name"], orientation)
+            if seen_aspects is None or key not in seen_aspects:
+                log(msg)
+                if seen_aspects is not None:
+                    seen_aspects.add(key)
         composed = scene
         for q in info["quads"]:
             sh = load_shading(shading_dir, f"{scene_name}__{q['name']}")
@@ -459,7 +522,8 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         cv2.imwrite(path, out, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         written.append((name, out.shape[1], out.shape[0], len(info["quads"])))
         log(f"     {name+'.jpg':12s} {out.shape[1]}x{out.shape[0]}  from {scene_name}  ({len(info['quads'])} face(s))")
-    return {"slug": slug, "orientation": orientation, "artwork": [aw, ah], "written": written}
+    return {"slug": slug, "orientation": orientation, "artwork": [aw, ah],
+            "written": written, "aspectWarnings": warned}
 
 
 def main():
@@ -505,12 +569,22 @@ def main():
         return 0
 
     results = []
+    seen_aspects = set()
     for p in products:
-        r = render_product(p, args.scenes, corners, args.shading, args.edges, args.out, args.force, print)
+        r = render_product(p, args.scenes, corners, args.shading, args.edges, args.out, args.force, print,
+                           seen_aspects=seen_aspects)
         if r:
             results.append(r)
     made = sum(len(r.get("written", [])) for r in results)
     print(f"\n  {made} file(s) written for {len(results)} product(s) into {args.out}")
+
+    # Said again at the end, because the per-scene lines are printed once and a
+    # long batch will have scrolled them away hours before it finishes.
+    if seen_aspects:
+        affected = sum(1 for r in results if r.get("aspectWarnings"))
+        print(f"  {len(seen_aspects)} face/orientation pair(s) do not match the artwork's shape, "
+              f"across {affected} of {len(results)} product(s).")
+        print("  Each one is being stretched to fit — see the ASPECT lines above.")
     return 0
 
 
