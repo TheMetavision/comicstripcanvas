@@ -74,12 +74,37 @@ Stage a real upload in batches, or target individual products:
 `--limit` takes the first *n* by slug, so the same *n* come back on a repeat.
 `--slug` is repeatable and takes precedence over `--category`.
 
+Publish the drafts the upload made — plan first:
+
+    node tools/mockup/publish.mjs --category comic-book-icons --dry-run
+    node tools/mockup/publish.mjs --category comic-book-icons --limit 5
+
+`publish.mjs` publishes a draft only when the **only** difference from the
+published document is the images array gaining `mockup-*` entries. Anything
+else — a retitle, a price correction, an image added by hand, a mockup that is
+already live being *changed* rather than added — is held and listed by name,
+because a draft is shared state and the Studio writes to it too. Publishing one
+because it happens to contain a mockup would push somebody's half-finished edit
+live alongside it.
+
+`_id`, `_rev`, `_createdAt` and `_updatedAt` are ignored; they differ by
+definition. Everything else is compared deeply with key order normalised.
+
+A dry run also sends the first batch to the actions API with `dryRun: true`, so
+the endpoint, API version and action shape are checked against Sanity without
+anything being published.
+
+Takes `--slug`, `--limit` and `--batch` (default 10). Every run writes
+`publish-backup-<timestamp>.json` with the **published** documents as they were
+before anything was sent — that is what a publish overwrites.
+
 Tests:
 
     python tools/mockup/test_aspect_gate.py
     python tools/mockup/test_nudge.py
     python tools/mockup/picker-tests.py
     node   tools/mockup/test-upload-slots.mjs
+    node   tools/mockup/test-publish.mjs
 
 ## Slots
 
