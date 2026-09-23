@@ -1,0 +1,24 @@
+---
+/**
+ * What a product grid says when the search matches nothing.
+ *
+ * Goes AFTER the grid, which is why it is not part of ProductSearch.astro even
+ * though the two are always used together -- product-filter.js hides the grid
+ * and shows this, and a reader following that code should find this markup
+ * where the browser puts it.
+ *
+ * The hint is a prop because "Try a different search or category" is the right
+ * sentence on All Products, which has category buttons, and a confusing one on
+ * a category page, which does not.
+ */
+interface Props {
+  hint?: string;
+}
+
+const { hint = 'Try a different search.' } = Astro.props;
+---
+
+<div id="no-results" class="hidden text-center py-20">
+  <p class="font-bangers text-4xl text-gray-500 tracking-wide">NO RESULTS FOUND</p>
+  <p class="font-source text-gray-500 mt-2">{hint}</p>
+</div>

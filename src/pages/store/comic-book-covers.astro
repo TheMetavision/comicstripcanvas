@@ -1,6 +1,8 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProductCard from '../../components/ProductCard.astro';
+import ProductSearch from '../../components/ProductSearch.astro';
+import ProductNoResults from '../../components/ProductNoResults.astro';
 import { sanityClient } from '../../lib/sanity';
 import { productsByCategoryQuery } from '../../lib/queries';
 
@@ -35,11 +37,19 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
   </section>
 
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div class="flex mb-8">
+      <ProductSearch />
+    </div>
+
+    <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
       {products.map((product) => (
-        <ProductCard product={product} />
+        <div class="product-item" data-category={product.category} data-title={product.title.toLowerCase()}>
+          <ProductCard product={product} />
+        </div>
       ))}
     </div>
+
+    <ProductNoResults />
     <div class="mt-12 text-center bg-panel-dark border-4 border-comic-red p-8" style="box-shadow: 4px 4px 0 #000;">
       <h2 class="font-bangers text-3xl text-off-white mb-3 tracking-wide">WANT YOUR FACE ON THE COVER?</h2>
       <p class="font-source text-gray-300 mb-6">We can turn your photo into a personalised comic book cover. You become the hero.</p>
@@ -77,3 +87,17 @@ const products = await sanityClient.fetch(productsByCategoryQuery, { category: '
     ]
   })}></script>
 </BaseLayout>
+
+<script>
+  import { initProductFilter } from '../../scripts/product-filter.js';
+
+  /* Only the input: this grid already holds nothing but its own category, so
+     there is no category to filter by and no sort offered. Same matching rule
+     as the All Products page all the same -- that is the whole point of
+     passing through initProductFilter rather than writing it again here. */
+  initProductFilter({
+    grid: document.getElementById('product-grid'),
+    input: document.getElementById('search-input') as HTMLInputElement,
+    noResults: document.getElementById('no-results'),
+  });
+</script>

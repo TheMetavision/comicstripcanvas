@@ -1,6 +1,8 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProductCard from '../../components/ProductCard.astro';
+import ProductSearch from '../../components/ProductSearch.astro';
+import ProductNoResults from '../../components/ProductNoResults.astro';
 import { sanityClient } from '../../lib/sanity';
 import { allProductsQuery } from '../../lib/queries';
 import { PRICES } from '../../data/products';
@@ -49,18 +51,7 @@ const categories = [
           </button>
         ))}
       </div>
-      <div class="flex gap-3 items-center">
-        <div class="relative">
-          <input
-            type="text"
-            placeholder="Search..."
-            id="search-input"
-            class="bg-panel-dark border-4 border-black text-off-white pl-10 pr-4 py-2 font-source text-sm focus:outline-none focus:border-comic-yellow transition-colors w-48"
-          />
-          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div>
+      <ProductSearch align="start">
         <select id="sort-select"
                 class="bg-panel-dark border-4 border-black text-off-white px-4 py-2 font-source text-sm focus:outline-none focus:border-comic-yellow transition-colors">
           <option value="newest">Newest</option>
@@ -68,7 +59,7 @@ const categories = [
           <option value="price-desc">Price: High-Low</option>
           <option value="name-az">Name: A-Z</option>
         </select>
-      </div>
+      </ProductSearch>
     </div>
 
     <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -79,23 +70,16 @@ const categories = [
       ))}
     </div>
 
-    <div id="no-results" class="hidden text-center py-20">
-      <p class="font-bangers text-4xl text-gray-500 tracking-wide">NO RESULTS FOUND</p>
-      <p class="font-source text-gray-500 mt-2">Try a different search or category.</p>
-    </div>
+    <ProductNoResults hint="Try a different search or category." />
   </div>
 </BaseLayout>
 
 <script>
-  const filterBtns = document.querySelectorAll('.category-filter-btn');
-  const searchInput = document.getElementById('search-input') as HTMLInputElement;
-  const sortSelect = document.getElementById('sort-select') as HTMLSelectElement;
-  const productGrid = document.getElementById('product-grid');
-  const noResults = document.getElementById('no-results');
-  const items = Array.from(document.querySelectorAll('.product-item'));
+  import { initProductFilter } from '../../scripts/product-filter.js';
 
-  let activeCategory = 'all';
-  let searchQuery = '';
+  /* All Products passes every control it has; a category page passes only the
+     input. Both go through the same matching rule, which is the point. */
+  const filterBtns = document.querySelectorAll('.category-filter-btn');
 
   function activateBtn(btn: Element) {
     filterBtns.forEach((b) => {
@@ -106,55 +90,13 @@ const categories = [
     btn.classList.remove('bg-panel-dark', 'text-gray-400');
   }
 
-  function filterAndRender() {
-    let visible = 0;
-    items.forEach((item) => {
-      const el = item as HTMLElement;
-      const cat = el.dataset.category || '';
-      const title = el.dataset.title || '';
-      const matchCat = activeCategory === 'all' || cat === activeCategory;
-      const matchSearch = !searchQuery || title.includes(searchQuery.toLowerCase());
-      if (matchCat && matchSearch) {
-        el.style.display = '';
-        visible++;
-      } else {
-        el.style.display = 'none';
-      }
-    });
-    if (noResults) noResults.classList.toggle('hidden', visible > 0);
-    if (productGrid) productGrid.classList.toggle('hidden', visible === 0);
-  }
-
-  filterBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      activeCategory = (btn as HTMLElement).dataset.category || 'all';
-      activateBtn(btn);
-      filterAndRender();
-    });
-  });
-
-  function sortItems() {
-    const val = sortSelect?.value;
-    if (!productGrid) return;
-    const sorted = [...items];
-    if (val === 'price-asc') {
-      sorted.sort((a, b) => parseFloat((a as HTMLElement).dataset.price || '0') - parseFloat((b as HTMLElement).dataset.price || '0'));
-    } else if (val === 'price-desc') {
-      sorted.sort((a, b) => parseFloat((b as HTMLElement).dataset.price || '0') - parseFloat((a as HTMLElement).dataset.price || '0'));
-    } else if (val === 'name-az') {
-      sorted.sort((a, b) => ((a as HTMLElement).dataset.title || '').localeCompare((b as HTMLElement).dataset.title || ''));
-    }
-    sorted.forEach((item) => productGrid.appendChild(item));
-  }
-
-  searchInput?.addEventListener('input', () => {
-    searchQuery = searchInput.value;
-    filterAndRender();
-  });
-
-  sortSelect?.addEventListener('change', () => {
-    sortItems();
-    filterAndRender();
+  initProductFilter({
+    grid: document.getElementById('product-grid'),
+    input: document.getElementById('search-input') as HTMLInputElement,
+    noResults: document.getElementById('no-results'),
+    sortSelect: document.getElementById('sort-select') as HTMLSelectElement,
+    categoryButtons: filterBtns,
+    onCategoryChange: activateBtn,
   });
 
   const firstBtn = filterBtns[0];

@@ -1,0 +1,42 @@
+---
+/**
+ * The store's search box, wherever a grid of products is shown.
+ *
+ * Lifted out of store/index.astro unchanged -- same input, same icon, same
+ * classes, same width -- so that the three category pages get the box the All
+ * Products page has rather than one that merely resembles it. index.astro now
+ * renders this too, which is what stops the two drifting apart the next time
+ * one of them is restyled.
+ *
+ * Markup only. The wiring lives in scripts/product-filter.js, because All
+ * Products has category buttons and a sort select to wire up as well, and one
+ * binding taking optional controls beats two bindings that agree today.
+ *
+ * The empty state is NOT here: it belongs after the grid, and this sits before
+ * it. See ProductNoResults.astro, which every one of these pages also renders.
+ *
+ * Anything passed as children lands to the right of the box -- which is how
+ * All Products keeps its sort select in the same row.
+ */
+interface Props {
+  /** Push the box to the right when there is nothing to its left. */
+  align?: 'start' | 'end';
+}
+
+const { align = 'end' } = Astro.props;
+---
+
+<div class:list={['flex gap-3 items-center', align === 'end' && 'ml-auto']}>
+  <div class="relative">
+    <input
+      type="text"
+      placeholder="Search..."
+      id="search-input"
+      class="bg-panel-dark border-4 border-black text-off-white pl-10 pr-4 py-2 font-source text-sm focus:outline-none focus:border-comic-yellow transition-colors w-48"
+    />
+    <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  </div>
+  <slot />
+</div>
