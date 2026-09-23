@@ -65,19 +65,15 @@ def main():
         edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
         art = stand_in(1500, 1000) if info["orientation"] == "landscape" else stand_in(1000, 1500)
 
-        # Exactly render.py's composite, through render.py's own functions.
-        composed = scene
-        for q in info["quads"]:
-            sh = R.load_shading(os.path.join(HERE, "shading"), f"{name}__{q['name']}")
-            if q.get("mesh"):
-                composed = R.warp_mesh(art, composed, q["mesh"], sh,
-                                       shade_gain=R.POSTER_SHADING_GAIN)
-            else:
-                sil = R.face_silhouette(scene, R.quad_of(q), edge)
-                composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
-                                       shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
-        if edge is not None and edge.any():
-            composed = R.recolour_edge(composed, edge, TARGET)
+        # render.py's composite, by calling it -- not by repeating it here.
+        # Repeating it here is what let this file pass a renderer that was
+        # drawing a black rim round every canvas.
+        composed = R.compose_scene(scene, info, name, edge, art,
+                                   os.path.join(HERE, "shading"), TARGET)
+        k = composed.shape[1] / float(scene.shape[1])
+        scene = R.fit_long_side(scene, R.OUT_LONG_SIDE)
+        if edge is not None:
+            edge = R.fit_long_side(edge, R.OUT_LONG_SIDE)
 
         # 1. pink survivors beside the recoloured strip
         if edge is not None and edge.any():
@@ -98,7 +94,7 @@ def main():
 
         # 2. a rim at any boundary, whatever it is made of
         for q in info["quads"]:
-            quad = R.quad_of(q)
+            quad = [[p[0] * k, p[1] * k] for p in R.quad_of(q)]
             sig = SB.content_signature(scene, quad)
             for i, side in enumerate(SB.SIDES):
                 rows = SB.walk_side(scene, composed, quad[i], quad[(i + 1) % 4], sig=sig)

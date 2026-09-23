@@ -59,6 +59,7 @@ except ImportError:
 from edge_colour import prominent_colour, hex_to_bgr  # noqa: E402
 import rect_aspect  # noqa: E402
 import scene_guard  # noqa: E402
+import sides  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -120,6 +121,17 @@ FACE_INSET = 0
 # benefit is that it can never leave a gap. Against an out-of-focus wall an
 # overhang is invisible and a gap is not, so the asymmetry is worth taking.
 FAR_SIDE_OVERLAP_PX = 2
+# Subsamples per axis when rasterising a polygon into a coverage alpha. Eight
+# gives sixty-five levels, so an edge slides across the grid in 1/64ths instead
+# of whole pixels. Affordable because only the polygon's bounding box is
+# supersampled. Measured against verify-aa: a boundary built this way sits at
+# about 0.04 px of residual, a blurred binary fill at 0.289.
+COVERAGE_SS = 8
+# How much more artwork resolution to keep than the face can show, before the
+# warp. Above 1.0 so the warp is never sampling something already at its limit;
+# not much above, because every extra pixel is one warpPerspective throws away
+# without filtering.
+ART_HEADROOM = 1.5
 # The band of shade just inside the face boundary, and how dark it goes.
 INNER_SHADOW_PX = 6
 INNER_SHADOW_STRENGTH = 0.18
@@ -288,9 +300,84 @@ def record_accepted_aspects(scenes_dir, corners_path, corners):
     return 0
 
 
-def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0):
+def coverage(poly, shape, ss=COVERAGE_SS):
+    """
+    How much of each pixel a polygon covers: 0.0 to 1.0, not 0 or 255.
+
+    A filled polygon is a yes/no answer per pixel, and a sloping edge answered
+    yes/no can only move in whole pixels. Blurring that afterwards does not
+    help -- it spreads the same staircase over three pixels, which is why every
+    column along the gallery canvas's bottom edge carried an identical 14, 57,
+    127, 184 ramp that jumped a pixel and repeated. The ramp was never about
+    where the edge is.
+
+    So the polygon is rasterised on a grid four times finer, with its vertices
+    placed to a quarter of one of THOSE pixels, and averaged down. What comes
+    back is the fraction of each output pixel the shape actually covers, and an
+    edge at a shallow angle now slides across the grid a seventeenth of a pixel
+    at a time instead of waiting and jumping.
+
+    Sixteen subsamples is enough: the residual quantisation is 1/32 px, which
+    is below the point where a boundary reads as anything but straight.
+    """
+    h, w = shape[:2]
+    out = np.zeros((h, w), np.float32)
+    p = np.asarray(poly, np.float64)
+
+    # Only the polygon's own bounding box is rasterised. A face covers a
+    # fraction of the frame, and supersampling the other nine tenths costs the
+    # memory that stops this being done finely enough to matter -- box-limited,
+    # eight subsamples per axis is cheaper than four across the whole picture.
+    x0 = max(0, int(np.floor(p[:, 0].min())) - 1)
+    y0 = max(0, int(np.floor(p[:, 1].min())) - 1)
+    x1 = min(w, int(np.ceil(p[:, 0].max())) + 2)
+    y1 = min(h, int(np.ceil(p[:, 1].max())) + 2)
+    if x1 <= x0 or y1 <= y0:
+        return out
+
+    bw, bh = x1 - x0, y1 - y0
+    big = np.zeros((bh * ss, bw * ss), np.uint8)
+    # shift=2 puts the coordinates in quarter-pixels OF THE FINE GRID.
+    pts = np.round((p - [x0, y0]) * ss * 4).astype(np.int32)
+    cv2.fillPoly(big, [pts], 255, lineType=cv2.LINE_8, shift=2)
+    out[y0:y1, x0:x1] = cv2.resize(big, (bw, bh),
+                                   interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    return out
+
+
+def prepare_art(art, corners):
+    """
+    Reduce the artwork to roughly the size it will be used at, properly.
+
+    warpPerspective samples; it does not filter. Asked to fit a 2000px listing
+    into a face 760px across it takes one sample per output pixel and throws
+    the other seven away, so fine hatching -- the clouds on the Mad Max
+    canvas -- turns into noise and then into blocks. This is the classic
+    minification problem and the classic fix: reduce with INTER_AREA first,
+    which averages every source pixel it discards.
+
+    Reduced to ART_HEADROOM times the longest projected side rather than
+    exactly to it, so the warp still has more detail than it needs everywhere
+    and the perspective foreshortening at the far edge is not resampled from
+    something already at its limit.
+    """
+    longest = 0.0
+    c = [np.asarray(p, float) for p in corners]
+    for i in range(4):
+        longest = max(longest, float(np.linalg.norm(c[(i + 1) % 4] - c[i])))
+    want = longest * ART_HEADROOM
+    have = max(art.shape[0], art.shape[1])
+    if want <= 0 or have <= want:
+        return art
+    k = want / have
+    return cv2.resize(art, (max(1, round(art.shape[1] * k)), max(1, round(art.shape[0] * k))),
+                      interpolation=cv2.INTER_AREA)
+
+
+def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0, alpha=None):
     """The artwork, in the scene, wearing the scene's light."""
     h, w = scene.shape[:2]
+    art = prepare_art(art, corners)
     src = np.array([[0, 0], [art.shape[1] - 1, 0],
                     [art.shape[1] - 1, art.shape[0] - 1], [0, art.shape[0] - 1]], dtype=np.float32)
     dst = np.array(corners, dtype=np.float32)
@@ -320,22 +407,23 @@ def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0
             sh = 1.0 + (sh - 1.0) * shade_gain
         warped = np.clip(warped.astype(np.float32) * sh[..., None], 0, 255).astype(np.uint8)
 
-    # Where the artwork may land. The quad is the fallback; the silhouette is
-    # the quad after the scene has been asked what is actually there.
-    if silhouette is not None:
-        mask = silhouette.copy()
-        shadow = inner_shadow(mask)
-        if shadow is not None:
-            warped = np.clip(warped.astype(np.float32) * shadow[..., None], 0, 255).astype(np.uint8)
-    else:
-        mask = np.zeros((h, w), np.uint8)
-        cv2.fillConvexPoly(mask, dst.astype(np.int32), 255, cv2.LINE_AA)
-    # A 1px feather on the mask only. The canvas edge in the scene is a hard
-    # edge and should stay one; this is to stop the warp's own jaggies showing
-    # against it, not to soften the canvas.
-    mask = cv2.GaussianBlur(mask, (3, 3), 0).astype(np.float32) / 255.0
-    return (scene.astype(np.float32) * (1 - mask[..., None])
-            + warped.astype(np.float32) * mask[..., None]).astype(np.uint8)
+    # Where the artwork may land. A float coverage from the caller is the only
+    # thing that antialiases; the binary silhouette path is kept for callers
+    # that still hand one over, and blurs it as it always did.
+    if alpha is None:
+        if silhouette is not None:
+            alpha = cv2.GaussianBlur(silhouette, (3, 3), 0).astype(np.float32) / 255.0
+        else:
+            m8 = np.zeros((h, w), np.uint8)
+            cv2.fillConvexPoly(m8, dst.astype(np.int32), 255, cv2.LINE_AA)
+            alpha = m8.astype(np.float32) / 255.0
+
+    shadow = inner_shadow_soft(alpha)
+    if shadow is not None:
+        warped = np.clip(warped.astype(np.float32) * shadow[..., None], 0, 255).astype(np.uint8)
+
+    return (scene.astype(np.float32) * (1 - alpha[..., None])
+            + warped.astype(np.float32) * alpha[..., None]).astype(np.uint8)
 
 
 def _tps_fit(src, dst):
@@ -413,6 +501,7 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
     clicked in.
     """
     h, w = scene.shape[:2]
+    art = prepare_art(art, cv2.convexHull(np.array(mesh, np.float32)).reshape(-1, 2))
     scene_pts = np.array(mesh, np.float64)
     art_pts = mesh_source_points(art.shape[1], art.shape[0]).astype(np.float64)
     # Fitted scene -> artwork: a remap asks, for each destination pixel, where
@@ -424,6 +513,13 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
     cv2.fillConvexPoly(region, hull, 255)
     if inset > 0:
         region = cv2.erode(region, np.ones((2 * inset + 1,) * 2, np.uint8))
+    # Grown by a couple of pixels, because this decides which pixels get a
+    # mapping and the coverage alpha below is antialiased: a pixel one third
+    # covered sits just outside a filled polygon but is still composited, and
+    # without a mapping it would be composited from whatever the remap's border
+    # happened to replicate. Sixty-nine pixels of exactly that showed up along
+    # the bottom of the portrait poster.
+    region = cv2.dilate(region, np.ones((5, 5), np.uint8))
 
     ys, xs = np.where(region > 0)
     if not len(xs):
@@ -445,9 +541,11 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
             shw = 1.0 + (shw - 1.0) * shade_gain
         warped = np.clip(warped.astype(np.float32) * shw[..., None], 0, 255).astype(np.uint8)
 
-    mask = cv2.GaussianBlur(region, (3, 3), 0).astype(np.float32) / 255.0
-    return (scene.astype(np.float32) * (1 - mask[..., None])
-            + warped.astype(np.float32) * mask[..., None]).astype(np.uint8)
+    # True coverage of the hull, for the same reason as warp_into: a blurred
+    # binary fill is a staircase with a soft edge, not an antialiased one.
+    alpha = coverage(cv2.convexHull(np.array(mesh, np.float32)).reshape(-1, 2), (h, w))
+    return (scene.astype(np.float32) * (1 - alpha[..., None])
+            + warped.astype(np.float32) * alpha[..., None]).astype(np.uint8)
 
 
 SIDE_NAMES = ("top", "right", "bottom", "left")
@@ -594,6 +692,30 @@ def inner_shadow(mask, depth=INNER_SHADOW_PX, strength=INNER_SHADOW_STRENGTH):
     return 1.0 - strength * (1.0 - ramp)
 
 
+def inner_shadow_soft(alpha, depth=INNER_SHADOW_PX, strength=INNER_SHADOW_STRENGTH):
+    """
+    The same band of shade just inside the boundary, from float coverage.
+
+    The old one took a distance transform of a BINARY mask, which meant the
+    shading ramp itself could only start on whole pixels. That does not show as
+    a visible staircase -- it is a soft six-pixel gradient -- but it does move
+    the measured boundary around by a fraction of a pixel in whole-pixel steps,
+    which is enough to keep an antialiasing check failing on geometry that is
+    already correct. It was the last binary mask left in the composite.
+
+    A box blur of the coverage is smooth by construction. Deep inside the face
+    it averages to one, at the boundary to a half, and outside to nothing, so
+    rescaling the top half of that range gives the same ramp with none of the
+    quantisation.
+    """
+    if depth <= 0 or not alpha.any():
+        return None
+    k = 2 * int(depth) + 1
+    soft = cv2.blur(alpha, (k, k))
+    ramp = np.clip((soft - 0.5) * 2.0, 0.0, 1.0)
+    return 1.0 - strength * (1.0 - ramp)
+
+
 def recolour_edge(scene, mask, hex_colour):
     """
     Paint the canvas edge in the product's own colour, keeping the light on it.
@@ -649,6 +771,97 @@ def recolour_edge(scene, mask, hex_colour):
             + painted.astype(np.float32) * a[..., None]).astype(np.uint8)
 
 
+def side_polys(scene, edge_mask, quad):
+    """
+    The wrapped-edge panels for one face, as polygons sharing the face's edge.
+
+    Thin wrapper so that everything which wants this geometry -- the
+    compositor, verify-junctions, verify-outside -- asks one question and gets
+    one answer. See sides.py for how the outer edge is measured.
+    """
+    return sides.polys(scene, edge_mask, quad, as_built=False)
+
+
+def face_poly(quad, panels):
+    """
+    What the face covers: the quad, grown outward only where nothing meets it.
+
+    On a side with a panel the two shapes share an edge exactly and the face
+    must stop on it -- growing there would put artwork over the wrap. On a bare
+    side there is nothing to meet, the clicked line is good to about a pixel,
+    and the overlap is what stops a hairline of the original photograph showing
+    between artwork and wall.
+    """
+    quad = [np.asarray(p, float) for p in quad]
+    lines = []
+    for i in range(4):
+        a, b = quad[i], quad[(i + 1) % 4]
+        grow = 0.0 if i in panels else float(FAR_SIDE_OVERLAP_PX)
+        n = sides.outward_normal(a, b)
+        lines.append((a + n * grow, b + n * grow))
+    out = []
+    for i in range(4):
+        prev, cur = lines[(i - 1) % 4], lines[i]
+        p = _intersect(prev[0], prev[1], cur[0], cur[1])
+        out.append(list(p) if p else list(quad[i]))
+    return out
+
+
+def paint_side(base, plate, poly, hex_colour):
+    """
+    One wrapped edge, in the product's colour, lit by the scene, inside its own shape.
+
+    The colour substitution is unchanged and still the right idea: replace the
+    hue, keep the luminance, so the strip stays a lit surface instead of
+    becoming a sticker. What changes is where it is allowed to land.
+
+    It used to land wherever a distance transform reached, and a distance
+    transform has no notion of inside: it ramps outward from the mask as
+    readily as inward, so a couple of pixels of wall got tinted too. The canvas
+    rim catches a specular highlight, the keying does not call white pink, so
+    the rim sat outside the mask -- and the outward ramp tinted it. That is the
+    cyan halo, and it is why the band went dark blue further down, where the
+    rim was in shadow rather than blown out.
+
+    Now the alpha IS the polygon's coverage. Outside the polygon it is exactly
+    zero, so nothing beyond the shape can be tinted however close it is; along
+    the shared edge it complements the face's coverage, so the two surfaces
+    meet without either a seam or an overlap.
+    """
+    alpha = coverage(poly, base.shape)
+    sel = alpha > 0.5
+    if not sel.any():
+        return base
+    target = np.array(hex_to_bgr(hex_colour), dtype=np.float32)
+
+    # Luminance from the untouched plate: the face has already been drawn over
+    # part of this neighbourhood, and the light on the wrap is the scene's.
+    grey = cv2.cvtColor(plate, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    mean = float(grey[sel].mean()) or 1.0
+    ratio = np.clip(grey / mean, EDGE_SHADE_CLIP[0], EDGE_SHADE_CLIP[1])
+
+    # Brightened in HSV, so the hue survives being lit.
+    #
+    # Multiplying the BGR triple and clipping looks equivalent and is not: the
+    # channels hit 255 at different ratios, so a saturated colour loses
+    # whichever channel is largest first and slides towards white by way of
+    # something else. The canvas rim carries a specular highlight, its ratio
+    # runs to the top of the clip, and a blue edge painted that way came out
+    # bright cyan -- which is most of what Alan was seeing as a halo, and it
+    # would still have been there after the leak was fixed, just inside the
+    # polygon instead of outside it. Scaling value alone keeps the hue and the
+    # saturation exactly where they were at any brightness.
+    hsv0 = cv2.cvtColor(target.reshape(1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV)[0, 0]
+    hsv = np.empty(plate.shape, np.uint8)
+    hsv[..., 0] = hsv0[0]
+    hsv[..., 1] = hsv0[1]
+    hsv[..., 2] = np.clip(float(hsv0[2]) * ratio, 0, 255).astype(np.uint8)
+    painted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).astype(np.float32)
+
+    return (base.astype(np.float32) * (1 - alpha[..., None])
+            + painted * alpha[..., None]).astype(np.uint8)
+
+
 def load_shading(shading_dir, key):
     path = os.path.join(shading_dir, key + ".png")
     if not os.path.exists(path):
@@ -668,6 +881,62 @@ def fit_long_side(img, long_side):
         return img
     interp = cv2.INTER_AREA if k < 1 else cv2.INTER_LANCZOS4
     return cv2.resize(img, (max(1, round(w * k)), max(1, round(h * k))), interpolation=interp)
+
+
+def compose_scene(scene, info, scene_name, edge, art, shading_dir, edge_hex):
+    """
+    One finished scene, at output resolution.
+
+    The single place a mockup is built. It exists because it did NOT, and three
+    tools each rebuilt the composite from their own reading of this file:
+    verify-edges used the clicked corners and no silhouette, verify-faces used
+    a different set again, and each reported honestly on a picture the renderer
+    never made. Anything that wants to measure a render calls this.
+    """
+    gain = SCENE_SHADING_GAIN.get(scene_name.split("-")[0], 1.0)
+
+    # Composite at the size it is written at, not at the size the photograph
+    # happens to be. The scene is 1536 across and the output is 2000, so every
+    # boundary used to be computed on the coarser grid and then magnified by
+    # 1.3 -- which takes a one-pixel step and makes it a one-and-a-third-pixel
+    # step, softened by the upscaler into the identical repeating ramp along
+    # every sloping edge. Upscaling the photograph first costs nothing (it is
+    # one LANCZOS4 resize either way) and gives every edge a third more grid to
+    # land on before anything is quantised.
+    plate = fit_long_side(scene, OUT_LONG_SIDE)
+    k = plate.shape[1] / float(scene.shape[1])
+    composed = plate
+
+    # Geometry is measured in the photograph, where the edge mask and the
+    # clicked corners live, and scaled up once.
+    def up(points):
+        return [[p[0] * k, p[1] * k] for p in points]
+
+    for q in info["quads"]:
+        sh = load_shading(shading_dir, f"{scene_name}__{q['name']}")
+        if q.get("mesh"):
+            # A poster curls; a canvas does not. The scene's own light is let
+            # through harder here on purpose -- the highlight running along the
+            # curl is the thing that says "paper", and at the canvas weighting
+            # it flattens out to nothing.
+            composed = warp_mesh(art, composed, up(q["mesh"]), sh,
+                                 shade_gain=POSTER_SHADING_GAIN)
+        else:
+            quad = quad_of(q)
+            panels = side_polys(scene, edge, quad)
+            alpha = coverage(up(face_poly(quad, panels)), composed.shape)
+            composed = warp_into(art, composed, up(quad), sh,
+                                 shade_gain=gain, alpha=alpha)
+
+    # After the faces, not before: the face is the larger surface and the wrap
+    # sits in front of it, so the panel is painted last and its own coverage
+    # decides the join.
+    for q in info["quads"]:
+        if q.get("mesh"):
+            continue
+        for poly in side_polys(scene, edge, quad_of(q)).values():
+            composed = paint_side(composed, plate, up(poly), edge_hex)
+    return composed
 
 
 def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, force, log,
@@ -737,26 +1006,7 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
                 log(msg)
                 if seen_aspects is not None:
                     seen_aspects.add(key)
-        composed = scene
-        for q in info["quads"]:
-            sh = load_shading(shading_dir, f"{scene_name}__{q['name']}")
-            if q.get("mesh"):
-                # A poster curls; a canvas does not. The scene's own light is
-                # let through harder here on purpose -- the highlight running
-                # along the curl is the thing that says "paper", and at the
-                # canvas weighting it flattens out to nothing.
-                composed = warp_mesh(art, composed, q["mesh"], sh,
-                                     shade_gain=POSTER_SHADING_GAIN)
-            else:
-                sil = face_silhouette(scene, quad_of(q), edge)
-                composed = warp_into(art, composed, quad_of(q), sh,
-                                     silhouette=sil, shade_gain=gain)
-        # After the faces, not before: the warp writes over the face and would
-        # otherwise take a freshly painted edge with it wherever the quad and
-        # the strip overlap by a pixel.
-        if edge is not None and edge.any():
-            composed = recolour_edge(composed, edge, edge_hex)
-        out = fit_long_side(composed, OUT_LONG_SIDE)
+        out = compose_scene(scene, info, scene_name, edge, art, shading_dir, edge_hex)
         path = os.path.join(dest, name + ".jpg")
         cv2.imwrite(path, out, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         written.append((name, out.shape[1], out.shape[0], len(info["quads"])))
