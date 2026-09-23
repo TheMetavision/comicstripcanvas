@@ -119,14 +119,18 @@ def main():
         edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
 
         art = ARTWORKS["landscape" if info["orientation"] == "landscape" else "portrait"]
-        # render.py's composite, by calling it. Rebuilding it here is what let
-        # this file report zero on renders that had a black rim on every side.
-        composed = R.compose_scene(scene, info, name, edge, art,
-                                   os.path.join(HERE, "shading"), "#f9dd3c")
-        k = composed.shape[1] / float(scene.shape[1])
-        scene = R.fit_long_side(scene, R.OUT_LONG_SIDE)
-        if edge is not None:
-            edge = R.fit_long_side(edge, R.OUT_LONG_SIDE)
+        composed = scene
+        for q in info["quads"]:
+            sh = R.load_shading(os.path.join(HERE, "shading"), f"{name}__{q['name']}")
+            if q.get("mesh"):
+                composed = R.warp_mesh(art, composed, q["mesh"], sh,
+                                       shade_gain=R.POSTER_SHADING_GAIN)
+            else:
+                sil = R.face_silhouette(scene, R.quad_of(q), edge)
+                composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
+                                       shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
+        if edge is not None and edge.any():
+            composed = R.recolour_edge(composed, edge, "#f9dd3c")
 
         lab_after = cv2.cvtColor(composed, cv2.COLOR_BGR2LAB).astype(np.float32)
         # A survivor has to be COLOURED. At low lightness Lab's a/b spread
@@ -139,9 +143,8 @@ def main():
         for q in info["quads"]:
             # The quad, not the face mask. See the note at the top.
             region = np.zeros(scene.shape[:2], np.uint8)
-            scaled_quad = [[p[0] * k, p[1] * k] for p in R.quad_of(q)]
-            cv2.fillConvexPoly(region, np.array(scaled_quad, np.int32), 255)
-            face = R.face_silhouette(scene, scaled_quad, edge)
+            cv2.fillConvexPoly(region, np.array(R.quad_of(q), np.int32), 255)
+            face = R.face_silhouette(scene, R.quad_of(q), edge)
             sig = signature(scene, face)
             # The outermost row is a deliberate blend. warp_into feathers its
             # mask by 3x3 so the warp's own jaggies do not show against a hard
@@ -185,12 +188,20 @@ def main():
         scene = cv2.imread(os.path.join(SCENES, name + ".png"))
         edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
         art = ARTWORKS["landscape" if info["orientation"] == "landscape" else "portrait"]
-        composed = R.compose_scene(scene, info, name, edge, art,
-                                   os.path.join(HERE, "shading"), "#f9dd3c")
-        k = composed.shape[1] / float(scene.shape[1])
-        scene = R.fit_long_side(scene, R.OUT_LONG_SIDE)
+        composed = scene
         for q in info["quads"]:
-            quad = [[p[0] * k, p[1] * k] for p in R.quad_of(q)]
+            sh = R.load_shading(os.path.join(HERE, "shading"), f"{name}__{q['name']}")
+            if q.get("mesh"):
+                composed = R.warp_mesh(art, composed, q["mesh"], sh,
+                                       shade_gain=R.POSTER_SHADING_GAIN)
+            else:
+                sil = R.face_silhouette(scene, R.quad_of(q), edge)
+                composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
+                                       shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
+        if edge is not None and edge.any():
+            composed = R.recolour_edge(composed, edge, "#f9dd3c")
+        for q in info["quads"]:
+            quad = R.quad_of(q)
             sig = SB.content_signature(scene, quad)
             for i, side in enumerate(SB.SIDES):
                 rows = SB.walk_side(scene, composed, quad[i], quad[(i + 1) % 4], sig=sig)

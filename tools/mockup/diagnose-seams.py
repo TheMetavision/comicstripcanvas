@@ -55,19 +55,21 @@ def stand_in(w, h):
 
 
 def composite(scene, info, name, edge, shading_dir):
-    """
-    The scene with grey stand-ins, through render.py's own compositor.
-
-    Not a local reconstruction of it. This file used to rebuild the composite
-    itself, and so did both verifiers, and each was a slightly different
-    picture from the one that gets written -- which is how three checks came to
-    pass on a renderer that was drawing a black rim round every canvas.
-
-    Returned at OUTPUT resolution, because that is where the render is now
-    assembled; callers scale their geometry to match.
-    """
+    """The scene with grey stand-ins placed exactly as render.py would."""
     art = stand_in(1500, 1000) if info["orientation"] == "landscape" else stand_in(1000, 1500)
-    return R.compose_scene(scene, info, name, edge, art, shading_dir, "#f9dd3c")
+    composed = scene
+    for q in info["quads"]:
+        sh = R.load_shading(shading_dir, f"{name}__{q['name']}")
+        if q.get("mesh"):
+            composed = R.warp_mesh(art, composed, q["mesh"], sh,
+                                   shade_gain=R.POSTER_SHADING_GAIN)
+        else:
+            sil = R.face_silhouette(scene, R.quad_of(q), edge)
+            composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
+                                   shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
+    if edge is not None and edge.any():
+        composed = R.recolour_edge(composed, edge, "#f9dd3c")
+    return composed
 
 
 def cut_crop(name, orientation, quad, side_index, out_dir, label):
@@ -117,15 +119,11 @@ def main():
         scene = cv2.imread(os.path.join(args.scenes, name + ".png"))
         edge = cv2.imread(os.path.join(args.edges, name + ".png"), cv2.IMREAD_GRAYSCALE)
         composed = composite(scene, info, name, edge, args.shading)
-        # The composite is at output size now, so the plate and the geometry
-        # have to be brought to the same place before anything is measured.
-        k = composed.shape[1] / float(scene.shape[1])
-        scene = R.fit_long_side(scene, R.OUT_LONG_SIDE)
 
         print("")
         print(f"  {name}")
         for q in info["quads"]:
-            quad = [[p[0] * k, p[1] * k] for p in R.quad_of(q)]
+            quad = R.quad_of(q)
             nud = R.nudge_of(q)
             extra = f"   nudge {dict(zip(SB.SIDES, nud))}" if any(nud) else ""
             print(f"    {q['name']}{extra}")
