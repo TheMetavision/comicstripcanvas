@@ -55,6 +55,7 @@ except ImportError:
 # the batch and by anyone checking a single product's answer, so it lives in its
 # own module rather than halfway down this one.
 from edge_colour import prominent_colour, hex_to_bgr  # noqa: E402
+import rect_aspect  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -149,30 +150,46 @@ def quad_aspect(corners):
     return w / h if h else 0.0
 
 
-def aspect_warning(scene_name, quad_name, corners, art_w, art_h,
+def aspect_warning(scene_name, quad_name, corners, art_w, art_h, image_size,
                    tolerance=ASPECT_TOLERANCE):
     """
     Say so when the artwork will not fit the face without distorting.
 
-    warp_into maps the whole artwork rectangle onto the whole quad, so a face
-    whose shape differs from the artwork's is filled by STRETCHING it. Nothing
-    fails, nothing is uncovered, and the output looks fine until you notice the
-    proportions are wrong -- which is how a 32% stretch on the portrait poster
-    survived a test run and a review of nine images.
+    Judged on the rectangle's TRUE proportions, not the quad's proportions in
+    the image. Those are the same thing only for a canvas square to the camera,
+    and none of these are: a quad's image shape is mostly its angle, so an
+    earlier version flagged faces for perspective and called it shape.
 
-    Returns a sentence, or None when the two shapes agree.
+    Both numbers are reported, with the focal length the estimate implies, so
+    the estimate can be sanity-checked rather than taken on trust -- it rests on
+    assuming square pixels and a centred principal point, and it is worth being
+    able to see when it has produced something silly.
+
+    Where the estimate cannot be trusted -- a nearly fronto-parallel face
+    carries too little perspective to invert, and one pixel of corner jitter
+    then moves the answer by tens of percent -- nothing is flagged and the
+    reason is printed instead. A warning that fires on noise trains people to
+    ignore warnings.
     """
     want = art_w / art_h if art_h else 0.0
-    got = quad_aspect(corners)
-    if not want or not got:
+    est = rect_aspect.estimate(corners, image_size)
+    img = est["image"]
+    if not want or not img:
         return None
-    ratio = got / want
-    off = abs(ratio - 1.0)
+
+    head = (f"  ASPECT  {scene_name} / {quad_name}: image {img:.3f}:1")
+    if est["aspect"] is None:
+        return (f"{head}, true aspect NOT ESTIMATED -- {est['note']}."
+                f"  Artwork is {want:.3f}:1; cannot say whether that fits.")
+
+    true = est["aspect"]
+    off = abs(true / want - 1.0)
+    detail = (f"{head}, true {true:.3f}:1 (f~{est['focal']:.0f}px"
+              f", +/-{est['spread'] * 100:.0f}% under 1px jitter), artwork {want:.3f}:1")
     if off <= tolerance:
         return None
-    verb = "squashed" if ratio < 1 else "stretched"
-    return (f"  ASPECT  {scene_name} / {quad_name}: face is {got:.3f}:1, "
-            f"artwork is {want:.3f}:1 — {verb} {off * 100:.0f}%")
+    verb = "squashed" if true < want else "stretched"
+    return f"{detail} -- {verb} {off * 100:.0f}%"
 
 
 def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0):
@@ -522,7 +539,8 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         edge = cv2.imread(os.path.join(edges_dir, scene_name + ".png"), cv2.IMREAD_GRAYSCALE)
         gain = SCENE_SHADING_GAIN.get(name, 1.0)
         for q in info["quads"]:
-            msg = aspect_warning(scene_name, q["name"], quad_of(q), aw, ah)
+            msg = aspect_warning(scene_name, q["name"], quad_of(q), aw, ah,
+                                 (scene.shape[1], scene.shape[0]))
             if not msg:
                 continue
             warned.append(msg)
@@ -621,7 +639,7 @@ def main():
         affected = sum(1 for r in results if r.get("aspectWarnings"))
         print(f"  {len(seen_aspects)} face/orientation pair(s) do not match the artwork's shape, "
               f"across {affected} of {len(results)} product(s).")
-        print("  Each one is being stretched to fit — see the ASPECT lines above.")
+        print("  Each one is being stretched to fit -- see the ASPECT lines above.")
     return 0
 
 
