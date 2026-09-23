@@ -144,14 +144,16 @@ EDGE_BAND = 95
 # anything beyond a pixel or two inside is face, whatever colour it happens to
 # be.
 #
-# This was 18, which is invisible on a portrait canvas and a band on a landscape
-# one. Portrait canvases show their wrapped edge at the SIDES, where 18px of
+# Zero, now that refine-corners has put the boundary where the photograph says
+# it is. It was 2 while the corners were clicked values that might be a pixel or
+# two out, and before that 18, which is invisible on a portrait canvas and a
+# band on a landscape one. Portrait canvases show their wrapped edge at the SIDES, where 18px of
 # over-reach is lost against a 600px-tall face; landscape canvases show it top
 # and bottom, where the same 18px is a visible stripe across a 430px one. The
 # mask claimed those stripes, the face mask lost them, the artwork never covered
 # them, and the edge recolour painted them carrying the placeholder's own
 # luminance -- which is what the bands across the Mad Max landscapes were.
-EDGE_INSIDE_MARGIN = 2
+EDGE_INSIDE_MARGIN = 0
 # Strips smaller than this are speckle.
 EDGE_MIN_AREA = 400
 # Dilations outward, to cover the antialiased outer rows. See the note below.
@@ -185,7 +187,7 @@ def edge_mask(img, quads, is_poster):
     near = np.zeros((h, w), np.uint8)
     deep = np.zeros((h, w), np.uint8)
     for q in quads:
-        pts = np.array(q["corners"], np.int32)
+        pts = np.array(q.get("cornersRefined") or q["corners"], np.int32)
         cv2.polylines(near, [pts], True, 255, EDGE_BAND)
         cv2.fillConvexPoly(deep, pts, 255)
     deep = cv2.erode(deep, np.ones((EDGE_INSIDE_MARGIN * 2 + 1,) * 2, np.uint8))

@@ -6,3 +6,4 @@ shading/
 upload-backup-*.json
 __pycache__/
 scenes.stretched-*.json
+scenes.preRefine-*.json

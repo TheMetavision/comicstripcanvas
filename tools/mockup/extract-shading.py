@@ -136,8 +136,9 @@ def main():
             print(f"  {scene}: cannot read the scene")
             continue
         for q in info["quads"]:
-            size = quad_size(q["corners"])
-            face = unwarp(img, q["corners"], size)
+            corners = q.get("cornersRefined") or q["corners"]
+            size = quad_size(corners)
+            face = unwarp(img, corners, size)
             if source is not None:
                 # The source is flat art, so it only needs resizing to the face
                 # rectangle -- it was never in the scene's perspective.

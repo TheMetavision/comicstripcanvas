@@ -68,15 +68,17 @@ SURVIVOR_MIN_SAT = 60
 # Three deliberate allowances stack up at the boundary, and the test has to
 # start beyond all of them or it fails the pipeline for doing what it was told:
 #
-#     2px   the edge mask may reach this far inside the clicked quad
-#     1px   FACE_INSET, so the artwork stops short of its own boundary
-#     1px   the 3x3 feather on the warp mask, which is part artwork part scene
+#     0px   the edge mask, now that refine-corners puts the boundary where the
+#           photograph says it is, stops at it rather than crossing
+#     0px   FACE_INSET, for the same reason -- the artwork runs to the boundary
+#     2px   EDGE_CROSSFADE_PX, where the recoloured edge fades over the artwork
 #     ----
-#     4px   and one more, so the limit is not also the measurement
+#     2px   and one more, so the limit is not also the measurement
 #
-# Checked rather than assumed: with the edge mask clipped to 2px, every
-# remaining hit sat between 3.0 and 4.0px from the quad edge and none deeper.
-QUAD_MARGIN = 5
+# This was 5 when those allowances were 2 + 1 + 1. They shrank, so it shrinks:
+# a margin left generous after the thing it was allowing for went away is a
+# test quietly checking less than it says it does.
+QUAD_MARGIN = 3
 
 
 def signature(scene, face):

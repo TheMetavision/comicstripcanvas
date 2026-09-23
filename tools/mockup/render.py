@@ -72,6 +72,10 @@ JPEG_QUALITY = 92
 # enough for a real highlight, tight enough that a blown one does not turn the
 # edge white.
 EDGE_SHADE_CLIP = (0.45, 1.65)
+# How far the recoloured edge fades out over the artwork beside it, and how
+# far it stays solid first so the warp's feathered row is covered.
+EDGE_CROSSFADE_PX = 2.0
+EDGE_CORE_PX = 1
 
 # How far a face's shape may differ from the artwork's before it is worth
 # saying. Three percent is about where a stretch stops being deniable on a
@@ -81,7 +85,13 @@ ASPECT_TOLERANCE = 0.03
 
 # ── seating the artwork in the scene ───────────────────────────────────────
 # How far inside its own boundary the artwork stops.
-FACE_INSET = 1
+#
+# Zero, now that the corners are refined onto the real boundary. It was 1px to
+# cover a click being a pixel or two out, and a pixel of deliberate shortfall
+# plus a pixel of edge-mask allowance plus a feather is three pixels of nobody's
+# artwork -- which is exactly the thin line of original scene that survived
+# between the print and the canvas edge. The two layers now meet, and overlap.
+FACE_INSET = 0
 # The band of shade just inside the face boundary, and how dark it goes.
 INNER_SHADOW_PX = 6
 INNER_SHADOW_STRENGTH = 0.18
@@ -319,6 +329,16 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
             + warped.astype(np.float32) * mask[..., None]).astype(np.uint8)
 
 
+def quad_of(q):
+    """The refined boundary when there is one, the clicked one otherwise.
+
+    refine-corners.py writes cornersRefined and never touches corners, so this
+    is the only place that decides which is authoritative -- and a scenes.json
+    that has not been refined still works, with the clicked values.
+    """
+    return q.get("cornersRefined") or q["corners"]
+
+
 def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET):
     """
     Where the artwork is allowed to land: the clicked quad, minus the edge.
@@ -409,9 +429,26 @@ def recolour_edge(scene, mask, hex_colour):
 
     painted = np.clip(target[None, None, :] * ratio[..., None], 0, 255).astype(np.uint8)
 
-    # Feathered by a pixel so the strip meets the wall and the face cleanly;
-    # the mask came from a colour key and its border is a shade ragged.
-    a = cv2.GaussianBlur(mask, (3, 3), 0).astype(np.float32) / 255.0
+    # Crossed over the artwork rather than stopped against it.
+    #
+    # Two layers that each stop at the same line do not meet: the artwork's own
+    # antialiasing and the mask's ragged colour-keyed border leave a pixel or
+    # two where neither is fully opaque, and what shows through is the scene.
+    # So the recolour stays solid across the whole strip and fades out over a
+    # couple of pixels INTO the face, where there is artwork underneath to fade
+    # into. The overlap is what removes the seam; stopping short is what made it.
+    # Solid for a pixel past the mask, THEN the fade.
+    #
+    # The warp's own mask is feathered 3x3, so the outermost row of the face is
+    # about half artwork and half scene. A ramp that starts at full only on the
+    # mask itself reaches that row at alpha 0.5, which leaves a quarter of the
+    # original pink showing -- 99 pixels of it down the studio landscape
+    # canvases, all of them exactly 1.0px inside the boundary. Carrying the
+    # solid colour one pixel over covers the feather; the fade then happens
+    # beyond it, where the artwork underneath is fully opaque.
+    core = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=EDGE_CORE_PX)
+    d = cv2.distanceTransform((core == 0).astype(np.uint8), cv2.DIST_L2, 3)
+    a = np.clip(1.0 - d / float(EDGE_CROSSFADE_PX), 0.0, 1.0).astype(np.float32)
     return (scene.astype(np.float32) * (1 - a[..., None])
             + painted.astype(np.float32) * a[..., None]).astype(np.uint8)
 
@@ -485,7 +522,7 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         edge = cv2.imread(os.path.join(edges_dir, scene_name + ".png"), cv2.IMREAD_GRAYSCALE)
         gain = SCENE_SHADING_GAIN.get(name, 1.0)
         for q in info["quads"]:
-            msg = aspect_warning(scene_name, q["name"], q["corners"], aw, ah)
+            msg = aspect_warning(scene_name, q["name"], quad_of(q), aw, ah)
             if not msg:
                 continue
             warned.append(msg)
@@ -509,8 +546,8 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
                 composed = warp_mesh(art, composed, q["mesh"], sh,
                                      shade_gain=POSTER_SHADING_GAIN)
             else:
-                sil = face_silhouette(scene, q["corners"], edge)
-                composed = warp_into(art, composed, q["corners"], sh,
+                sil = face_silhouette(scene, quad_of(q), edge)
+                composed = warp_into(art, composed, quad_of(q), sh,
                                      silhouette=sil, shade_gain=gain)
         # After the faces, not before: the warp writes over the face and would
         # otherwise take a freshly painted edge with it wherever the quad and
