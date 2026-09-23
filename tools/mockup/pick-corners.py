@@ -18,8 +18,20 @@ turned away from camera the artwork's top-left may not be the highest point on
 screen. Getting this wrong produces artwork that is mirrored or rotated, which
 is obvious on a photograph and easy to miss on an abstract print.
 
+CORNERS MAY BE OUTSIDE THE PHOTOGRAPH. The display is padded with grey all the
+way round, so a canvas that runs off the frame -- poster-portrait falls off the
+bottom -- still has somewhere to click for the corners that are not on the
+image. What gets stored is the scene's own coordinate, negative or past its
+width and height as needed, and the status bar says how many of the current
+quad's corners are off-frame so it reads as a decision rather than a slip.
+
+Nothing downstream needs to care: a perspective transform is defined by its
+four points wherever they fall, and only ever samples the artwork inside the
+quad. Guessing an off-frame corner instead would throw out the whole
+perspective, which is the thing this avoids.
+
 Controls
-    left click      drop a corner
+    left click      drop a corner (inside the photograph or out in the grey)
     u               undo the last corner
     r               restart this quad
     n               accept the quad and move to the next
@@ -199,27 +211,66 @@ def write_edge_masks(scenes_dir, scenes, out_dir, log=print):
     return written
 
 
+# ── the padded canvas ──────────────────────────────────────────────────────
+#
+# How much empty room to put around the scene, as a fraction of its size.
+#
+# A canvas is not always wholly inside the photograph. poster-portrait runs off
+# the bottom of the frame, so two of its corners are simply not on the image --
+# and a corner you cannot click is a corner you have to guess, which puts the
+# whole perspective out. Padding the DISPLAY gives somewhere to click; the
+# coordinates stored stay in the scene's own frame and go negative, or past its
+# width and height, exactly as they should.
+#
+# warpPerspective is perfectly happy with that: the transform is defined by the
+# four points wherever they fall, and it only ever samples the artwork inside
+# the quad. Nothing downstream needs to know the corner was off-frame.
+PAD_FRACTION = 0.25
+# The dead area around the scene. Mid grey rather than black, so the edge of the
+# photograph is obvious against it and a corner clicked in the void is clearly
+# in the void.
+PAD_COLOUR = (60, 60, 60)
+
+
 class Picker:
     """One scene's worth of clicking, with zoom and pan."""
 
     def __init__(self, img, scene, quad_names):
-        self.img = img
         self.scene = scene
         self.quad_names = quad_names
-        self.h, self.w = img.shape[:2]
+        self.ih, self.iw = img.shape[:2]           # the scene's own size
+        self.pad_x = int(round(self.iw * PAD_FRACTION))
+        self.pad_y = int(round(self.ih * PAD_FRACTION))
+        self.img = cv2.copyMakeBorder(
+            img, self.pad_y, self.pad_y, self.pad_x, self.pad_x,
+            cv2.BORDER_CONSTANT, value=PAD_COLOUR)
+        self.h, self.w = self.img.shape[:2]        # the padded size
         self.quads = []
         self.pts = []
         self.zoom = 1.0
         self.ox, self.oy = 0.0, 0.0
         self.panning = False
         self.pan_from = None
+        self.fitted = False
 
-    # ---- coordinate mapping between the window and the image ----
+    def fit(self, win_w, win_h):
+        """Start with the whole padded canvas in view, once."""
+        self.zoom = min(win_w / self.w, win_h / self.h)
+        self.ox = (self.w - win_w / self.zoom) / 2
+        self.oy = (self.h - win_h / self.zoom) / 2
+        self.fitted = True
+
+    # ---- coordinate mapping between the window and the SCENE ----
+    # Everything outside these two methods -- stored corners, what goes into
+    # scenes.json, what render.py reads -- is in the scene's frame. The padding
+    # exists only between here and the screen.
     def to_image(self, x, y):
-        return (self.ox + x / self.zoom, self.oy + y / self.zoom)
+        return (self.ox + x / self.zoom - self.pad_x,
+                self.oy + y / self.zoom - self.pad_y)
 
     def to_window(self, x, y):
-        return (int((x - self.ox) * self.zoom), int((y - self.oy) * self.zoom))
+        return (int((x + self.pad_x - self.ox) * self.zoom),
+                int((y + self.pad_y - self.oy) * self.zoom))
 
     def clamp(self, win_w, win_h):
         vis_w, vis_h = win_w / self.zoom, win_h / self.zoom
@@ -247,11 +298,20 @@ class Picker:
             self.ox, self.oy = ix - x / self.zoom, iy - y / self.zoom
 
     def draw(self, win_w, win_h):
+        if not self.fitted:
+            self.fit(win_w, win_h)
         self.clamp(win_w, win_h)
         vis_w, vis_h = int(win_w / self.zoom), int(win_h / self.zoom)
         x0, y0 = int(self.ox), int(self.oy)
         crop = self.img[y0:y0 + vis_h, x0:x0 + vis_w]
         view = cv2.resize(crop, (win_w, win_h), interpolation=cv2.INTER_NEAREST)
+
+        # Where the photograph actually ends. Without this the padding reads as
+        # more scene, and a corner placed just outside the frame looks like a
+        # corner placed just inside it.
+        tl = self.to_window(0, 0)
+        br = self.to_window(self.iw - 1, self.ih - 1)
+        cv2.rectangle(view, tl, br, (110, 110, 110), 1, cv2.LINE_AA)
 
         def mark(pts, colour, closed):
             wp = [self.to_window(px, py) for px, py in pts]
@@ -269,7 +329,10 @@ class Picker:
         nth = len(self.quads)
         name = self.quad_names[nth] if nth < len(self.quad_names) else "-"
         nxt = CORNER_LABELS[len(self.pts)] if len(self.pts) < 4 else "press n to accept"
-        bar = f"{self.scene}  quad {nth + 1}/{len(self.quad_names)} ({name})  next: {nxt}  zoom {self.zoom:.1f}x"
+        off = sum(1 for px, py in self.pts
+                  if px < 0 or py < 0 or px > self.iw - 1 or py > self.ih - 1)
+        bar = (f"{self.scene}  quad {nth + 1}/{len(self.quad_names)} ({name})  next: {nxt}"
+               f"  zoom {self.zoom:.1f}x" + (f"  [{off} corner(s) off-frame]" if off else ""))
         cv2.rectangle(view, (0, 0), (win_w, 26), (0, 0, 0), -1)
         cv2.putText(view, bar, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(view, "click corners TL TR BR BL | u undo | r restart | n next | s save | q quit",
