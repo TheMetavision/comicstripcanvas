@@ -3,6 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { DPI, MIME, dataUri, memoryNote, printGeometry } from './scene.mjs';
+/* Shared with the browser builder, so preview and print composite the border
+   by one method rather than two that are meant to agree. Dependency-free and
+   DOM-free on purpose: it bundles into the function without dragging any of
+   src/ along with it. */
+import { BORDER_MASKS, replaceBackgroundWithBorder } from '../../../src/scripts/cover-border.js';
 
 /**
  * Scene rendering, shared by the two things that rasterise a builder scene:
@@ -143,8 +148,31 @@ export async function prepareScene({ sceneSvg, recipe, origin, imageFor }) {
   }
   svg = svg.replace(/\{\{IMAGE:([^}]+)\}\}/g, (_, pid) => panelData.get(pid) || '');
 
+  /* ---- the border, composited from masks ---- */
+  /* Before the token sweep below, because this removes the {{BACKGROUND}}
+     element outright rather than filling in its href. The flattened asset is
+     not fetched at all for a cover any more: the colours the customer chose
+     are applied HERE, to masks. They used to be recorded in the recipe and
+     then silently dropped, because the sweep resolved {{BACKGROUND}} to the
+     original, un-recoloured file -- so a border colour could be picked in the
+     builder, appear in the preview, and never reach the print. */
+  if (svg.includes('{{BACKGROUND}}')) {
+    const masks = {};
+    for (const key of ['line', 'regionB']) {
+      const rel = BORDER_MASKS[key];
+      const buf = await fetchBinary(origin + rel, `border ${key} for ${template}`);
+      masks[key] = dataUri(buf, rel);
+    }
+    const res = replaceBackgroundWithBorder(svg, {
+      colours: recipe && recipe.background ? recipe.background.artColours : null,
+      masks,
+    });
+    if (!res.replaced) throw new Error('scene carries {{BACKGROUND}} but no background <image> to replace');
+    svg = res.svg;
+  }
+
   /* ---- template artwork, full resolution, off the deployed site ---- */
-  for (const kind of ['OVERLAY', 'BACKGROUND', 'LOGO']) {
+  for (const kind of ['OVERLAY', 'LOGO']) {
     const token = new RegExp(`\\{\\{${kind}\\}\\}`, 'g');
     if (!token.test(svg)) continue;
     const rel = ASSET_PATH[kind](template);

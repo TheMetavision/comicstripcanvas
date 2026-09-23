@@ -26,6 +26,10 @@
  */
 
 import { PRICES } from '../data/products';
+import {
+  borderMarkup, resolvePalette, coverPaletteList, COVER_PALETTE_LABELS,
+  BORDER_MASKS_SCREEN,
+} from './cover-border.js';
 /* The arithmetic behind "Link boxes", kept where it can be read and checked --
    see the header of box-link.js for why this one earned a file of its own. */
 import {
@@ -596,13 +600,26 @@ export function initProductBuilder() {
       nodes.bgRect = mk('rect', { x: -ex, y: -ey, width: c.width + 2 * ex, height: c.height + 2 * ey, fill: bg, 'data-role': 'bg-colour' });
       svg.appendChild(nodes.bgRect);
     } else if (T.bg && T.bg.type === 'image') {
-      // stretch the burst over whatever padding and wrap the chosen face needs
-      nodes.bgImg = mk('image', {
-        href: T.bg.href, x: -ex, y: -ey,
-        width: c.width + 2 * ex, height: c.height + 2 * ey, 'data-role': 'background',
+      /* The burst is composited from masks, not recoloured pixel by pixel, and
+         the markup is built by the SAME function the print renderer uses --
+         see scripts/cover-border.js. Parsed rather than hand-built with DOM
+         calls so there is one description of the layering, not two.
+
+         It still stretches over whatever padding and wrap the chosen face
+         needs, because the rects and their masks share one box. */
+      const markup = borderMarkup({
+        x: -ex, y: -ey, width: c.width + 2 * ex, height: c.height + 2 * ey,
+        colours: artColours, masks: BORDER_MASKS_SCREEN,
       });
-      nodes.bgImg.setAttribute('preserveAspectRatio', 'none');
-      svg.appendChild(nodes.bgImg);
+      const parsed = new DOMParser().parseFromString(
+        `<svg xmlns="${SVGNS}">${markup}</svg>`, 'image/svg+xml');
+      nodes.border = document.importNode(parsed.documentElement.firstChild, true);
+      nodes.borderRects = [...nodes.border.querySelectorAll('rect')];
+      svg.appendChild(nodes.border);
+
+      /* exportSVG puts the token back, so the scene that travels to the print
+         renderer still says {{BACKGROUND}} and nothing downstream has to know
+         the preview composited it locally. */
     }
     if (T.page) svg.appendChild(mk('rect', { x: T.page.x, y: T.page.y, width: T.page.w, height: T.page.h, fill: '#fff', stroke: '#000', 'stroke-width': 13 }));
 
@@ -725,72 +742,41 @@ export function initProductBuilder() {
     applyTint(); layoutAllText(); drawGuides();
     nodes.handles = null; drawHandles();   // build() discarded the old layer
   }
-  /* The burst is flat colour + black line work, so each region can be remapped
-     exactly rather than hue-shifted. Classify once, then repaint cheaply. */
-  let artMap = null;   // {w,h,idx:Uint8Array,base:[[r,g,b],...],src}
-  function classifyArt(img) {
-    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    if (!g) return;                       // no canvas: leave the artwork as drawn
-    g.drawImage(img, 0, 0);
-    const d = g.getImageData(0, 0, c.width, c.height), px = d.data, n = c.width * c.height;
-    const bins = {};
-    for (let i = 0; i < n; i += 7) {
-      const j = i * 4, k = ((px[j] >> 5) << 10) | ((px[j + 1] >> 5) << 5) | (px[j + 2] >> 5);
-      bins[k] = (bins[k] || 0) + 1;
-    }
-    const base = Object.entries(bins).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => {
-      k = +k; return [((k >> 10) & 7) * 32 + 16, ((k >> 5) & 7) * 32 + 16, (k & 7) * 32 + 16];
-    });
-    base.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));   // darkest first = line work
-    const idx = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const j = i * 4; let best = 0, bd = 1e9;
-      for (let b = 0; b < base.length; b++) {
-        const dr = px[j] - base[b][0], dg = px[j + 1] - base[b][1], db = px[j + 2] - base[b][2];
-        const dist = dr * dr + dg * dg + db * db;
-        if (dist < bd) { bd = dist; best = b; }
-      }
-      idx[i] = best;
-    }
-    // mean x of each region, so the pickers can be labelled by position
-    const sx = new Float64Array(base.length), sn = new Float64Array(base.length);
-    for (let i = 0; i < n; i++) { sx[idx[i]] += i % c.width; sn[idx[i]]++; }
-    const meanX = base.map((_, b) => (sn[b] ? sx[b] / sn[b] / c.width : 0.5));
-    const order = base.map((_, b) => b).filter((b) => sn[b] / n > 0.15).sort((a, b) => meanX[a] - meanX[b]);
-    const labels = base.map(() => 'Line work');
-    if (order.length === 2) { labels[order[0]] = 'Left'; labels[order[1]] = 'Right'; }
-    else order.forEach((b, i) => { labels[b] = 'Area ' + (i + 1); });
-    artMap = { w: c.width, h: c.height, idx, base, data: d, labels };
-    artColours = base.map((cc) => '#' + cc.map((v) => v.toString(16).padStart(2, '0')).join(''));
-  }
-  let artColours = [];
+  /* ---------- the border: composited, not recoloured ---------- */
+  /*
+   * This used to classify every pixel of the burst into one of three bins and
+   * repaint them, which could not help but destroy the antialiasing: a pixel
+   * on the edge of a stroke is a BLEND of the stroke and the fill, and once
+   * the fill changes there is no right value to give it. It also never reached
+   * print -- exportSVG rewrites the background to {{BACKGROUND}} and the
+   * renderer resolved that to the original file, so a colour chosen here was
+   * shown in the preview and then quietly dropped on the way to the press.
+   *
+   * Now the colours are just three rect fills over three masks, and changing
+   * one is setting an attribute. Same markup as the renderer builds.
+   */
+  let artColours = coverPaletteList();
+
   function repaintArt() {
-    if (!artMap || !nodes.bgImg) return;
-    const { w, h, idx, data } = artMap, px = data.data;
-    const rgb = artColours.map((hx) => [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)]);
-    for (let i = 0; i < w * h; i++) {
-      const c = rgb[idx[i]], j = i * 4;
-      px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2];
-    }
-    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-    cv.getContext('2d').putImageData(data, 0, 0);
-    nodes.bgImg.setAttribute('href', cv.toDataURL('image/png'));
+    if (!nodes.borderRects) return;
+    const p = resolvePalette(artColours);
+    const fills = [p.regionA, p.regionB, p.line];
+    nodes.borderRects.forEach((r, i) => { if (fills[i]) r.setAttribute('fill', fills[i]); });
   }
+
   function applyTint() {
     if (!(T.bg && T.bg.type === 'image')) return;
-    if (artMap) { repaintArt(); buildArtPickers(); return; }
-    const img = new Image();
-    img.onload = () => { classifyArt(img); buildArtPickers(); };
-    img.src = T.bg.href;
+    repaintArt();
+    buildArtPickers();
   }
+
   function buildArtPickers() {
     const box = $('artColours'); if (!box) return;
     box.innerHTML = '';
     artColours.forEach((c, i) => {
       const ci = document.createElement('input'); ci.type = 'color'; ci.value = c;
       ci.className = 'b-colour';
-      ci.title = (artMap && artMap.labels ? artMap.labels[i] : 'Area ' + i);
+      ci.title = COVER_PALETTE_LABELS[i] || ('Area ' + i);
       const cap = document.createElement('span');
       cap.className = 'b-cap';
       cap.textContent = ci.title; box.appendChild(cap);
@@ -3337,13 +3323,14 @@ export function initProductBuilder() {
     n.hit.classList.remove('filled'); syncPanel(); refresh();
   });
   $('resetTint').addEventListener('click', () => {
-    if (artMap) {
-      artColours = artMap.base.map((c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join(''));
-      repaintArt(); buildArtPickers();
-    }
+    /* Back to the colours the artwork was drawn in. Those used to be whatever
+       the classifier had inferred from the pixels; now they are stated once in
+       cover-border.js and every reader of them agrees by construction. */
+    artColours = coverPaletteList();
+    repaintArt(); buildArtPickers();
   });
   $('sampleArt').addEventListener('click', () => {
-    const s = state.get(T.panels[0].id); if (!s || !artMap) return;
+    const s = state.get(T.panels[0].id); if (!s || !nodes.borderRects) return;
     /* Sample what is actually shown, which on a cover set to Cutout is the
        cut-out PNG rather than the photograph behind it. */
     const el = (variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el;
@@ -3581,6 +3568,23 @@ export function initProductBuilder() {
     // artifact, so it must not travel into the exported print document.
     [...c.attributes].forEach((a) => { if (a.name.startsWith('data-astro-cid-')) c.removeAttribute(a.name); });
     c.querySelectorAll('.hit,[data-role="guide"],[data-role="slot-flag"],[data-role="handles"]').forEach((el) => el.remove());
+
+    /* The border is composited locally for the preview, but the SCENE must
+       still say {{BACKGROUND}}: that token is the contract with the print
+       renderer, which composites it again at full resolution from the same
+       masks and the artColours in the recipe. Exporting the preview's own
+       group would ship screen-size masks to the press and freeze the colours
+       into the document, which is the bug this branch exists to remove. */
+    const border = c.querySelector('g[data-role="border"]');
+    if (border) {
+      const r = border.querySelector('rect');
+      const im = document.createElementNS(SVGNS, 'image');
+      for (const a of ['x', 'y', 'width', 'height']) im.setAttribute(a, r.getAttribute(a));
+      im.setAttribute('data-role', 'background');
+      im.setAttribute('preserveAspectRatio', 'none');
+      im.setAttribute('href', '{{BACKGROUND}}');
+      border.parentNode.replaceChild(im, border);
+    }
     c.querySelectorAll('image').forEach((im) => {
       const role = im.getAttribute('data-role');
       const token = role === 'panel' ? `{{IMAGE:${im.getAttribute('data-panel')}}}`

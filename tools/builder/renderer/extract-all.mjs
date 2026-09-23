@@ -86,7 +86,10 @@ for (const slug of PAGES) {
      `document`, `location` and friends off the global scope, and calls
      initProductBuilder() as soon as it loads. The ?page query gives each page
      its own module instance instead of reusing the first one from cache. */
-  for (const k of ['window', 'document', 'Image', 'FileReader', 'XMLSerializer',
+  /* DOMParser joined this list when the cover border started compositing from
+     masks: the builder parses the markup that the print renderer also emits,
+     rather than keeping a second DOM-built copy of the same layering. */
+  for (const k of ['window', 'document', 'Image', 'FileReader', 'XMLSerializer', 'DOMParser',
     'Event', 'MouseEvent', 'CustomEvent', 'localStorage', 'getComputedStyle',
     'URLSearchParams', 'Blob', 'File', 'FormData', 'location', 'navigator', 'URL',
     'HTMLElement', 'SVGElement', 'Element', 'Node'])

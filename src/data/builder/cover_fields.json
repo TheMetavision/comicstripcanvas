@@ -124,7 +124,7 @@
   "fontSize": 791.7,
   "rot": 15.67,
   "colours": [
-   "#368975"
+   "@regionA"
   ],
   "wrap": false,
   "twoTone": false

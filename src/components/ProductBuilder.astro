@@ -17,6 +17,7 @@
 import PATHS from '../data/builder/paths.json';
 import COVER from '../data/builder/cover_fields.json';
 import CAPBOX from '../data/builder/cover_boxes.json';
+import { COVER_PALETTE } from '../scripts/cover-border.js';
 import BOXES from '../data/builder/icon_boxes.json';
 import METRICS from '../data/builder/metrics.json';
 
@@ -60,10 +61,37 @@ if (mode === 'customer' && (typeof personalisationFee !== 'number' || !Number.is
   );
 }
 
-const builderData = JSON.stringify({
+/**
+ * The cover's vector furniture is drawn in the border's own colours -- the
+ * title, and the two caption-box fills. Those used to be three more copies of
+ * #368975 and #FCE534 sitting in JSON, which is three chances for two of them
+ * to be right: restyle the border and the caption keeps the old green, and
+ * nothing anywhere says why.
+ *
+ * So the data files now name the colour they want -- "@regionA", "@regionB" --
+ * and it is resolved here from the same COVER_PALETTE the compositor uses.
+ * An unknown token is left exactly as it is rather than silently blanked, so a
+ * typo shows up as a visible "@regoinA" instead of an invisible black fill.
+ */
+const PALETTE_TOKENS: Record<string, string> = {
+  '@line': COVER_PALETTE.line,
+  '@regionA': COVER_PALETTE.regionA,
+  '@regionB': COVER_PALETTE.regionB,
+};
+const resolvePaletteTokens = (v: any): any => {
+  if (typeof v === 'string') return PALETTE_TOKENS[v] ?? v;
+  if (Array.isArray(v)) return v.map(resolvePaletteTokens);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolvePaletteTokens(x)]));
+  }
+  return v;
+};
+
+const builderData = JSON.stringify(resolvePaletteTokens({
   PATHS, COVER, CAPBOX, BOXES, METRICS,
+  COVER_PALETTE,
   PERSONALISATION_FEE: personalisationFee ?? 0,
-});
+}));
 ---
 
 <div

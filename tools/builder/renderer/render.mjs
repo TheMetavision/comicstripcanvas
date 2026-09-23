@@ -73,6 +73,8 @@ const templateAsset = (kind) => {
   return fs.existsSync(file) ? file : null;
 };
 
+import { replaceBackgroundWithBorder } from '../../../src/scripts/cover-border.js';
+
 /* ------------------------------------------------------------ substitute --- */
 const missing = [];
 let svg = recipe.svg;
@@ -91,7 +93,28 @@ svg = svg.replace(/\{\{IMAGE:([^}]+)\}\}/g, (_, id) => {
   return dataUri(file);
 });
 
-for (const kind of ['OVERLAY', 'BACKGROUND', 'LOGO']) {
+/* The border is composited from masks, by the same module the deployed
+   renderer uses -- prove.mjs is only worth anything if both sides of its
+   comparison are the real thing. Done before the sweep because it removes the
+   {{BACKGROUND}} element rather than filling its href in. */
+if (svg.includes('{{BACKGROUND}}')) {
+  const names = PREVIEW
+    ? { line: 'cover-border/line.png', regionB: 'cover-border/region-b.png' }
+    : { line: 'cover-border/line-print.png', regionB: 'cover-border/region-b-print.png' };
+  const masks = {};
+  for (const [key, rel] of Object.entries(names)) {
+    const file = path.join(ASSETS, rel);
+    if (!fs.existsSync(file)) { missing.push(`border ${key}`); }
+    else masks[key] = dataUri(file);
+  }
+  const res = replaceBackgroundWithBorder(svg, {
+    colours: recipe.background ? recipe.background.artColours : null,
+    masks,
+  });
+  svg = res.svg;
+}
+
+for (const kind of ['OVERLAY', 'LOGO']) {
   const token = new RegExp(`\\{\\{${kind}\\}\\}`, 'g');
   if (!token.test(svg)) continue;
   const file = templateAsset(kind);

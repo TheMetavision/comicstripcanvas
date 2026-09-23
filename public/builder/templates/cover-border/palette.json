@@ -1,0 +1,14 @@
+{
+  "source": "public/builder/templates/comic-cover/background-print.png",
+  "generatedBy": "tools/builder/extract-border-layers.mjs",
+  "size": [
+    4200,
+    5800
+  ],
+  "supersample": 4,
+  "palette": {
+    "line": "#040707",
+    "regionA": "#368975",
+    "regionB": "#fce534"
+  }
+}
