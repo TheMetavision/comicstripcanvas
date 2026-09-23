@@ -134,6 +134,13 @@ POSTER_SHADING_GAIN = 2.1
 
 # scene file -> output name. Two scenes per output name, one per orientation.
 OUTPUTS = ["room", "studio", "poster"]
+# Only the poster ships. The room and studio scenes are archived at the tag
+# archive/mockup-room-studio-attempt and will be replaced by generated imagery.
+DEFAULT_KINDS = ["poster"]
+# The shape each poster scene was signed off carrying -- the catalogue's own
+# 2:3 and 3:2, not the face's measured proportions. See aspect_fits.
+SHIP_REFERENCE_ASPECT = {"portrait": 2.0 / 3.0, "landscape": 3.0 / 2.0}
+SHIP_ASPECT_TOLERANCE = 0.15
 
 
 def groq(query, params=None):
@@ -670,8 +677,38 @@ def fit_long_side(img, long_side):
     return cv2.resize(img, (max(1, round(w * k)), max(1, round(h * k))), interpolation=interp)
 
 
+def aspect_fits(aw, ah, orientation, tolerance=SHIP_ASPECT_TOLERANCE):
+    """
+    Whether this artwork is the shape the poster scenes were signed off carrying.
+
+    The poster faces do not match the catalogue exactly and never will -- the
+    portrait one is about nine percent off and the landscape one twenty -- and
+    that difference has been looked at and accepted, so it is not re-argued
+    here. What IS worth stopping for is an icon that is not the catalogue shape
+    at all: a square badge, or something cropped to a panel. Stretched into a
+    poster scene built for 2:3 it comes out visibly wrong, and one wrong mockup
+    on a product page costs more than one missing mockup does.
+
+    So the comparison is against the shape the scene was accepted carrying --
+    2:3 and 3:2 -- rather than against the face's own proportions, which would
+    reject the very renders Alan signed off. A square icon is fifty percent off
+    portrait and thirty-three off landscape, so it fails this without needing a
+    rule of its own.
+    """
+    if not ah or not aw:
+        return False, "artwork has no size"
+    art = aw / float(ah)
+    ref = SHIP_REFERENCE_ASPECT[orientation]
+    off = abs(art / ref - 1.0)
+    if off <= tolerance:
+        return True, ""
+    return False, (f"artwork is {art:.3f}:1, which is {off * 100:.0f}% off the "
+                   f"{ref:.3f}:1 the {orientation} poster scene is built for "
+                   f"(limit {tolerance * 100:.0f}%)")
+
+
 def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, force, log,
-                   seen_aspects=None):
+                   seen_aspects=None, kinds=None):
     slug = product["slug"]
     ref = product.get("listing") or product.get("first")
     url = asset_url(ref)
@@ -679,8 +716,9 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         log(f"  {slug}: no usable image on the product")
         return None
 
+    kinds = list(kinds or OUTPUTS)
     dest = os.path.join(out_dir, slug)
-    done = [os.path.join(dest, n + ".jpg") for n in OUTPUTS]
+    done = [os.path.join(dest, n + ".jpg") for n in kinds]
     if not force and all(os.path.exists(p) for p in done):
         log(f"  {slug}: already done, skipping")
         return {"slug": slug, "skipped": True}
@@ -691,6 +729,11 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         return None
     ah, aw = art.shape[:2]
     orientation = "landscape" if aw >= ah else "portrait"
+
+    fits, why_not = aspect_fits(aw, ah, orientation)
+    if not fits:
+        log(f"  {slug}: SKIPPED -- {why_not}")
+        return {"slug": slug, "skippedAspect": why_not, "artwork": [aw, ah]}
 
     # The override wins whenever it is set. "Prominent" is a judgement, and the
     # scorer will sometimes land on a caption box rather than the thing the
@@ -705,7 +748,7 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
     os.makedirs(dest, exist_ok=True)
     written = []
     warned = []
-    for name in OUTPUTS:
+    for name in kinds:
         scene_name = f"{name}-{orientation}"
         info = corners.get(scene_name)
         if not info:
@@ -769,7 +812,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--slug", action="append", help="one product; repeatable")
     ap.add_argument("--category")
-    ap.add_argument("--scenes", default=DEFAULT_SCENES)
+    # --scenes names WHICH scenes to render, not where they live. The directory
+    # moved to --scenes-dir when the poster became the only shipped output and
+    # "--scenes poster" had to mean something. The other tools in this folder
+    # still take a directory as --scenes, because none of them choose between
+    # scenes; passing a path here fails loudly rather than rendering the wrong
+    # set, which is the failure worth designing for.
+    ap.add_argument("--scenes", default=",".join(DEFAULT_KINDS),
+                    help=f"which scenes to render, comma separated, from {'/'.join(OUTPUTS)} "
+                         f"(default {','.join(DEFAULT_KINDS)})")
+    ap.add_argument("--scenes-dir", default=DEFAULT_SCENES,
+                    help="where the scene photographs live")
     ap.add_argument("--corners", default=DEFAULT_CORNERS)
     ap.add_argument("--shading", default=DEFAULT_SHADING)
     ap.add_argument("--edges", default=DEFAULT_EDGES)
@@ -781,12 +834,20 @@ def main():
                          "and stop warning about it")
     args = ap.parse_args()
 
+    kinds = [k.strip() for k in args.scenes.split(",") if k.strip()]
+    unknown = [k for k in kinds if k not in OUTPUTS]
+    if unknown:
+        sys.exit(f"--scenes takes scene names from {', '.join(OUTPUTS)}, not {unknown[0]!r}.\n"
+                 f"(The scene DIRECTORY is --scenes-dir.)")
+    if not kinds:
+        sys.exit("--scenes cannot be empty.")
+
     with open(args.corners, encoding="utf-8") as f:
         corners = json.load(f)
-    scene_guard.require(args.scenes, corners)
+    scene_guard.require(args.scenes_dir, corners)
 
     if args.accept_aspects:
-        return record_accepted_aspects(args.scenes, args.corners, corners)
+        return record_accepted_aspects(args.scenes_dir, args.corners, corners)
 
     if not args.slug and not args.category:
         sys.exit("Give --slug or --category.")
@@ -806,7 +867,7 @@ def main():
             which = "listing" if p.get("listing") else ("images[0]" if p.get("first") else "NONE")
             dest = os.path.join(args.out, p["slug"])
             state = "would skip (done)" if all(
-                os.path.exists(os.path.join(dest, n + ".jpg")) for n in OUTPUTS) and not args.force else "would render"
+                os.path.exists(os.path.join(dest, n + ".jpg")) for n in kinds) and not args.force else "would render"
             ov = (p.get("edgeColour") or "").strip()
             print(f"     {p['slug']:34s} {which:10s} {state}"
                   + (f"  edge {ov} (override)" if ov else ""))
@@ -815,15 +876,35 @@ def main():
         print("\n  dry run: nothing written")
         return 0
 
+    print(f"  rendering {', '.join(kinds)}")
     results = []
     seen_aspects = set()
     for p in products:
-        r = render_product(p, args.scenes, corners, args.shading, args.edges, args.out, args.force, print,
-                           seen_aspects=seen_aspects)
+        r = render_product(p, args.scenes_dir, corners, args.shading, args.edges, args.out,
+                           args.force, print, seen_aspects=seen_aspects, kinds=kinds)
         if r:
             results.append(r)
     made = sum(len(r.get("written", [])) for r in results)
-    print(f"\n  {made} file(s) written for {len(results)} product(s) into {args.out}")
+    rendered = [r for r in results if r.get("written")]
+    skipped_shape = [r for r in results if r.get("skippedAspect")]
+    skipped_done = [r for r in results if r.get("skipped")]
+    failed = len(products) - len(results)
+
+    print(f"\n  {made} file(s) written for {len(rendered)} product(s) into {args.out}")
+    by_orientation = {}
+    for r in rendered:
+        by_orientation[r["orientation"]] = by_orientation.get(r["orientation"], 0) + 1
+    if by_orientation:
+        print("  " + ", ".join(f"{n} {o}" for o, n in sorted(by_orientation.items())))
+    if skipped_done:
+        print(f"  {len(skipped_done)} already had output and were left alone (use --force)")
+    if failed:
+        print(f"  {failed} product(s) produced nothing -- no usable image, or it would not decode")
+    if skipped_shape:
+        print(f"\n  {len(skipped_shape)} SKIPPED on shape, rather than stretched into a scene "
+              f"that does not fit them:")
+        for r in skipped_shape:
+            print(f"    {r['slug']:38s} {r['skippedAspect']}")
 
     # Said again at the end, because the per-scene lines are printed once and a
     # long batch will have scrolled them away hours before it finishes.

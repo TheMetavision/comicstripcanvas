@@ -26,6 +26,7 @@ either side of this boundary, and does it touch the boundary. The pink count is
 kept, because a pink survivor and a rim are different faults and the fix for
 one is not the fix for the other.
 """
+import argparse
 import importlib.util
 import json
 import os
@@ -56,11 +57,25 @@ def stand_in(w, h):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--scenes", default="poster",
+                    help="which scenes to check, comma separated (default poster, "
+                         "the only one that ships)")
+    args = ap.parse_args()
+    kinds = [k.strip() for k in args.scenes.split(",") if k.strip()]
+
     scenes = json.load(open(os.path.join(HERE, "scenes.json"), encoding="utf-8"))
+    # Guarded across the WHOLE file even when only some scenes are checked: a
+    # scene swapped under corners nobody is looking at today is still a stale
+    # scenes.json tomorrow.
     scene_guard.require(SCENES, scenes)
 
-    pink_total, rim_total = 0, 0
+    pink_total, rim_total, looked = 0, 0, 0
     for name, info in scenes.items():
+        if name.split("-")[0] not in kinds:
+            continue
+        looked += 1
         scene = cv2.imread(os.path.join(SCENES, name + ".png"))
         edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
         art = stand_in(1500, 1000) if info["orientation"] == "landscape" else stand_in(1000, 1500)
@@ -108,6 +123,7 @@ def main():
                     print(f"      {q['name']:22s} {side:7s} {SB.describe(kind, start, depth)}")
 
     print("")
+    print(f"  {looked} scene(s) checked: {', '.join(kinds)}")
     print(f"  TOTAL pink {pink_total}   rim px {rim_total}")
     return 0 if pink_total == 0 and rim_total == 0 else 1
 

@@ -41,6 +41,7 @@ run against a real product's render and mean anything.
 Measured inside the QUAD, pulled in by a couple of pixels for the inset and the
 feather -- and deliberately NOT by the edge mask, for the reason above.
 """
+import argparse
 import importlib.util
 import json
 import os
@@ -99,8 +100,20 @@ def signature(scene, face):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scenes", default="poster",
+                    help="which scenes to check, comma separated (default poster, "
+                         "the only one that ships)")
+    args = ap.parse_args()
+    kinds = [k.strip() for k in args.scenes.split(",") if k.strip()]
+
     corners = json.load(open(os.path.join(HERE, "scenes.json"), encoding="utf-8"))
+    # Guarded across the WHOLE file even when only some scenes are checked: a
+    # scene swapped under corners nobody is looking at today is still a stale
+    # scenes.json tomorrow.
     scene_guard.require(SCENES, corners)
+    corners = {n: i for n, i in corners.items() if n.split("-")[0] in kinds}
+    print(f"  checking {len(corners)} scene(s): {', '.join(kinds)}")
     # Flat grey with a faint grid: nothing in it is saturated, so nothing in it
     # can be mistaken for the placeholder.
     # At the aspects the catalogue actually has. An earlier version used one
