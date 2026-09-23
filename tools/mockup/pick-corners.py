@@ -87,6 +87,24 @@ SCENES = {
 
 CORNER_LABELS = ["top-left", "top-right", "bottom-right", "bottom-left"]
 
+# ── the mesh, for things that are not flat ─────────────────────────────────
+#
+# Four corners define a plane, and a poster lying on a table is not one: it
+# lifts at the corners and bows along the edges. Forcing that through a
+# perspective transform straightens it, which runs the artwork off the curl on
+# one side and leaves the scene's own placeholder showing on the other.
+#
+# Twelve points instead -- each corner, then two more a third and two thirds
+# along the edge leaving it -- and render.py bends the artwork through a
+# thin-plate spline. THE ORDER IS THE CONTRACT with mesh_source_points() over
+# there; clicked in any other order the poster comes out as a bow tie.
+MESH_LABELS = []
+for _a, _b in (("top-left", "top-right"), ("top-right", "bottom-right"),
+               ("bottom-right", "bottom-left"), ("bottom-left", "top-left")):
+    MESH_LABELS += [_a, f"1/3 of the way to {_b}", f"2/3 of the way to {_b}"]
+# Which corners of the twelve are the corners.
+MESH_CORNER_INDICES = (0, 3, 6, 9)
+
 
 # ── the canvas edges ───────────────────────────────────────────────────────
 #
@@ -125,8 +143,18 @@ EDGE_BAND = 95
 EDGE_INSIDE_MARGIN = 18
 # Strips smaller than this are speckle.
 EDGE_MIN_AREA = 400
-# Dilations outward, to cover the antialiased outer row. See the note below.
-EDGE_GROW = 2
+# Dilations outward, to cover the antialiased outer rows. See the note below.
+EDGE_GROW = 3
+# A looser pink, used only to claim pixels that already touch the mask. Wider
+# than the keying range because a blended pixel has lost saturation to whatever
+# it is blending with.
+EDGE_CLAIM_LO = (145, 45, 40)
+EDGE_CLAIM_HI = (180, 255, 255)
+# How far the claim may creep. Enough for a blend band, not enough to cross a
+# gap into something else pink.
+EDGE_CLAIM_STEPS = 10
+# Width of the ring just outside the face that may be claimed as edge.
+EDGE_RIM = 13
 
 
 def edge_mask(img, quads, is_poster):
@@ -181,13 +209,54 @@ def edge_mask(img, quads, is_poster):
     # through a one-pixel bridge.
     out = cv2.bitwise_and(out, cv2.bitwise_not(deep))
     out = cv2.morphologyEx(out, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    # One dilation outward. The outermost row of the strip is antialiased
-    # against whatever is behind it, so it is neither flat nor purely pink and
-    # the key stops just short of it -- leaving a one-pixel pink line down a
-    # recoloured edge, which is the one artefact on this whole canvas that the
-    # eye goes straight to. Over-reaching a pixel onto the wall is invisible by
-    # comparison.
-    return cv2.dilate(out, np.ones((3, 3), np.uint8), iterations=EDGE_GROW)
+
+    # ── reaching the last few pixels ──────────────────────────────────────
+    #
+    # The outermost rows of the strip are antialiased against whatever is
+    # behind them, so they are neither flat nor purely pink and the key stops
+    # short. One dilation was not enough: 1-3px of pink survived down both
+    # studio canvases, which is the one artefact on the whole picture that the
+    # eye goes straight to.
+    #
+    # Two passes, in this order:
+    #
+    #   grow    a fixed dilation, which covers the fully-blended rows
+    #   claim   then ANY pink-hued pixel touching the mask, flatness ignored.
+    #           Flatness was only ever there to tell a solid edge from a
+    #           picture; a pixel already touching known edge does not need that
+    #           test, and it is exactly the test the blended rows fail.
+    #
+    # The claim is iterated so it creeps along the whole blend rather than one
+    # row of it, and bounded so it cannot walk off into a pink sky.
+    out = cv2.dilate(out, np.ones((3, 3), np.uint8), iterations=EDGE_GROW)
+
+    # Seed from the face boundary as well as from the flat-pink strips. A
+    # canvas has edges on more than one side and they need not be connected in
+    # the picture: the thin top edge of the studio canvases touches no side
+    # strip, so a claim that could only creep outward from the sides never
+    # reached it and left pink along the top. Pink immediately outside the face
+    # is canvas edge by construction, whatever it is or is not joined to.
+    rim = np.zeros((h, w), np.uint8)
+    for q in quads:
+        cv2.polylines(rim, [np.array(q["corners"], np.int32)], True, 255, EDGE_RIM)
+    rim = cv2.bitwise_and(rim, cv2.bitwise_not(deep))
+
+    hue_only = cv2.inRange(hsv, EDGE_CLAIM_LO, EDGE_CLAIM_HI)
+    # Close single-pixel gaps first. At the top corners of the studio canvases
+    # the blend band is broken by a pixel or two of something else, and an
+    # unbridged claim stopped there and left 14 pink pixels behind -- few, but
+    # at the corner of a canvas, which is where a mockup is looked at.
+    hue_only = cv2.morphologyEx(hue_only, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    hue_only = cv2.bitwise_and(hue_only, cv2.bitwise_not(deep))
+    out = cv2.bitwise_or(out, cv2.bitwise_and(rim, hue_only))
+    for _ in range(EDGE_CLAIM_STEPS):
+        grown = cv2.dilate(out, np.ones((3, 3), np.uint8))
+        claimed = cv2.bitwise_and(grown, hue_only)
+        merged = cv2.bitwise_or(out, claimed)
+        if np.array_equal(merged, out):
+            break
+        out = merged
+    return out
 
 
 def write_edge_masks(scenes_dir, scenes, out_dir, log=print):
@@ -235,9 +304,11 @@ PAD_COLOUR = (60, 60, 60)
 class Picker:
     """One scene's worth of clicking, with zoom and pan."""
 
-    def __init__(self, img, scene, quad_names):
+    def __init__(self, img, scene, quad_names, n_points=4):
         self.scene = scene
         self.quad_names = quad_names
+        self.n_points = n_points
+        self.labels = MESH_LABELS if n_points == 12 else CORNER_LABELS
         self.ih, self.iw = img.shape[:2]           # the scene's own size
         self.pad_x = int(round(self.iw * PAD_FRACTION))
         self.pad_y = int(round(self.ih * PAD_FRACTION))
@@ -287,7 +358,7 @@ class Picker:
 
     def on_mouse(self, event, x, y, flags, _):
         if event == cv2.EVENT_LBUTTONDOWN:
-            if len(self.pts) < 4:
+            if len(self.pts) < self.n_points:
                 self.pts.append(list(self.to_image(x, y)))
         elif event == cv2.EVENT_MBUTTONDOWN:
             self.panning, self.pan_from = True, (x, y)
@@ -354,11 +425,11 @@ class Picker:
 
         for q in self.quads:
             mark(q["corners"], (120, 220, 120), True)
-        mark(self.pts, (60, 200, 255), len(self.pts) == 4)
+        mark(self.pts, (60, 200, 255), len(self.pts) == self.n_points)
 
         nth = len(self.quads)
         name = self.quad_names[nth] if nth < len(self.quad_names) else "-"
-        nxt = CORNER_LABELS[len(self.pts)] if len(self.pts) < 4 else "press n to accept"
+        nxt = self.labels[len(self.pts)] if len(self.pts) < self.n_points else "press n to accept"
         off = sum(1 for px, py in self.pts
                   if px < 0 or py < 0 or px > self.iw - 1 or py > self.ih - 1)
         bar = (f"{self.scene}  quad {nth + 1}/{len(self.quad_names)} ({name})  next: {nxt}"
@@ -370,12 +441,12 @@ class Picker:
         return view
 
 
-def pick_scene(path, scene, quad_names):
+def pick_scene(path, scene, quad_names, n_points=4):
     img = cv2.imread(path)
     if img is None:
         print(f"  cannot read {path}")
         return None
-    p = Picker(img, scene, quad_names)
+    p = Picker(img, scene, quad_names, n_points)
     win = "pick corners"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, 1400, 900)
@@ -391,10 +462,20 @@ def pick_scene(path, scene, quad_names):
         elif k == ord('r'):
             p.pts = []
         elif k == ord('n'):
-            if len(p.pts) != 4:
-                print("  four corners first")
+            if len(p.pts) != p.n_points:
+                print(f"  {p.n_points} points first")
                 continue
-            p.quads.append({"name": quad_names[len(p.quads)], "corners": [[round(a, 1), round(b, 1)] for a, b in p.pts]})
+            pts = [[round(a, 1), round(b, 1)] for a, b in p.pts]
+            entry = {"name": quad_names[len(p.quads)]}
+            if p.n_points == 12:
+                # The quad stays, taken from the four corners among the twelve:
+                # the edge mask and the silhouette are both built from it, and
+                # neither wants the curl.
+                entry["corners"] = [pts[i] for i in MESH_CORNER_INDICES]
+                entry["mesh"] = pts
+            else:
+                entry["corners"] = pts
+            p.quads.append(entry)
             p.pts = []
             if len(p.quads) == len(quad_names):
                 cv2.destroyWindow(win)
@@ -415,6 +496,8 @@ def main():
     ap.add_argument("--scenes", default=DEFAULT_SCENES)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--scene", action="append", help="just this scene; repeatable")
+    ap.add_argument("--mesh", action="store_true",
+                    help="12 points instead of 4 on the poster scenes, for the curl")
     ap.add_argument("--edges-only", action="store_true",
                     help="skip the clicking and just rebuild the edge masks from the saved quads")
     args = ap.parse_args()
