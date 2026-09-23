@@ -55,6 +55,7 @@ spec.loader.exec_module(R)
 cv2 = R.cv2
 sys.path.insert(0, HERE)
 import scene_guard  # noqa: E402
+import seam_band as SB  # noqa: E402
 
 SCENES = R.DEFAULT_SCENES
 # Only clusters this saturated count as signature: the grey stand-in artwork
@@ -175,7 +176,44 @@ def main():
                 print(f"        e.g. at {[(int(xs[i]), int(ys[i])) for i in bad]}")
 
     print(f"\n  TOTAL {total}")
-    return 0 if total == 0 else 1
+    # The count above says whether placeholder survives ANYWHERE inside the
+    # face. It cannot say whether there is a RIM: a rim is one or two pixels at
+    # a boundary and a face is half a million pixels, so two px of black round
+    # every side is 0.0% of the face and rounds away to a pass. That is exactly
+    # what happened -- this reported zero on scenes that visibly had a black
+    # rim drawn round them. So every boundary is now walked directly, per side,
+    # through the same shared seam_band question verify-edges asks.
+    rim = 0
+    for name, info in corners.items():
+        scene = cv2.imread(os.path.join(SCENES, name + ".png"))
+        edge = cv2.imread(os.path.join(HERE, "edges", name + ".png"), cv2.IMREAD_GRAYSCALE)
+        art = ARTWORKS["landscape" if info["orientation"] == "landscape" else "portrait"]
+        composed = scene
+        for q in info["quads"]:
+            sh = R.load_shading(os.path.join(HERE, "shading"), f"{name}__{q['name']}")
+            if q.get("mesh"):
+                composed = R.warp_mesh(art, composed, q["mesh"], sh,
+                                       shade_gain=R.POSTER_SHADING_GAIN)
+            else:
+                sil = R.face_silhouette(scene, R.quad_of(q), edge)
+                composed = R.warp_into(art, composed, R.quad_of(q), sh, silhouette=sil,
+                                       shade_gain=R.SCENE_SHADING_GAIN.get(name.split("-")[0], 1.0))
+        if edge is not None and edge.any():
+            composed = R.recolour_edge(composed, edge, "#f9dd3c")
+        for q in info["quads"]:
+            quad = R.quad_of(q)
+            sig = SB.content_signature(scene, quad)
+            for i, side in enumerate(SB.SIDES):
+                rows = SB.walk_side(scene, composed, quad[i], quad[(i + 1) % 4], sig=sig)
+                kind, start, depth = SB.score_side(rows)
+                if depth:
+                    rim += depth
+                    print(f"  {name:20s} {q['name']:22s} {side:7s} "
+                          f"{SB.describe(kind, start, depth)}")
+
+    print("")
+    print(f"  rim pixels at face boundaries: {rim}")
+    return 0 if total == 0 and rim == 0 else 1
 
 
 if __name__ == "__main__":

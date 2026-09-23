@@ -275,7 +275,7 @@ def record_accepted_aspects(scenes_dir, corners_path, corners):
             continue
         for q in info["quads"]:
             before = q.get("acceptedAspect")
-            a = quad_aspect(quad_of(q))
+            a = quad_aspect(quad_of(q, nudged=False))
             q["acceptedAspect"] = round(a, 4)
             n += 1
             was = f"  (was {before:.4f})" if before else ""
@@ -296,15 +296,23 @@ def warp_into(art, scene, corners, shading=None, silhouette=None, shade_gain=1.0
     dst = np.array(corners, dtype=np.float32)
     m = cv2.getPerspectiveTransform(src, dst)
 
+    # REPLICATE, not a constant. Two things land outside the quad and both of
+    # them get composited: the 1px feather on the mask below, and the
+    # FAR_SIDE_OVERLAP_PX growth in face_silhouette. Against a constant black
+    # border those became a black rim drawn round every side of every canvas --
+    # the overlap meant to close a pale hairline painted a darker one instead.
+    # Replicating the artwork's own edge pixel outward makes both harmless: the
+    # overlap carries the colour the artwork ends on, which is what a print
+    # wrapping over an edge looks like anyway.
     warped = cv2.warpPerspective(art, m, (w, h), flags=cv2.INTER_LANCZOS4,
-                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+                                 borderMode=cv2.BORDER_REPLICATE)
 
     if shading is not None:
         # The shading was measured in the face's own rectangle, so it goes
         # through the same transform as the artwork and lands in register.
         sh = cv2.resize(shading, (art.shape[1], art.shape[0]), interpolation=cv2.INTER_LINEAR)
         sh = cv2.warpPerspective(sh, m, (w, h), flags=cv2.INTER_LINEAR,
-                                 borderMode=cv2.BORDER_CONSTANT, borderValue=1.0)
+                                 borderMode=cv2.BORDER_REPLICATE)
         # A rigid canvas can take the scene's lighting harder than a sheet of
         # paper can: its broad gradient is light falling on a flat surface, not
         # the placeholder's own picture leaking through the blur.
@@ -442,14 +450,79 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
             + warped.astype(np.float32) * mask[..., None]).astype(np.uint8)
 
 
-def quad_of(q):
-    """The refined boundary when there is one, the clicked one otherwise.
+SIDE_NAMES = ("top", "right", "bottom", "left")
 
-    refine-corners.py writes cornersRefined and never touches corners, so this
-    is the only place that decides which is authoritative -- and a scenes.json
-    that has not been refined still works, with the clicked values.
+
+def nudge_of(q):
+    """Per-side outward offsets in pixels, as (top, right, bottom, left)."""
+    n = q.get("nudge") or {}
+    return tuple(float(n.get(k) or 0.0) for k in SIDE_NAMES)
+
+
+def _shift_side(a, b, off):
+    """Move the line a->b sideways by `off`, outward for TL TR BR BL order."""
+    a, b = np.array(a, float), np.array(b, float)
+    d = b - a
+    t = d / (np.linalg.norm(d) or 1.0)
+    n = np.array([t[1], -t[0]])
+    return a + n * off, b + n * off
+
+
+def _intersect(p1, p2, p3, p4):
+    """Where line p1p2 meets line p3p4, or None if they are parallel."""
+    x1, y1 = p1; x2, y2 = p2; x3, y3 = p3; x4, y4 = p4
+    den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(den) < 1e-9:
+        return None
+    a = x1 * y2 - y1 * x2
+    b = x3 * y4 - y3 * x4
+    return ((a * (x3 - x4) - (x1 - x2) * b) / den,
+            (a * (y3 - y4) - (y1 - y2) * b) / den)
+
+
+def quad_of(q, nudged=True):
     """
-    return q.get("cornersRefined") or q["corners"]
+    Where this face actually is: refined corners, moved by any per-side nudge.
+
+    Three records, in order of authority, and each exists because the one before
+    it must not be edited to get what the next one gives:
+
+        corners          what Alan clicked. Never written by a tool.
+        cornersRefined   refine-corners.py, snapping a side onto the gradient
+                         that is really there. Never overwrites corners.
+        nudge            a per-side offset in pixels, positive outward, for the
+                         residual a gradient cannot find -- a boundary where the
+                         canvas edge and the wall are the same brightness, and
+                         the strongest edge in the window is not the one that
+                         matters.
+
+    A nudge moves whole SIDES, not corners, and the corners come back as the
+    intersections of the moved sides. Moving corners individually would let a
+    quad stop being a quad: four points pulled outward by different amounts no
+    longer meet at straight edges, and a canvas has straight edges. This way a
+    side can be pushed two pixels out without bending anything.
+
+    Applied here rather than at each call site because "where is this face" has
+    to have ONE answer -- render.py, verify-faces and verify-edges each asking
+    a slightly different question about the same face is how the mesh and the
+    corners came to describe different posters. Pass nudged=False only to ask
+    about the geometry as clicked.
+    """
+    corners = q.get("cornersRefined") or q["corners"]
+    if not nudged:
+        return corners
+    offs = nudge_of(q)
+    if not any(offs):
+        return corners
+
+    lines = [_shift_side(corners[i], corners[(i + 1) % 4], offs[i]) for i in range(4)]
+    out = []
+    for i in range(4):
+        # Corner i is where the side arriving at it meets the side leaving it.
+        prev, cur = lines[(i - 1) % 4], lines[i]
+        p = _intersect(prev[0], prev[1], cur[0], cur[1])
+        out.append(list(p) if p else list(corners[i]))
+    return out
 
 
 def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET,
@@ -645,7 +718,11 @@ def render_product(product, scenes, corners, shading_dir, edges_dir, out_dir, fo
         edge = cv2.imread(os.path.join(edges_dir, scene_name + ".png"), cv2.IMREAD_GRAYSCALE)
         gain = SCENE_SHADING_GAIN.get(name, 1.0)
         for q in info["quads"]:
-            msg = aspect_warning(scene_name, q["name"], quad_of(q), aw, ah,
+            # The clicked geometry, not the nudged face. A nudge is a
+            # two-pixel correction to where the artwork stops, not a claim
+            # about the canvas's shape, and letting it move this number would
+            # make the tripwire fire on its own remedy.
+            msg = aspect_warning(scene_name, q["name"], quad_of(q, nudged=False), aw, ah,
                                  (scene.shape[1], scene.shape[0]),
                                  accepted=q.get("acceptedAspect"))
             if not msg:
