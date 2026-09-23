@@ -60,11 +60,11 @@ const opt = (n, d = null) => {
 };
 const many = (n) => args.reduce((a, v, i) => (v === `--${n}` && args[i + 1] ? [...a, args[i + 1]] : a), []);
 
-const DRY = flag('dry-run');
-const SLUGS = many('slug');
-const CATEGORY = opt('category');
-const LIMIT = opt('limit') === null ? null : Number(opt('limit'));
-const BATCH = opt('batch') === null ? 10 : Number(opt('batch'));
+const DRY_CLI = flag('dry-run');
+const SLUGS_CLI = many('slug');
+const CATEGORY_CLI = opt('category');
+const LIMIT_CLI = opt('limit') === null ? null : Number(opt('limit'));
+const BATCH_CLI = opt('batch') === null ? 10 : Number(opt('batch'));
 
 const PROJECT = 'lwbwahym';
 const DATASET = 'production';
@@ -78,6 +78,11 @@ const MOCKUP_PREFIX = 'mockup-';
 // Differ between a draft and its published document by definition.
 const SYSTEM_FIELDS = new Set(['_id', '_rev', '_createdAt', '_updatedAt']);
 
+// Injectable so the test can watch every request this makes. Nothing here
+// reaches for globalThis.fetch directly.
+let _fetch = (...a) => globalThis.fetch(...a);
+export function setFetch(fn) { _fetch = fn; }
+
 let _token = null;
 const token = () => {
   if (_token) return _token;
@@ -90,17 +95,27 @@ const token = () => {
 const groq = async (query, params = {}) => {
   let url = `https://${PROJECT}.api.sanity.io/${API}/data/query/${DATASET}?query=${encodeURIComponent(query)}`;
   for (const [k, v] of Object.entries(params)) url += `&$${k}=${encodeURIComponent(JSON.stringify(v))}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token()}` } }).then((x) => x.json());
+  const r = await _fetch(url, { headers: { Authorization: `Bearer ${token()}` } }).then((x) => x.json());
   if (r.error) throw new Error(JSON.stringify(r.error));
   return r.result;
 };
 
-const act = async (actions, dryRun = false) => {
+/**
+ * Publish. Reached only when the run is not a dry run.
+ *
+ * It used to take a dryRun argument, and a dry run used it to validate the
+ * batch against the API without applying it. That was a real check -- the
+ * endpoint, the API version and the action shape are only knowable by asking
+ * Sanity -- and it is gone anyway, because a dry run that POSTs to the write
+ * endpoint is one flag away from a dry run that publishes. The check was worth
+ * something; not that.
+ */
+const act = async (actions) => {
   const url = `https://${PROJECT}.api.sanity.io/${ACTIONS_API}/data/actions/${DATASET}`;
-  const r = await fetch(url, {
+  const r = await _fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-    body: JSON.stringify({ actions, dryRun }),
+    body: JSON.stringify({ actions }),
   }).then((x) => x.json());
   if (r.error) throw new Error(JSON.stringify(r.error));
   return r;
@@ -176,7 +191,16 @@ function classify(published, draft) {
 
 export { classify, stripSystem, stable, same, isMockup, SYSTEM_FIELDS, MOCKUP_PREFIX };
 
-const main = async () => {
+export const main = async (o = {}) => {
+  // The CLI values are the defaults; the test drives the same function with
+  // its own, rather than testing a copy of it.
+  const DRY = o.dry ?? DRY_CLI;
+  const SLUGS = o.slugs ?? SLUGS_CLI;
+  const CATEGORY = o.category ?? CATEGORY_CLI;
+  const LIMIT = o.limit ?? LIMIT_CLI;
+  const BATCH = o.batch ?? BATCH_CLI;
+  const BACKUP_DIR = o.backupDir ?? path.join('tools', 'mockup');
+
   if (!SLUGS.length && !CATEGORY) {
     console.error('  give --slug (repeatable) or --category');
     process.exit(1);
@@ -233,7 +257,7 @@ const main = async () => {
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupPath = path.join('tools', 'mockup', `publish-backup-${stamp}.json`);
+  const backupPath = path.join(BACKUP_DIR, `publish-backup-${stamp}.json`);
   // The PUBLISHED documents, as they are before anything is sent. That is what
   // a publish overwrites, so that is the way back.
   fs.writeFileSync(backupPath, JSON.stringify({
@@ -255,22 +279,11 @@ const main = async () => {
 
   if (DRY) {
     if (publishable.length) {
-      // The actions API validates a batch without applying it. Worth doing:
-      // everything else here can be tested offline, but whether the endpoint,
-      // the API version and the action shape are right is only knowable by
-      // asking Sanity, and the alternative is finding out during the real run.
-      const sample = publishable.slice(0, BATCH).map(({ product }) => publishAction(product._id));
-      console.log(`\n  validating ${sample.length} action(s) against the API with dryRun...`);
-      console.log(`    ${JSON.stringify(sample[0])}`);
-      try {
-        await act(sample, true);
-        console.log('    accepted: endpoint, API version and action shape are right');
-      } catch (e) {
-        console.log(`    REJECTED: ${e.message}`);
-        console.log('    the real run would fail the same way -- fix this before publishing');
-      }
+      // Printed, not sent. A dry run makes reads and nothing else.
+      console.log('\n  the actions a real run would send (first of the batch):');
+      console.log(`    ${JSON.stringify(publishAction(publishable[0].product._id))}`);
     }
-    console.log('\n  dry run: nothing published');
+    console.log('\n  dry run: nothing published, no write endpoint contacted');
     return;
   }
   if (!publishable.length) { console.log('\n  nothing to publish'); return; }

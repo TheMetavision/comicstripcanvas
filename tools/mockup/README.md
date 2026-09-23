@@ -90,9 +90,16 @@ live alongside it.
 `_id`, `_rev`, `_createdAt` and `_updatedAt` are ignored; they differ by
 definition. Everything else is compared deeply with key order normalised.
 
-A dry run also sends the first batch to the actions API with `dryRun: true`, so
-the endpoint, API version and action shape are checked against Sanity without
-anything being published.
+**A dry run makes reads and nothing else.** It contacts `/data/query/` and no
+other endpoint; the actions it would send are printed, not sent.
+
+An earlier version POSTed the first batch to the actions endpoint with
+`dryRun: true`, to check the endpoint, API version and action shape against
+Sanity — a real check the rest of the tool cannot do offline. It is gone
+anyway: a dry run that POSTs to the write endpoint is one flag away from a dry
+run that publishes, and the safety of it rested on Sanity honouring a boolean
+in the body. `test-publish-dryrun.mjs` stubs the client and fails if a dry run
+touches any write endpoint, with a negative control proving the check can fail.
 
 Takes `--slug`, `--limit` and `--batch` (default 10). Every run writes
 `publish-backup-<timestamp>.json` with the **published** documents as they were
@@ -105,6 +112,7 @@ Tests:
     python tools/mockup/picker-tests.py
     node   tools/mockup/test-upload-slots.mjs
     node   tools/mockup/test-publish.mjs
+    node   tools/mockup/test-publish-dryrun.mjs
 
 ## Slots
 
