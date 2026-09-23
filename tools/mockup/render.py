@@ -76,13 +76,6 @@ EDGE_SHADE_CLIP = (0.45, 1.65)
 # ── seating the artwork in the scene ───────────────────────────────────────
 # How far inside its own boundary the artwork stops.
 FACE_INSET = 1
-# The ring outside the quad that is sampled for "what the surroundings look
-# like", and how far inside the boundary a pixel may be trimmed as background.
-BG_RING_IN, BG_RING_OUT = 3, 14
-BG_BAND = 5
-BG_CLUSTERS = 6
-# Lab distance within which a boundary pixel counts as surroundings, not print.
-BG_TOLERANCE = 11.0
 # The band of shade just inside the face boundary, and how dark it goes.
 INNER_SHADOW_PX = 6
 INNER_SHADOW_STRENGTH = 0.18
@@ -281,79 +274,43 @@ def warp_mesh(art, scene, mesh, shading=None, shade_gain=1.0, inset=FACE_INSET):
 
 def face_silhouette(scene, corners, edge_mask, inset=FACE_INSET):
     """
-    Where the artwork is actually allowed to land.
+    Where the artwork is allowed to land: the clicked quad, minus the edge.
 
-    The quad says where the canvas face is, and it is never exactly right: a
-    corner clicked a pixel or two out puts warped artwork over the wrapped edge
-    or onto the wall behind, and a hard-edged rectangle of print sitting on top
-    of a brick wall is the single most obvious tell that a mockup is a mockup.
+    Nothing here looks at what colour the scene is, and an earlier version that
+    did was worse than useless. It sampled a ring outside the quad for "what the
+    surroundings look like" and removed anything near the boundary that matched,
+    on the reasoning that a quad is never exactly right and background intrudes.
 
-    So the quad is only the starting point, and the scene is asked what is
-    really there:
+    The reasoning was wrong in one specific way that made it harmful: the thing
+    inside the face is not a neutral print, it is the Cats on Crack placeholder,
+    and parts of it near the boundary match a dark room closely enough to be
+    classified as room. Those pixels were cut OUT of the face mask, so the warped
+    artwork never covered them -- and what showed through the gap was the
+    placeholder itself, in strips down the edge of every room and studio canvas.
+    A test meant to stop the scene showing through was the reason it did.
 
-        inside the quad
+    The corners were put on the face boundary by hand, at zoom, by someone
+    looking at it. That is better evidence than any per-pixel classification of
+    a picture whose contents are unknown, so it is now the only evidence used:
+
+        the quad polygon
         minus the edge mask, so nothing lands on the wrapped edge
-        minus anything near the boundary that matches what is OUTSIDE the quad,
-            which is the wall, or the table, or the room
-        eroded by a pixel, so the artwork stops just short of its own boundary
-            rather than exactly on it
+        inset by a pixel, so the artwork stops just short of its own boundary
 
-    The background test is local and self-calibrating: a ring just outside the
-    quad is sampled for what "not canvas" looks like right there, and only
-    pixels within a few pixels of the boundary are eligible. A wall is a
-    different colour everywhere, and an absolute rule for "brick" would be
-    wrong in the studio and wrong again in the next scene photographed.
+    The edge mask keeps its colour keying, and should: that one separates a
+    solid edge from a picture by FLATNESS, which is a property of the edge
+    rather than a guess about what the picture contains.
     """
     h, w = scene.shape[:2]
-    quad = np.array(corners, np.int32)
-
-    inside = np.zeros((h, w), np.uint8)
-    cv2.fillConvexPoly(inside, quad, 255)
+    face = np.zeros((h, w), np.uint8)
+    cv2.fillConvexPoly(face, np.array(corners, np.int32), 255)
 
     if edge_mask is not None and edge_mask.any():
-        inside = cv2.bitwise_and(inside, cv2.bitwise_not(
-            cv2.dilate(edge_mask, np.ones((3, 3), np.uint8))))
-
-    # What the surroundings look like, here.
-    outer = cv2.dilate(inside, np.ones((2 * BG_RING_OUT + 1,) * 2, np.uint8))
-    inner = cv2.dilate(inside, np.ones((2 * BG_RING_IN + 1,) * 2, np.uint8))
-    ring = cv2.bitwise_and(outer, cv2.bitwise_not(inner))
-    if ring.any():
-        lab = cv2.cvtColor(scene, cv2.COLOR_BGR2LAB).astype(np.float32)
-        samples = lab[ring > 0].reshape(-1, 3)
-        # A handful of representative surround colours rather than one mean:
-        # a brick wall is several, and their average is none of them.
-        k = min(BG_CLUSTERS, len(samples))
-        crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
-        _, _, centres = cv2.kmeans(samples, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
-
-        band = cv2.bitwise_and(inside, cv2.bitwise_not(
-            cv2.erode(inside, np.ones((2 * BG_BAND + 1,) * 2, np.uint8))))
-        ys, xs = np.where(band > 0)
-        if len(xs):
-            px = lab[ys, xs]
-            d = np.min(np.linalg.norm(px[:, None, :] - centres[None, :, :], axis=2), axis=1)
-            cand = np.zeros((h, w), np.uint8)
-            cand[ys[d < BG_TOLERANCE], xs[d < BG_TOLERANCE]] = 255
-
-            # Only what the surroundings can actually reach.
-            #
-            # Background intrudes from the outside; it does not appear in the
-            # middle of a print. Without this the test removed any dark patch
-            # of artwork that happened to resemble a dark room -- 10-12% of the
-            # face on the room and studio scenes, which is not a trim, it is a
-            # crop. Keeping only the components that touch the boundary makes
-            # it an intrusion test rather than a colour-similarity test.
-            edge_ring = cv2.bitwise_and(inside, cv2.bitwise_not(
-                cv2.erode(inside, np.ones((3, 3), np.uint8))))
-            n, labels = cv2.connectedComponents(cand)
-            touching = np.unique(labels[(edge_ring > 0) & (cand > 0)])
-            keep = np.isin(labels, touching[touching > 0])
-            inside[keep] = 0
+        face = cv2.bitwise_and(face, cv2.bitwise_not(edge_mask))
 
     if inset > 0:
-        inside = cv2.erode(inside, np.ones((2 * inset + 1,) * 2, np.uint8))
-    return inside
+        face = cv2.erode(face, np.ones((2 * inset + 1,) * 2, np.uint8))
+    return face
 
 
 def inner_shadow(mask, depth=INNER_SHADOW_PX, strength=INNER_SHADOW_STRENGTH):
