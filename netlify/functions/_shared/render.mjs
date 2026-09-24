@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { DPI, MIME, dataUri, memoryNote, printGeometry } from './scene.mjs';
+import { fetchWithRetry } from './origin.mjs';
 /* Shared with the browser builder, so preview and print composite the border
    by one method rather than two that are meant to agree. Dependency-free and
    DOM-free on purpose: it bundles into the function without dragging any of
@@ -73,7 +74,10 @@ export function readFamilies(b) {
 }
 
 export async function fetchBinary(url, what) {
-  const res = await fetch(url);
+  /* Retried, because this is the site fetching its own assets in the middle of
+     a render that has already cost minutes. A refused connection here used to
+     end the whole job; on 24 September it ended three of them. */
+  const res = await fetchWithRetry(url);
   if (!res.ok) throw new Error(`Could not fetch ${what} (${res.status}) from ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }

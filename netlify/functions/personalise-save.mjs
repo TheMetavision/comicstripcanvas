@@ -13,6 +13,7 @@ import { notifyStyleLimit } from './_shared/limit-email.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artwork-styles.mjs';
 import { moderate, MODERATION_MESSAGE } from './_shared/moderation.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -441,7 +442,7 @@ async function triggerStyle({
 
     // Same shape as the webhook's call to /api/render-personalisation: post to
     // the /api/* alias and let netlify.toml find the -background function.
-    const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+    const origin = internalOrigin(req);
     const res = await fetch(`${origin}/api/style-photo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

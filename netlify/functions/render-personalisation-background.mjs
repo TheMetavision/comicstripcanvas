@@ -3,6 +3,7 @@ import { getStore } from '@netlify/blobs';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { isArtKey } from './_shared/artwork-styles.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Render a paid personalisation to a print file and a proof.
@@ -113,7 +114,7 @@ export default async (req, context) => {
 
 async function render(id, doc, req) {
   const recipe = JSON.parse(doc.recipe || '{}');
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+  const origin = internalOrigin(req);
 
   /* Every panel renders from its STYLED photo. There is deliberately no
      fallback to the raw one: the comic styling is the product, and a print

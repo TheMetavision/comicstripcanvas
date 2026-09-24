@@ -28,11 +28,16 @@
  *   FAILED      the render wrote down why it stopped. It used to die into a log
  *               that comes back empty.
  *
- *   RACE        the render finished AFTER the document was published. The
+ *   UNPUBLISHED the draft holds newer artwork than the published product. The
  *               renderer attaches to the DRAFT and publishing is what promotes
- *               it, so publishing mid-render publishes the previous picture and
- *               strands the new one. Adam & The Ants was six seconds the wrong
- *               side of this.
+ *               it, so until somebody publishes, the pictures are made and not
+ *               live. It arises two ways and the remedy is the same for both:
+ *               a publish that landed mid-render and stranded the new artwork
+ *               (Adam & The Ants, six seconds the wrong side of it), or a
+ *               deliberate re-render of something published long ago. This used
+ *               to be called RACE, which described the first and libelled the
+ *               second -- re-rendering three products on purpose reported three
+ *               races against publishes from eleven days earlier.
  *
  * ── Why the SDK and not the CLI ────────────────────────────────────────────
  *
@@ -88,7 +93,7 @@ export const HELP = `
     INCOMPLETE  saved, never finished rendering — run the render again
     STALE       edited since the last completed render — run the render again
     FAILED      the render recorded why it stopped — read the reason first
-    RACE        finished AFTER the publish — publish again to promote it
+    UNPUBLISHED draft newer than published — publish to promote it
 `;
 
 /**
@@ -262,8 +267,8 @@ export function classify({
     return { mode: 'ok', why: `rendered ${humanMs(gap)} after the publish timestamp, but no draft remains — the artwork landed and went live` };
   }
   return {
-    mode: 'RACE',
-    why: `rendered ${humanMs(gap)} AFTER the publish — artwork is on the draft, not live`
+    mode: 'UNPUBLISHED',
+    why: `the draft holds artwork made ${humanMs(gap)} after the last publish — publish to promote it`
       + (draftsKnown ? '' : ' (drafts could not be read, so this rests on the timestamps alone)'),
   };
 }
@@ -272,7 +277,7 @@ export function classify({
  * The Sanity read token, if there is one.
  *
  * Drafts are not publicly readable, and whether a draft exists is the whole
- * verdict on a RACE. Without it the tool still runs and still finds every
+ * verdict on an UNPUBLISHED. Without it the tool still runs and still finds every
  * INCOMPLETE -- it just says that its race verdicts rest on timestamps.
  */
 export function sanityToken(deps = {}) {
@@ -342,7 +347,7 @@ export async function run(argv, deps = {}) {
   catch (e) { error(`  could not read products from Sanity: ${e.message}`); return 1; }
   progress(`  ${products.size} published product(s)`);
 
-  /* Whether a draft exists is what decides a RACE, and drafts need a token.
+  /* Whether a draft exists is what decides an UNPUBLISHED, and drafts need a token.
      Not having one is a degraded run, not a failed one -- every INCOMPLETE is
      still found -- so it carries on and labels the race verdicts. */
   let draftIds = injectedDraftIds || new Set();
@@ -350,14 +355,14 @@ export async function run(argv, deps = {}) {
   if (!injectedDraftIds) {
     const token = sanityToken();
     if (!token) {
-      error("  no SANITY_WRITE_TOKEN — drafts cannot be read, so RACE verdicts rest on timestamps alone");
+      error("  no SANITY_WRITE_TOKEN — drafts cannot be read, so UNPUBLISHED verdicts rest on timestamps alone");
     } else {
       try {
         draftIds = await fetchDraftIds(token);
         draftsKnown = true;
         progress(`  ${draftIds.size} product(s) with a draft`);
       } catch (e) {
-        error(`  could not read drafts (${e.message}) — RACE verdicts rest on timestamps alone`);
+        error(`  could not read drafts (${e.message}) — UNPUBLISHED verdicts rest on timestamps alone`);
       }
     }
   }
@@ -488,7 +493,7 @@ export async function run(argv, deps = {}) {
   log('      INCOMPLETE: run the render again from the stored scene.');
   log('  FAILED — the render recorded why it stopped. Read the reason first; running');
   log('      it again without fixing the cause just records it a second time.');
-  log('  RACE — the artwork is on the draft. Publish the product again to promote it.');
+  log('  UNPUBLISHED — the artwork is made and sitting on the draft. Publish to promote it.');
   log('  ORPHAN — no product has this id. Do NOT re-render: the document is gone,');
   log('      so the scene blob is stale and the render would recreate a deleted product.');
   log('');

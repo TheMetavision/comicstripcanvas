@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { resumeAllPaused } from './_shared/style-resume.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Restart photos the circuit breaker paused. Hourly (schedule in netlify.toml).
@@ -68,7 +69,7 @@ export default async (req) => {
     return json({ error: 'Not authorised' }, 401);
   }
 
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+  const origin = internalOrigin(req);
   try {
     const report = await resumeAllPaused({ sanity, origin });
     return json(report);

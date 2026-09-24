@@ -10,6 +10,7 @@ import {
   artKey, artWebKey, isArtKey, ART_WEB_SIDE, CUSTOMISE_FEE_DEFAULT,
 } from './_shared/artwork-styles.mjs';
 import { sceneRevOf } from './_shared/order-print.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
@@ -177,7 +178,7 @@ export default async (req) => {
        back out again. prepareScene also fetches the full-resolution template
        artwork and checks the fonts, so the print cannot come out in a typeface
        nobody chose. */
-    const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+    const origin = internalOrigin(req);
     const keys = job.images || {};
     /* Kept, because this artwork is now wanted twice: once to compose the print
        below, and again months later when a customer opens the same design in

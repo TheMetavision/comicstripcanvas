@@ -7,6 +7,7 @@ import {
 } from './_shared/spend-guard.mjs';
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyStyleLimit } from './_shared/limit-email.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Re-style one panel:
@@ -179,7 +180,7 @@ export default async (req, context) => {
       .unset([`photos[panel == "${panel}"].styleError`])
       .commit();
 
-    const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+    const origin = internalOrigin(req);
     const res = await fetch(`${origin}/api/style-photo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

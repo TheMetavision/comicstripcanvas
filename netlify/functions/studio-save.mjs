@@ -5,6 +5,7 @@ import { productSlug } from './_shared/slug.mjs';
 import { STUDIO_STORE, uploadIdFromKey } from './_shared/studio-uploads.mjs';
 import { startRender } from './_shared/studio-render-trigger.mjs';
 import { CLASSIC, FULL_BLEED, isStyle, styleForTemplate, sceneKey, styleLabel } from './_shared/artwork-styles.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Turn a design built in the Studio-mode builder into a draft catalogue product.
@@ -307,7 +308,7 @@ export default async (req) => {
   }
 
   const id = replacing ? target.base : newId();
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+  const origin = internalOrigin(req);
   const { printWidth } = printGeometry(recipe);
   if (!printWidth) return json({ error: 'The recipe does not say how big the print is' }, 400);
 

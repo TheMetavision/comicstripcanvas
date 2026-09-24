@@ -1,6 +1,7 @@
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { EMAIL_BRAND, emailHeader, button } from './_shared/email.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Studio document actions that need to reach outside Sanity.
@@ -99,7 +100,7 @@ export default async (req) => {
   const doc = await sanity.getDocument(id);
   if (!doc) return json({ ok: false, error: 'Unknown personalisation' }, 404);
 
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+  const origin = internalOrigin(req);
 
   try {
     if (action === 'approve') return await approve(doc, id, origin);

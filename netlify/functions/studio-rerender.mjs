@@ -2,6 +2,7 @@ import { getStore } from '@netlify/blobs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { startRender } from './_shared/studio-render-trigger.mjs';
 import { STYLES, isStyle, sceneKey, printKey, legacySceneKey, legacyPrintKey, styleOr } from './_shared/artwork-styles.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Run a studio render again, from the scene already in the store.
@@ -117,7 +118,7 @@ export default async (req) => {
      blobs are keyed on the published id and the document write always targets
      the draft -- so this is a derivation, not a guess. */
   const docId = job.docId || `drafts.${id}`;
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+  const origin = internalOrigin(req);
 
   const trigger = await startRender({
     origin, id, docId, style,

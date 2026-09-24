@@ -3,6 +3,7 @@ import { cutoutConfigured } from './_shared/cutout.mjs';
 import { MAX_STYLE_CALLS } from './_shared/style-limits.mjs';
 import { busyMessageFor, styleLimitNotice, familyForTemplate } from './_shared/spend-guard.mjs';
 import { pausedRows, resumeDocument, PAUSED, LIMITED } from './_shared/style-resume.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Styling progress: GET /api/personalisation-status/<id>
@@ -66,7 +67,7 @@ export default async (req) => {
        is the path that gets the waiting customer moving within one poll of the
        breaker reopening rather than within the hour. */
     if (pausedRows(doc).length) {
-      const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(req.url).origin;
+      const origin = internalOrigin(req);
       try {
         const { resumed } = await resumeDocument({ sanity, doc, origin });
         if (resumed) {

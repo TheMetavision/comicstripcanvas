@@ -9,6 +9,7 @@ import {
   PRINT_STORE, keysFromLine, printKeyFor, sourceId, downloadName,
   sceneIdFor, orientationFor, resolveLineProduct, openPrintStore, sceneRevOf,
 } from './_shared/order-print.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * The print file for one order line, made at the size and finish it was sold at.
@@ -168,7 +169,7 @@ export default async (req) => {
 
     if (sceneJson) {
       route = 'scene';
-      const origin = process.env.DEPLOY_PRIME_URL || process.env.URL || 'http://localhost:8888';
+      const origin = internalOrigin(req);
       const out = await renderFromScene({
         sceneSvg: sceneJson.svg || sceneJson.sceneSvg,
         recipe: sceneJson.recipe || sceneJson,

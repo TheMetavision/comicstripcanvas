@@ -1,5 +1,6 @@
 import { getStore } from '@netlify/blobs';
 import { PRINT_STORE, openPrintStore } from './_shared/order-print.mjs';
+import { internalOrigin } from './_shared/origin.mjs';
 
 /**
  * Start / ask about / fetch the print file for one order line.
@@ -92,16 +93,13 @@ export default async (req) => {
     await store.setJSON(`${pending}.state`, { state: 'working', at: new Date().toISOString() })
       .catch(() => {});
 
-    /* The host this request arrived on, not the site's configured URL.
-
-       The trigger is same-site by definition, so the incoming host is always
-       the right one -- and under netlify dev the configured URL is the live
-       domain, so preferring it sends the job to production (or, as here, fails
-       to connect at all) while the developer watches a local page say
-       "Preparing" for ever. The env vars stay as a fallback for an invocation
-       that somehow has no usable host. */
-    const origin = `${url.protocol}//${url.host}`
-      || process.env.DEPLOY_PRIME_URL || process.env.URL;
+    /* Same-site by definition, so never the configured public URL: under
+       netlify dev that is the live domain, and preferring it sends the job to
+       production -- or, as it did, fails to connect at all while the developer
+       watches a local page say "Preparing" for ever. internalOrigin keeps the
+       incoming host in dev and on any netlify.app deploy, and in production
+       reaches the deploy directly rather than through the custom domain. */
+    const origin = internalOrigin(req);
     /* AWAITED. A serverless environment is frozen the moment it responds, so a
        trigger that has not completed is suspended mid-flight and the job is
        never started -- the bug studio-save had, which worked in every local

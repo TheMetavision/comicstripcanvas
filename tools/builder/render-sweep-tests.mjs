@@ -34,8 +34,11 @@ say('\n1. TELLING THE TWO FAILURES APART\n');
     savedAt: '2026-09-15T18:55:25.938Z', renderedAt: '2026-09-15T18:55:45.000Z',
     publishedAt: '2026-09-15T18:55:39Z', hasProduct: true, hasDraft: true, draftsKnown: true,
   });
-  ok(race.mode === 'RACE', 'a render that finished AFTER the publish is a RACE', race.mode);
-  ok(/on the draft, not live/.test(race.why), 'and says where the artwork actually is', race.why);
+  ok(race.mode === 'UNPUBLISHED', 'a render that finished AFTER the publish leaves the draft ahead', race.mode);
+  ok(/draft holds artwork/.test(race.why) && /publish to promote/.test(race.why),
+    'and says where the artwork is and what to do about it', race.why);
+  ok(!/race/i.test(race.why),
+    'without calling a deliberate re-render a race', race.why);
   ok(/6\.0 s|6 s|6\.0s/.test(race.why) || /AFTER the publish/.test(race.why),
     'reporting how far the wrong side of it', race.why);
 
@@ -51,7 +54,7 @@ say('\n1. TELLING THE TWO FAILURES APART\n');
   const justBefore = classify({ savedAt: 'x', renderedAt: '2026-09-15T12:00:00Z', publishedAt: '2026-09-15T12:00:01Z', hasProduct: true, hasDraft: true, draftsKnown: true });
   const justAfter = classify({ savedAt: 'x', renderedAt: '2026-09-15T12:00:01Z', publishedAt: '2026-09-15T12:00:00Z', hasProduct: true, hasDraft: true, draftsKnown: true });
   ok(justBefore.mode === 'ok', 'a second before the publish is ok');
-  ok(justAfter.mode === 'RACE', 'a second after it is not');
+  ok(justAfter.mode === 'UNPUBLISHED', 'a second after it is not');
 }
 
 /* --------------------------------- 1b. the race that was not a race */
@@ -79,7 +82,7 @@ say('\n1b. THE TIMESTAMPS ACCUSE, THE DRAFT CONVICTS\n');
     publishedAt: '2026-09-16T16:19:08Z', hasProduct: true,
     hasDraft: true, draftsKnown: true,
   });
-  ok(stranded.mode === 'RACE', 'the same gap with a draft left behind is', stranded.mode);
+  ok(stranded.mode === 'UNPUBLISHED', 'the same gap with a draft left behind is', stranded.mode);
 
   /* No token: the drafts are unknown, so the timestamps are all there is. It
      still reports, and says the verdict is weaker than usual. */
@@ -88,7 +91,7 @@ say('\n1b. THE TIMESTAMPS ACCUSE, THE DRAFT CONVICTS\n');
     publishedAt: '2026-09-15T18:55:39Z', hasProduct: true,
     hasDraft: false, draftsKnown: false,
   });
-  ok(noToken.mode === 'RACE', 'without drafts it still reports on the timestamps', noToken.mode);
+  ok(noToken.mode === 'UNPUBLISHED', 'without drafts it still reports on the timestamps', noToken.mode);
   ok(/timestamps alone/.test(noToken.why), 'but admits that is all it has', noToken.why);
 
   /* And the draft check does not excuse the other mode -- an unfinished render
@@ -238,7 +241,7 @@ say('\n5. END TO END, WITHOUT TOUCHING ANYTHING REAL\n');
     'the late-looking one whose draft is gone is not among them — run() passes draft existence through');
   const modes = Object.fromEntries(parsed.rows.map((r) => [r.title, r.mode]));
   ok(modes['Never finished'] === 'INCOMPLETE', 'the unfinished one is INCOMPLETE');
-  ok(modes.Raced === 'RACE', 'the raced one is a RACE');
+  ok(modes.Raced === 'UNPUBLISHED', 'the one whose draft is ahead says so');
   ok(!('Finished' in modes), 'and the good one is not listed at all by default');
   ok(code === 1, 'a run with problems exits non-zero, so CI can gate on it', String(code));
 
