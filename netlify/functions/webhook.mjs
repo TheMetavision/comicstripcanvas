@@ -3,6 +3,7 @@ import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { emailHeader } from './_shared/email.mjs';
 import { FULL_BLEED, styleOr, styleLabel } from './_shared/artwork-styles.mjs';
+import { sizeLabels } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
@@ -47,11 +48,10 @@ const FORMAT_LABELS = {
   'canvas-gallery': 'Canvas (Gallery Frame)',
 };
 
-const SIZE_LABELS = {
-  small: 'Small (12×8")',
-  medium: 'Medium (16×12")',
-  large: 'Large (24×16")',
-};
+/* Derived, not spelled out: see _shared/sizes.mjs. The label is what gets
+   written onto the order line, so an order placed before Medium moved keeps
+   saying 16x12 -- that is what it was sold as. */
+const SIZE_LABELS = sizeLabels('×');
 
 // Brand constants
 const BRAND = {

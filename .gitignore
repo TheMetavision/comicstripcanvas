@@ -51,3 +51,7 @@ photos/
 # Per-machine Claude Code permission rules (allow/ask/deny). Personal to a
 # working copy, not a project decision, so it stays out of the repository.
 .claude/settings.local.json
+
+# Renders made to look at a geometry change before shipping it. Tens of MB per
+# run, regenerated whenever the question comes up again.
+tools/builder/print-out/

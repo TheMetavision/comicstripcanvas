@@ -3,6 +3,7 @@ export const prerender = false;
 import type { APIRoute } from 'astro';
 import { createClient } from '@sanity/client';
 import imageUrlBuilder from '@sanity/image-url';
+import { SIZE_INCHES, SIZE_NAME } from '../../../netlify/functions/_shared/sizes.mjs';
 
 // Uncached, even though this runs per request rather than at build. A stale
 // price in a shopping feed gets items disapproved by Google, which is a worse
@@ -30,10 +31,14 @@ const FORMAT_LABELS: Record<string, string> = {
   'canvas-gallery': 'Canvas Gallery Frame',
 };
 
+/* Google's own spelling: no quote mark, "in" spelled out. The numbers still come
+   from _shared/sizes.mjs. The offer id is built from a size CODE further down
+   (small=s, medium=m, large=l), not from this text, so changing a dimension here
+   updates the size attribute on existing offers rather than minting new ids. */
 const SIZE_LABELS: Record<string, string> = {
-  small: 'Small 12x8in',
-  medium: 'Medium 16x12in',
-  large: 'Large 24x16in',
+  small: `${SIZE_NAME.small} ${SIZE_INCHES.small[0]}x${SIZE_INCHES.small[1]}in`,
+  medium: `${SIZE_NAME.medium} ${SIZE_INCHES.medium[0]}x${SIZE_INCHES.medium[1]}in`,
+  large: `${SIZE_NAME.large} ${SIZE_INCHES.large[0]}x${SIZE_INCHES.large[1]}in`,
 };
 
 const CATEGORY_LABELS: Record<string, string> = {

@@ -3,6 +3,7 @@ import Navbar from '../components/Navbar.astro';
 import Footer from '../components/Footer.astro';
 import CartPanel from '../components/CartPanel.astro';
 import '../styles/global.css';
+import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
 
 interface Props {
   title: string;
@@ -177,7 +178,7 @@ const breadcrumbItems = [
           "name": "What sizes are available?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "We offer three sizes: Small (12x8\"), Medium (16x12\"), and Large (24x16\"). All sizes are available as Poster Prints, Canvas Standard Frame, and Canvas Gallery Frame."
+            "text": `We offer three sizes: ${sizeLabel('small', 'x')}, ${sizeLabel('medium', 'x')}, and ${sizeLabel('large', 'x')}. All sizes are available as Poster Prints, Canvas Standard Frame, and Canvas Gallery Frame.`
           }
         },
         {

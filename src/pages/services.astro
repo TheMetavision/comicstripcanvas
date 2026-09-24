@@ -5,6 +5,7 @@ import PricingGrid from '../components/PricingGrid.astro';
 import NewsletterSignup from '../components/NewsletterSignup.astro';
 import { sanityClient, urlFor } from '../lib/sanity';
 import { faqsByPageQuery } from '../lib/queries';
+import { sizeDim } from '../../netlify/functions/_shared/sizes.mjs';
 
 const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'services' });
 
@@ -73,9 +74,9 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
       <h2 class="section-heading mb-8">MADE TO ORDER</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
-          { size: 'Small', dim: '12x8"', best: 'Perfect for desks, shelves, and smaller wall spaces.' },
-          { size: 'Medium', dim: '16x12"', best: 'Great for bedrooms, hallways, and feature walls.' },
-          { size: 'Large', dim: '24x16"', best: 'Make a bold statement in living rooms and offices.' },
+          { size: 'Small', dim: sizeDim('small', 'x'), best: 'Perfect for desks, shelves, and smaller wall spaces.' },
+          { size: 'Medium', dim: sizeDim('medium', 'x'), best: 'Great for bedrooms, hallways, and feature walls.' },
+          { size: 'Large', dim: sizeDim('large', 'x'), best: 'Make a bold statement in living rooms and offices.' },
         ].map((item) => (
           <div class="border-4 border-comic-yellow bg-black p-5 text-center" style="box-shadow: 3px 3px 0 rgba(255,242,0,0.2);">
             <p class="font-bangers text-3xl text-comic-yellow mb-1 tracking-wide">{item.size}</p>

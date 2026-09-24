@@ -319,13 +319,18 @@ const ART_WRAP={strip:0, cover:0, 'cover-fullbleed':0,
                 'icon-portrait':0, 'icon-landscape':0};
 const FORMAT_LABEL={poster:'Poster print',standard:'Canvas — standard wrap',
                     gallery:'Canvas — gallery wrap'};
+/* Medium is 18 × 12 (12 × 18 portrait) so that all three sizes share the
+   artwork's 3:2 / 2:3 shape. This file is standalone by design -- it is opened
+   straight in a browser and imports nothing -- so these numbers are a copy of
+   netlify/functions/_shared/sizes.mjs. tools/builder/sizes-tests.mjs fails if
+   the copy and the module ever disagree. */
 const SIZES={
-  strip:[{label:'12 × 8 in',w:12,h:8},{label:'16 × 12 in',w:16,h:12},
+  strip:[{label:'12 × 8 in',w:12,h:8},{label:'18 × 12 in',w:18,h:12},
          {label:'24 × 16 in',w:24,h:16}],
-  cover:[{label:'8 × 12 in',w:8,h:12},{label:'12 × 16 in',w:12,h:16},
+  cover:[{label:'8 × 12 in',w:8,h:12},{label:'12 × 18 in',w:12,h:18},
          {label:'16 × 24 in',w:16,h:24}],
-  portrait:[{label:'8 × 12 in',w:8,h:12},{label:'12 × 16 in',w:12,h:16},{label:'16 × 24 in',w:16,h:24}],
-  landscape:[{label:'12 × 8 in',w:12,h:8},{label:'16 × 12 in',w:16,h:12},{label:'24 × 16 in',w:24,h:16}]
+  portrait:[{label:'8 × 12 in',w:8,h:12},{label:'12 × 18 in',w:12,h:18},{label:'16 × 24 in',w:16,h:24}],
+  landscape:[{label:'12 × 8 in',w:12,h:8},{label:'18 × 12 in',w:18,h:12},{label:'24 × 16 in',w:24,h:16}]
 };
 const TEMPLATES={
   strip:{name:'Strip',canvas:{width:7350,height:4950,dpi:300},

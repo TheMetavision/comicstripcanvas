@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
+import { sizeLabels } from './_shared/sizes.mjs';
 import {
   CLASSIC, FULL_BLEED, isStyle, styleLabel, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
@@ -39,11 +40,9 @@ const FORMAT_LABELS = {
   'canvas-gallery': 'Canvas (Gallery Frame)',
 };
 
-const SIZE_LABELS = {
-  small: 'Small (12×8")',
-  medium: 'Medium (16×12")',
-  large: 'Large (24×16")',
-};
+/* Derived, not spelled out: see _shared/sizes.mjs. This is the text that
+   becomes the Stripe line description. */
+const SIZE_LABELS = sizeLabels('×');
 
 // Stripe's minimum chargeable amount for GBP.
 const STRIPE_MIN_PENCE = 30; // £0.30

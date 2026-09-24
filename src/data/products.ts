@@ -1,3 +1,5 @@
+import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
+
 export type ProductFormat = 'poster' | 'canvas-standard' | 'canvas-gallery';
 export type ProductSize = 'small' | 'medium' | 'large';
 export type ProductCategory = 'comic-book-covers' | 'comic-book-icons' | 'comic-book-strips' | 'personalised';
@@ -26,10 +28,15 @@ export const PRICES: Record<ProductFormat, Record<ProductSize, number>> = {
 // charged cannot drift. A missing value fails the build rather than falling
 // back to a number, because a silent fallback is how you undercharge.
 
+/* The dimensions come from netlify/functions/_shared/sizes.mjs, which the two
+   Netlify functions price and label from as well -- so the size the shop shows
+   and the size the order says cannot drift apart. The front end has always
+   spelled it "16x12" where the functions use "16×12"; that difference is kept,
+   and is now the only difference. */
 export const SIZES: Record<ProductSize, string> = {
-  small: 'Small (12x8")',
-  medium: 'Medium (16x12")',
-  large: 'Large (24x16")',
+  small: sizeLabel('small', 'x'),
+  medium: sizeLabel('medium', 'x'),
+  large: sizeLabel('large', 'x'),
 };
 
 export const FORMAT_LABELS: Record<ProductFormat, string> = {

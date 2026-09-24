@@ -1,4 +1,6 @@
 ---
+import { sizeDim } from '../../netlify/functions/_shared/sizes.mjs';
+
 const pricingData = [
   {
     format: 'Poster Print',
@@ -45,7 +47,7 @@ const pricingData = [
               <div>
                 <p class="font-russo text-off-white capitalize text-sm">{size}</p>
                 <p class="font-source text-gray-400 text-xs">
-                  {size === 'small' ? '12x8"' : size === 'medium' ? '16x12"' : '24x16"'}
+                  {sizeDim(size, 'x')}
                 </p>
               </div>
               <span class="price-tag text-xl">{price}</span>

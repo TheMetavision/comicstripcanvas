@@ -114,6 +114,7 @@
     clearCart,
   } from '../stores/cart';
   import type { CartItem } from '../stores/cart';
+  import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
 
   const panel = document.getElementById('cart-panel');
   const overlay = document.getElementById('cart-overlay');
@@ -219,10 +220,14 @@
     'canvas-gallery': 'Canvas (Gallery)',
   };
 
+  /* Imported rather than written out, unlike the format and style labels below.
+     A size label carries a DIMENSION, and a stale dimension in the drawer is a
+     wrong number in front of a customer about to pay; a stale format word would
+     only be an awkward one. Astro bundles this script, so the import resolves. */
   const SIZE_LABELS: Record<string, string> = {
-    small: 'Small (12x8")',
-    medium: 'Medium (16x12")',
-    large: 'Large (24x16")',
+    small: sizeLabel('small', 'x'),
+    medium: sizeLabel('medium', 'x'),
+    large: sizeLabel('large', 'x'),
   };
 
   /* The drawer is a plain <script> in an Astro island, so the labels are

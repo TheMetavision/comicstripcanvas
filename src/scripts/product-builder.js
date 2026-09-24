@@ -58,6 +58,7 @@ import {
   STUDIO_MAX_BYTES, STUDIO_SENDS_AS_IS, QUALITY_FLOOR,
   BLANK_FALLBACK_SIDES, fitWithin, ladderFor, targetBytesFor, stepQuality,
 } from '../../netlify/functions/_shared/photo-input.mjs';
+import { builderSizes, resumeSize } from '../../netlify/functions/_shared/sizes.mjs';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -348,13 +349,19 @@ export function initProductBuilder() {
     poster: 'Poster print', standard: 'Canvas — standard wrap',
     gallery: 'Canvas — gallery wrap',
   };
+  /* Derived from _shared/sizes.mjs rather than written out, so a size cannot
+     mean one thing here and another in the cart, the feed or an order.
+     builderSizes() is called ONCE per orientation and the result shared: the
+     chosen size is compared to the list by identity (`s === T.size` in
+     buildSizes, `T.sizes.indexOf(T.size)` for the cart's size index), so two
+     arrays with equal contents would not be interchangeable.
+     tools/builder/product-builder.html keeps its own literal copy; sizes-tests
+     fails if the two ever disagree. */
   const SIZES = {
-    strip: [{ label: '12 × 8 in', w: 12, h: 8 }, { label: '16 × 12 in', w: 16, h: 12 },
-      { label: '24 × 16 in', w: 24, h: 16 }],
-    cover: [{ label: '8 × 12 in', w: 8, h: 12 }, { label: '12 × 16 in', w: 12, h: 16 },
-      { label: '16 × 24 in', w: 16, h: 24 }],
-    portrait: [{ label: '8 × 12 in', w: 8, h: 12 }, { label: '12 × 16 in', w: 12, h: 16 }, { label: '16 × 24 in', w: 16, h: 24 }],
-    landscape: [{ label: '12 × 8 in', w: 12, h: 8 }, { label: '16 × 12 in', w: 16, h: 12 }, { label: '24 × 16 in', w: 24, h: 16 }],
+    strip: builderSizes('landscape'),
+    cover: builderSizes('portrait'),
+    portrait: builderSizes('portrait'),
+    landscape: builderSizes('landscape'),
   };
   const TEMPLATES = {
     strip: {
@@ -3605,6 +3612,10 @@ export function initProductBuilder() {
       svg: exportSVG(),
       output: T.size ? {
         format: fmt, formatLabel: FORMAT_LABEL[fmt],
+        /* The KEY as well as the inches. A resumed build used to be matched back
+           to its size on the two numbers below, which meant that changing what a
+           size measures silently moved every saved build to another size. */
+        sizeKey: T.size.key,
         faceInches: [T.size.w, T.size.h], wrapInches: wrapIn(),
         fileInches: [T.size.w + 2 * wrapIn(), T.size.h + 2 * wrapIn()],
       } : null,
@@ -4756,11 +4767,11 @@ export function initProductBuilder() {
     if (r.output) {
       const want = String(r.output.format || 'poster');
       if (CART_FORMAT[want]) { fmt = want; const sel = $('fmtSel'); if (sel) sel.value = fmt; }
-      const face = r.output.faceInches;
-      if (face && Array.isArray(T.sizes)) {
-        const match = T.sizes.find((z) => z.w === face[0] && z.h === face[1]);
-        if (match) T.size = match;
-      }
+      /* By key where the recipe records one, then by face, then by the nearest
+         size we do sell -- never by falling through to the template default,
+         which is the LARGEST. See resumeSize in _shared/sizes.mjs. */
+      const picked = resumeSize(r.output, T.sizes);
+      if (picked) T.size = picked;
       buildSizes();
       sizeBoard();
       svg.setAttribute('viewBox', viewBoxNow());
