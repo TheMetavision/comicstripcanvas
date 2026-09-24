@@ -148,6 +148,15 @@ export function createClient() {
               row.classicListing = p.images?.[0]?.asset?._ref ?? null;
               row.fullBleedListing = p.fullBleed?.listingImage?.asset?._ref ?? null;
             }
+            /* The orientation the size label is built from. Projected off the
+               seeded asset's own metadata, so a test that wants a landscape
+               product says so by seeding a landscape image rather than by
+               setting a flag this stub invented. */
+            if (/metadata\.dimensions\.aspectRatio/.test(q)) {
+              row.aspect = p.images?.[0]?.asset?.metadata?.dimensions?.aspectRatio ?? null;
+              row.fbAspect =
+                p.fullBleed?.listingImage?.asset?.metadata?.dimensions?.aspectRatio ?? null;
+            }
             if (/personalisationFee/.test(q)) row.personalisationFee = p.personalisationFee;
             return row;
           });

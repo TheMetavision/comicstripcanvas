@@ -83,6 +83,25 @@ export const styleOr = (s, fallback = CLASSIC) => (isStyle(s) ? s : fallback);
 export const styleLabel = (s) => STYLE_LABEL[styleOr(s)] || STYLE_LABEL[CLASSIC];
 
 /**
+ * The style label for a line, or null when naming a style would be noise.
+ *
+ * "Classic cover" printed against a comic ICON is simply wrong -- an icon has
+ * one style and is not a cover -- and it was appearing on every icon and strip
+ * line because styleLabel() has to return something. A style is worth naming
+ * only where there is another one it could have been, so the caller passes
+ * whether this product actually offers the choice. Full bleed always names
+ * itself: a line can only be full bleed on a product that has both.
+ *
+ * Returning null rather than '' so a caller has to decide what to do with the
+ * absence instead of concatenating an empty string into the middle of a label.
+ */
+export function styleLabelFor(style, offersChoice) {
+  const s = styleOr(style);
+  if (s === FULL_BLEED) return STYLE_LABEL[FULL_BLEED];
+  return offersChoice ? STYLE_LABEL[CLASSIC] : null;
+}
+
+/**
  * Which style a template produces by default.
  *
  * A default, not a rule: the studio operator can override it, because the two

@@ -114,7 +114,7 @@
     clearCart,
   } from '../stores/cart';
   import type { CartItem } from '../stores/cart';
-  import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
+  import { sizeLabel, sizeLabelFor } from '../../netlify/functions/_shared/sizes.mjs';
 
   const panel = document.getElementById('cart-panel');
   const overlay = document.getElementById('cart-overlay');
@@ -277,7 +277,11 @@
               ${item.description
                 ? `<p class="font-source text-gray-400 text-xs mt-1">${item.description}</p>`
                 : `<p class="font-source text-gray-400 text-xs mt-1">${FORMAT_LABELS[item.format] || item.format}</p>
-                   <p class="font-source text-gray-400 text-xs">${SIZE_LABELS[item.size] || item.size}</p>`}
+                   <p class="font-source text-gray-400 text-xs">${
+              item.orientation
+                ? sizeLabelFor(item.size, item.orientation, 'x')
+                : (SIZE_LABELS[item.size] || item.size)
+            }</p>`}
               ${item.artworkStyle
                 ? `<p class="font-source text-comic-yellow text-xs">${ARTWORK_STYLES[item.artworkStyle] || item.artworkStyle}</p>`
                 : ''}

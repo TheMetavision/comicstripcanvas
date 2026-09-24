@@ -1,9 +1,9 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { PRICES } from './_shared/catalog.mjs';
-import { sizeLabels } from './_shared/sizes.mjs';
+import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import {
-  CLASSIC, FULL_BLEED, isStyle, styleLabel, resolveCustomiseFee,
+  CLASSIC, FULL_BLEED, isStyle, styleLabel, styleLabelFor, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
 
 // Read-only: the dataset is public, so no token is needed here and none is
@@ -88,13 +88,18 @@ export default async (req, context) => {
        file, and become an order nobody can fulfil. */
     const styleSlugs = [...new Set(items.map((i) => i.slug).filter(Boolean))];
     let hasFullBleed = {};
+    let aspectBySlug = {};
     if (styleSlugs.length) {
       const rows = await sanity.fetch(
         '*[_type == "product" && slug.current in $slugs]{ "slug": slug.current, ' +
-        '"fullBleed": defined(fullBleed.printFile.asset) }',
+        '"fullBleed": defined(fullBleed.printFile.asset), ' +
+        /* So the size on the Stripe line reads the way the picture is shaped. */
+        '"aspect": images[0].asset->metadata.dimensions.aspectRatio, ' +
+        '"fbAspect": fullBleed.listingImage.asset->metadata.dimensions.aspectRatio }',
         { slugs: styleSlugs }
       );
       hasFullBleed = Object.fromEntries(rows.map((r) => [r.slug, !!r.fullBleed]));
+      aspectBySlug = Object.fromEntries(rows.map((r) => [r.slug, r]));
     }
 
     // A personalised line carries the id of the build it was made from. The
@@ -258,8 +263,15 @@ export default async (req, context) => {
              have got wrong: "Classic cover" on the 292 products that have no
              second style is noise. */
           description: [
-            `${FORMAT_LABELS[item.format] || item.format} — ${SIZE_LABELS[item.size] || item.size}`,
-            hasFullBleed[item.slug] ? styleLabel(item.artworkStyle) : null,
+            `${FORMAT_LABELS[item.format] || item.format} — ${
+              aspectBySlug[item.slug]
+                ? sizeLabelFor(item.size, orientationFromAspect(
+                  item.artworkStyle === FULL_BLEED
+                    ? (aspectBySlug[item.slug].fbAspect ?? aspectBySlug[item.slug].aspect)
+                    : aspectBySlug[item.slug].aspect), '×')
+                : (SIZE_LABELS[item.size] || item.size)
+            }`,
+            styleLabelFor(item.artworkStyle, hasFullBleed[item.slug]),
             item.fee
               ? `includes £${item.fee.toFixed(2)} ${item.buildKind === 'customise' ? 'customising' : 'personalisation'}`
               : null,

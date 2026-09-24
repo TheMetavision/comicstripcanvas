@@ -3,6 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
 import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
+import { sizeLabelFor, orientationFromAspect } from '../../../netlify/functions/_shared/sizes.mjs';
 /* The one place the customise fee is decided. Imported across the src/netlify
    line on purpose: this module is plain constants with no imports of its own,
    and a second copy of a PRICE is how a displayed number and a charged one
@@ -41,6 +42,12 @@ const categoryLabels: Record<string, string> = {
 
 const basePrice = PRICES.poster.small;
 const hasImages = product.images && product.images.length > 0;
+
+/* Which way up this product's artwork is, so every size on this page reads the
+   way the picture is shaped. Derived from the listing image rather than a field:
+   nothing on the document records orientation, and a third of the shop is
+   landscape, so a fixed default would mislabel it. */
+const orientation = orientationFromAspect(product.images?.[0]?.aspectRatio);
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
@@ -278,12 +285,12 @@ const seoDesc = product.seo?.metaDescription || product.description;
             <div class="mb-6">
               <h3 class="font-russo text-off-white text-sm uppercase tracking-wide mb-3">Size</h3>
               <div class="grid grid-cols-3 gap-2">
-                {(Object.entries(SIZES) as [ProductSize, string][]).map(([key, label]) => (
+                {(Object.keys(SIZES) as ProductSize[]).map((key) => (
                   <button
                     class="size-btn border-4 border-black bg-panel-dark py-3 text-center font-source text-xs text-gray-300 hover:border-comic-yellow hover:text-off-white transition-all"
                     data-size={key}
                     style="box-shadow: 2px 2px 0 #000;">
-                    {label}
+                    {sizeLabelFor(key, orientation, 'x')}
                   </button>
                 ))}
               </div>
@@ -412,6 +419,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     data-product-title={product.title}
     data-product-accent={product.accentColor || '#EC008C'}
     data-product-image={mainImageUrl || ''}
+    data-orientation={orientation}
     data-style-images={hasStyleChoice ? JSON.stringify(styleImages) : ''}
   ></div>
 
@@ -428,6 +436,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     const productTitle = dataEl?.dataset.productTitle || '';
     const productAccent = dataEl?.dataset.productAccent || '#EC008C';
     const productImage = dataEl?.dataset.productImage || '';
+    const productOrientation = dataEl?.dataset.orientation === 'landscape' ? 'landscape' : 'portrait';
 
     let selectedFormat = 'poster';
     let selectedSize = 'small';
@@ -567,6 +576,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
         accentColor: productAccent,
         // The basket shows the style that was chosen, not the product's default.
         imageUrl: (selectedStyle && styleImages?.[selectedStyle]?.url) || productImage,
+        /* Carried so the basket names the size the way this product is shaped.
+           The drawer has no product to look it up from -- it only has the line. */
+        orientation: productOrientation as any,
         ...(selectedStyle ? { artworkStyle: selectedStyle as any } : {}),
       });
     });

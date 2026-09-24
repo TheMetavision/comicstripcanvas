@@ -63,6 +63,12 @@ export const personalisationFeesQuery = `
   }
 `;
 
+/* images[].aspectRatio is which way up that artwork is, so a size reads the way
+   the picture is shaped: a cover is 12x18, a strip is 18x12. Nothing on the
+   document records orientation and 117 of the 311 products are landscape, so it
+   comes from the image the customer is looking at. Explained here rather than
+   inside the query: GROQ has no block comments, and one in the query string is
+   a parse error at request time rather than at build, so it fails per page. */
 export const productBySlugQuery = `
   *[_type == "product" && slug.current == $slug][0] {
     _id,
@@ -73,7 +79,8 @@ export const productBySlugQuery = `
     images[] {
       asset-> { _id, url },
       alt,
-      "lqip": asset->metadata.lqip
+      "lqip": asset->metadata.lqip,
+      "aspectRatio": asset->metadata.dimensions.aspectRatio
     },
     "printFileUrl": printFile.asset->url,
     classicSceneId,

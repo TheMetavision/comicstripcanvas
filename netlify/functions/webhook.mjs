@@ -2,8 +2,8 @@ import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { emailHeader } from './_shared/email.mjs';
-import { FULL_BLEED, styleOr, styleLabel } from './_shared/artwork-styles.mjs';
-import { sizeLabels } from './_shared/sizes.mjs';
+import { FULL_BLEED, styleOr, styleLabel, styleLabelFor } from './_shared/artwork-styles.mjs';
+import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
@@ -354,7 +354,14 @@ async function fulfilOrder(session) {
                  to send: a new upload is a new asset, and this id still points
                  at the picture that was bought. */
               '"classicListing": images[0].asset._ref, ' +
-              '"fullBleedListing": fullBleed.listingImage.asset._ref }',
+              '"fullBleedListing": fullBleed.listingImage.asset._ref, ' +
+              /* Which way up the artwork is, so the size on the order reads the
+                 way the picture is shaped -- 12x18 for a cover, 18x12 for a
+                 strip. Taken from the listing image the customer was looking
+                 at, because no product carries an orientation field and 117 of
+                 the 311 are landscape. */
+              '"aspect": images[0].asset->metadata.dimensions.aspectRatio, ' +
+              '"fbAspect": fullBleed.listingImage.asset->metadata.dimensions.aspectRatio }',
               { slugs }
             );
             for (const r of rows) printBySlug[r.slug] = r;
@@ -368,22 +375,26 @@ async function fulfilOrder(session) {
              personalised or customised line is fulfilled from the render that
              belongs to its build, and stamping the stock file here would put a
              plausible, wrong picture in front of whoever prints it. */
+          const row = printBySlug[item.slug];
           const printFile = item.personalisationId
             ? null
-            : (printBySlug[item.slug]?.[item.artworkStyle] || null);
+            : (row?.[item.artworkStyle] || null);
+          /* A style is worth naming only where the product offers a choice.
+             Every product that has a full-bleed print file has both. */
+          const styleName = styleLabelFor(item.artworkStyle, !!row?.fullBleed);
+          const isFB = item.artworkStyle === FULL_BLEED;
+          const orient = orientationFromAspect(isFB ? (row?.fbAspect ?? row?.aspect) : row?.aspect);
           if (!printFile && !item.personalisationId) {
             console.warn(
               `webhook: no ${item.artworkStyle} print file for "${item.slug}" — ` +
               'the order line will name the style but carry no file'
             );
-            missingPrint.push({ title: item.title, style: styleLabel(item.artworkStyle) });
+            missingPrint.push({ title: item.title, style: styleName });
           }
           /* Snapshotted for every line, built or not: a customised line is
              fulfilled from its own render, but the listing image is still what
              the customer was shown and is still worth pinning. */
-          const listingRef = printBySlug[item.slug]?.[
-            item.artworkStyle === FULL_BLEED ? 'fullBleedListing' : 'classicListing'
-          ] || null;
+          const listingRef = row?.[isFB ? 'fullBleedListing' : 'classicListing'] || null;
           return {
             _type: 'object',
             /* The style is part of the key: two lines of the same product in
@@ -392,10 +403,14 @@ async function fulfilOrder(session) {
             _key: `${item.slug || 'item'}-${item.artworkStyle}-${item.format}-${item.size}-${idx}`,
             productTitle: item.title,
             format: FORMAT_LABELS[item.format] || item.format,
-            size: SIZE_LABELS[item.size] || item.size,
+            /* Orientation-aware: the size reads the way this picture is shaped.
+               Falls back to the orientation-free label when the product could
+               not be resolved, which is better than guessing a shape. */
+            size: row ? sizeLabelFor(item.size, orient, '×') : (SIZE_LABELS[item.size] || item.size),
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             artworkStyle: item.artworkStyle,
+            ...(styleName ? { artworkStyleLabel: styleName } : {}),
             ...(printFile ? { printFile } : {}),
             ...(listingRef
               ? {
@@ -410,20 +425,25 @@ async function fulfilOrder(session) {
         });
 
         itemRows = stdItems
-          .map(
-            (item) =>
-              `<tr>
+          .map((item) => {
+            /* The same two rules the order line uses, so the email and the
+               document cannot describe the same purchase differently. */
+            const r = printBySlug[item.slug];
+            const sName = styleLabelFor(item.artworkStyle, !!r?.fullBleed);
+            const o = orientationFromAspect(
+              item.artworkStyle === FULL_BLEED ? (r?.fbAspect ?? r?.aspect) : r?.aspect);
+            return `<tr>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${item.title}${
-                  item.artworkStyle === FULL_BLEED
-                    ? `<br><span style="font-size: 12px; color: #777;">${styleLabel(item.artworkStyle)}</span>`
+                  sName
+                    ? `<br><span style="font-size: 12px; color: #777;">${sName}</span>`
                     : ''
                 }</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${FORMAT_LABELS[item.format] || item.format}</td>
-                <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${SIZE_LABELS[item.size] || item.size}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${r ? sizeLabelFor(item.size, o, '×') : (SIZE_LABELS[item.size] || item.size)}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee; text-align: right;">£${(item.unitPrice * item.quantity).toFixed(2)}</td>
-              </tr>`
-          )
+              </tr>`;
+          })
           .join('');
       }
 
@@ -566,7 +586,9 @@ async function fulfilOrder(session) {
               ${missingPrint
                 .map(
                   (m) =>
-                    `<p style="margin: 4px 0; font-size: 15px; font-weight: bold; color: #b71c1c;">PRINT FILE MISSING &mdash; ${m.title} (${m.style})</p>`
+                    /* The style is named only where the product had one to
+                       choose; "(Classic cover)" against an icon is noise. */
+                    `<p style="margin: 4px 0; font-size: 15px; font-weight: bold; color: #b71c1c;">PRINT FILE MISSING &mdash; ${m.title}${m.style ? ` (${m.style})` : ''}</p>`
                 )
                 .join('')}
             </div>
@@ -689,7 +711,9 @@ async function fulfilOrder(session) {
         const { error } = await resend.emails.send({
           from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
           to: [teamEmail],
-          subject: `${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
+          /* The banner in the body is only seen once the mail is open. An order
+             nobody can fulfil should be visible in the inbox list, before that. */
+          subject: `${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">

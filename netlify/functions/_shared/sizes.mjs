@@ -71,6 +71,59 @@ export function builderSizes(orient) {
   });
 }
 
+/* ─────────────────────────── orientation ─────────────────────────────────
+ *
+ * SIZE_INCHES is [long, short] because a size is one thing whichever way up it
+ * is printed. What a CUSTOMER should read is the way their picture is shaped:
+ * a cover is 12x18, a strip is 18x12, and telling a cover buyer "18x12" is
+ * telling them the wrong number about the thing they are buying.
+ *
+ * So anywhere a label belongs to a particular product -- the cart, the Stripe
+ * line, the order line, the emails -- it is built with the product's own
+ * orientation. Anywhere it does not -- the pricing grid, the size guide, the
+ * FAQ -- the orientation-free form above stays, because there is no single
+ * product to take an orientation from.
+ */
+
+export const ORIENTATIONS = ['portrait', 'landscape'];
+
+/** Actual [w, h] in inches for a size printed this way up. */
+export function sizeWH(key, orient) {
+  const pair = SIZE_INCHES[key];
+  if (!pair) return null;
+  const [long, short] = pair;
+  return orient === 'portrait' ? [short, long] : [long, short];
+}
+
+/** `12×18"` portrait, `18×12"` landscape. */
+export function sizeDimFor(key, orient, times = '×') {
+  const wh = sizeWH(key, orient);
+  return wh ? `${wh[0]}${times}${wh[1]}"` : '';
+}
+
+/** `Medium (12×18")` for a cover, `Medium (18×12")` for a strip. */
+export function sizeLabelFor(key, orient, times = '×') {
+  return SIZE_NAME[key] ? `${SIZE_NAME[key]} (${sizeDimFor(key, orient, times)})` : String(key);
+}
+
+/**
+ * Which way up a product's artwork is.
+ *
+ * Taken from the aspect ratio of what the customer is looking at rather than a
+ * field somebody has to remember to set: there is no orientation field on a
+ * product, and 117 of 311 products are landscape, so defaulting either way
+ * would mislabel a third of the shop. Square and unknown both fall to portrait,
+ * which is the majority and the shape of every cover.
+ */
+export function orientationFromAspect(aspect) {
+  const a = Number(aspect);
+  return Number.isFinite(a) && a > 1 ? 'landscape' : 'portrait';
+}
+
+/** Orientation from explicit dimensions, for callers holding pixels. */
+export const orientationFromSize = (w, h) =>
+  orientationFromAspect(Number(h) ? Number(w) / Number(h) : NaN);
+
 /**
  * Faces that were sold once and are not offered now, mapped to what they became.
  * Medium was 16x12 (12x16 portrait) until September 2026.

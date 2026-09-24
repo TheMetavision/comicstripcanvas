@@ -705,10 +705,13 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
     String(resendStub.sent.length));
 
   const html = teamMail()?.html || '';
-  /* "Classic cover" is styleLabel()'s wording, shared with the line-item table
-     lower down the same email rather than invented here. */
-  ok(html.includes('PRINT FILE MISSING &mdash; Gizmo (Classic cover)'),
-    'the team email names the product and the style');
+  /* No style in the parentheses: gizmo has one style, so there was nothing to
+     choose and naming "Classic cover" against it would be wrong. A cover with
+     both styles is covered in section 10b. */
+  ok(html.includes('PRINT FILE MISSING &mdash; Gizmo'),
+    'the team email names the product');
+  ok(!/PRINT FILE MISSING &mdash; Gizmo \(/.test(html),
+    'and does NOT invent a style for a one-style product');
   ok(html.indexOf('PRINT FILE MISSING') < html.indexOf('Shipping Address'),
     'at the top, above the order detail rather than buried in it');
   ok(needsAttention(order) === 1, 'and the order matches Needs attention',
@@ -762,6 +765,52 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
   ok(!(teamMail()?.html || '').includes('PRINT FILE MISSING'),
     'and raises NO false alarm');
   ok(needsAttention(order) === 0, 'nor appears under Needs attention');
+}
+
+say('\n10b. WEBHOOK: SIZE READS THE WAY THE PICTURE IS SHAPED\n');
+{
+  /* A cover is portrait, so Medium is 12x18 on its order line -- not 18x12,
+     which is the same size the other way up and the wrong number to put in
+     front of the person buying a portrait picture. The orientation comes from
+     the listing image's aspect ratio because no product carries an orientation
+     field and 117 of the 311 are landscape. */
+  resetAll();
+  seed(product('gizmo', {
+    images: [{ asset: { _ref: LISTING_REF, url: 'https://cdn.test/l.jpg', metadata: { dimensions: { aspectRatio: 0.6667 } } } }],
+    printFile: { asset: { _ref: 'file-p', url: 'https://cdn.test/print.png' } },
+  }));
+  const session = seedPaidSessionWithBuild(null, 'cs_test_paid_pt');
+  await postWebhook(stripeEvent('checkout.session.completed', session));
+  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  /* The fixture orders Small; what is under test is which way up it reads. */
+  ok(line?.size === 'Small (8×12")', 'a portrait product says 8×12, not 12×8', line?.size);
+  ok(!line?.artworkStyleLabel,
+    'and a one-style product stores no style label', String(line?.artworkStyleLabel));
+}
+{
+  resetAll();
+  seed(product('gizmo', {
+    images: [{ asset: { _ref: LISTING_REF, url: 'https://cdn.test/l.jpg', metadata: { dimensions: { aspectRatio: 1.5 } } } }],
+    printFile: { asset: { _ref: 'file-p', url: 'https://cdn.test/print.png' } },
+  }));
+  const session = seedPaidSessionWithBuild(null, 'cs_test_paid_ls');
+  await postWebhook(stripeEvent('checkout.session.completed', session));
+  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  ok(line?.size === 'Small (12×8")', 'a landscape product says 12×8, not 8×12', line?.size);
+}
+{
+  /* Two styles: now the style IS worth naming, on the line and in the email. */
+  resetAll();
+  seed(product('gizmo', {
+    images: [{ asset: { _ref: LISTING_REF, url: 'https://cdn.test/l.jpg', metadata: { dimensions: { aspectRatio: 0.6667 } } } }],
+    printFile: { asset: { _ref: 'file-p', url: 'https://cdn.test/print.png' } },
+    fullBleed: { printFile: { asset: { _ref: 'file-fb', url: 'https://cdn.test/fb.png' } } },
+  }));
+  const session = seedPaidSessionWithBuild(null, 'cs_test_paid_two');
+  await postWebhook(stripeEvent('checkout.session.completed', session));
+  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  ok(line?.artworkStyleLabel === 'Classic cover',
+    'a two-style product names the style on the line', line?.artworkStyleLabel);
 }
 
 say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');

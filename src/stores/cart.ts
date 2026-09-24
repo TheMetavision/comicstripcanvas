@@ -34,6 +34,14 @@ export interface CartItem {
    * fill. Absent when the snapshot failed, and imageUrl carries the line.
    */
   thumbUrl?: string;
+  /**
+   * Which way up this product's artwork is, so the basket names the size the
+   * way the picture is shaped -- "Medium (12x18")" for a cover, "Medium
+   * (18x12")" for a strip. Carried on the line because the drawer has no
+   * product to look it up from, and absent on lines added before this existed,
+   * which fall back to the orientation-free label.
+   */
+  orientation?: 'portrait' | 'landscape';
   /** e.g. "Comic cover · 16 × 24 in · gallery wrap · 1 photo" */
   description?: string;
 }
