@@ -86,6 +86,84 @@ export function geom(canvas, face, fit, wrapIn = 0) {
   };
 }
 
+/* ─────────────────────────── the cutout's own clip ──────────────────────────
+ *
+ * On a Classic cover the cut-out subject is allowed off the page: standing a
+ * person in a box with their limbs sliced off at the window's edge looks like a
+ * mistake, where running them off the page reads as deliberate. So its clip is
+ * the whole page rather than the art window.
+ *
+ * The whole page INCLUDES the wrap, and on a canvas that means the part of the
+ * figure beyond the front face prints down the sides of the frame. cutoutClip
+ * says, per edge, whether the cutout may use the wrap ("wrap") or stops at the
+ * face ("face").
+ *
+ * Per EDGE rather than one switch because the edges are not alike: a figure
+ * running off the bottom is the effect this exists for, while the same figure
+ * sliced down the left-hand side of a frame is the fault being fixed.
+ *
+ * ABSENT IS NOT A DEFAULT. A scene with no cutoutClip is left exactly as it was
+ * saved -- see reprojectScene. Every stored Classic scene was saved at poster,
+ * where the page and the face coincide, so their prints are face-clipped today
+ * by coincidence; defaulting them to "wrap" would start bleeding figures onto
+ * canvases that do not bleed now, which is the opposite of leaving them alone.
+ */
+
+export const CLIP_EDGES = ['top', 'right', 'bottom', 'left'];
+export const CLIP_TO_FACE = 'face';
+export const CLIP_TO_WRAP = 'wrap';
+
+/** All four edges the same. */
+export const clipAll = (where) =>
+  Object.fromEntries(CLIP_EDGES.map((e) => [e, where === CLIP_TO_WRAP ? CLIP_TO_WRAP : CLIP_TO_FACE]));
+
+/**
+ * Read a cutoutClip off a recipe or an element, or null when there is none.
+ *
+ * Null and "all wrap" are different answers and must stay different: null means
+ * touch nothing, "all wrap" means recompute to the page on every edge. They
+ * look the same on a scene saved at a canvas finish and very different on one
+ * saved at poster.
+ */
+export function normaliseCutoutClip(value) {
+  if (!value || typeof value !== 'object') return null;
+  const out = {};
+  let sawOne = false;
+  for (const edge of CLIP_EDGES) {
+    const v = value[edge];
+    if (v === CLIP_TO_FACE || v === CLIP_TO_WRAP) { out[edge] = v; sawOne = true; }
+    else out[edge] = CLIP_TO_FACE;      // an edge nobody set is the safe one
+  }
+  return sawOne ? out : null;
+}
+
+/** The face: the design plus its padding, with no wrap. */
+export const faceBox = (canvas, g) => ({
+  left: -g.padX, top: -g.padY,
+  right: canvas.width + g.padX, bottom: canvas.height + g.padY,
+});
+
+/** The whole printed page: the face plus the wrap on all four sides. */
+export const pageBox = (canvas, g) => ({
+  left: -g.dx, top: -g.dy,
+  right: canvas.width + g.dx, bottom: canvas.height + g.dy,
+});
+
+/**
+ * The rect the cutout is clipped to, edge by edge.
+ *
+ * On a poster the two boxes are identical -- there is no wrap to reach -- so
+ * the setting has no effect there and is not an error.
+ */
+export function cutoutClipRect(canvas, g, clip) {
+  const face = faceBox(canvas, g);
+  const page = pageBox(canvas, g);
+  const pick = (edge) => ((clip && clip[edge]) === CLIP_TO_WRAP ? page[edge] : face[edge]);
+  const left = pick('left'), top = pick('top');
+  const right = pick('right'), bottom = pick('bottom');
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 /** The viewBox the builder would emit for this geometry. */
 export const viewBoxFor = (canvas, g) =>
   `${-g.dx} ${-g.dy} ${canvas.width + 2 * g.dx} ${canvas.height + 2 * g.dy}`;
@@ -184,6 +262,11 @@ export function reprojectScene(svg, canvas, from, to) {
        exactly the stretched box, and moving it here and again down there moved
        it twice -- the picture grew by the wrap squared. */
     if (get('data-role') === 'panel') return tag;
+    /* The cutout's clip is recomputed below from the target geometry and its
+       own per-edge setting. Scaling it would carry the face boundary of the
+       finish it was SAVED at onto the finish being printed, which is the
+       dependence this field exists to remove. */
+    if (get('data-role') === 'cutout-clip') return tag;
     const x = get('x'), y = get('y'), w = get('width'), h = get('height');
     if (x === null || y === null || w === null || h === null) return tag;
     if (!(near(x, oldBox.x) && near(y, oldBox.y)
@@ -255,6 +338,29 @@ export function reprojectScene(svg, canvas, from, to) {
     out = out.replace(tag, next);
     changed.push(`panel:${panel}`);
   }
+
+  /* ---- the cutout's clip, recomputed rather than moved ----
+     Only when the scene carries the marker. A scene saved before this existed
+     has a plain rect, takes none of this path, and comes out byte-identical to
+     what it produced yesterday -- which is the whole promise of "absent". */
+  out = out.replace(/<rect\b[^>]*\bdata-role="cutout-clip"[^>]*>/g, (tag) => {
+    const get = (a) => {
+      const m = new RegExp(`\\b${a}\\s*=\\s*"([^"]*)"`).exec(tag);
+      return m ? m[1] : null;
+    };
+    const clip = normaliseCutoutClip({
+      top: get('data-clip-top'), right: get('data-clip-right'),
+      bottom: get('data-clip-bottom'), left: get('data-clip-left'),
+    });
+    const rect = cutoutClipRect(canvas, to, clip);
+    let next = tag;
+    for (const [attr, val] of [['x', rect.x], ['y', rect.y],
+      ['width', rect.width], ['height', rect.height]]) {
+      next = next.replace(new RegExp(`\\b${attr}\\s*=\\s*"[^"]*"`), `${attr}="${round2(val)}"`);
+    }
+    changed.push('cutout-clip');
+    return next;
+  });
 
   return { svg: out, changed };
 }

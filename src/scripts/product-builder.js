@@ -61,6 +61,8 @@ import {
 import { builderSizes, resumeSize } from '../../netlify/functions/_shared/sizes.mjs';
 import {
   FIT, wrapInchesFor, geom as sharedGeom,
+  CLIP_EDGES, CLIP_TO_FACE, CLIP_TO_WRAP, clipAll, normaliseCutoutClip,
+  cutoutClipRect, faceBox,
 } from '../../netlify/functions/_shared/print-geometry.mjs';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
@@ -498,6 +500,47 @@ export function initProductBuilder() {
     });
     svg.append(under, r); nodes.trimGuide = r; nodes.trimUnder = under;
   }
+  /**
+   * The face boundary, while the cutout layer is selected.
+   *
+   * drawGuides() already draws this box as the trim guide, but it says the same
+   * thing on all four edges. Here each edge is drawn according to what it is
+   * about to do: a solid bright line where the cutout stops at the face, and a
+   * faint one where it is allowed to carry on into the wrap. So the question
+   * "what will be trimmed" is answered by looking at the picture rather than by
+   * reading the control.
+   *
+   * data-role="guide", like the others, so exportSVG strips it and no guide
+   * ever reaches a print.
+   */
+  function drawFaceGuide() {
+    ['faceGuide'].forEach((k) => {
+      if (nodes[k]) { nodes[k].forEach((el) => el.remove()); nodes[k] = null; }
+    });
+    if (!bleedable(selected) || !bleeds(selected)) return;
+    if (!T.size || !wrapIn()) return;           // nothing to trim without a wrap
+
+    const g = geom();
+    const f = faceBox(g.c, g);
+    const wdt = Math.max(6, g.c.width / 260);
+    const line = (x1, y1, x2, y2, edge) => mk('line', {
+      x1, y1, x2, y2, 'data-role': 'guide', 'pointer-events': 'none',
+      stroke: cutoutClip[edge] === CLIP_TO_FACE ? '#00E5FF' : 'rgba(255,255,255,.28)',
+      'stroke-width': cutoutClip[edge] === CLIP_TO_FACE ? wdt : wdt * 0.6,
+      ...(cutoutClip[edge] === CLIP_TO_FACE
+        ? {}
+        : { 'stroke-dasharray': `${g.c.width / 60} ${g.c.width / 60}` }),
+    });
+    const els = [
+      line(f.left, f.top, f.right, f.top, 'top'),
+      line(f.right, f.top, f.right, f.bottom, 'right'),
+      line(f.left, f.bottom, f.right, f.bottom, 'bottom'),
+      line(f.left, f.top, f.left, f.bottom, 'left'),
+    ];
+    els.forEach((el) => svg.appendChild(el));
+    nodes.faceGuide = els;
+  }
+
   function showGuide() { $('guide').hidden = false; }
   $('help').addEventListener('click', showGuide);
   $('guideClose').addEventListener('click', () => {
@@ -745,7 +788,7 @@ export function initProductBuilder() {
       svg.insertBefore(hit, firstAbove);
       nodes[p.id].hit = hit; wire(p.id);
     });
-    applyTint(); layoutAllText(); drawGuides();
+    applyTint(); layoutAllText(); drawGuides(); drawFaceGuide();
     nodes.handles = null; drawHandles();   // build() discarded the old layer
   }
   /* ---------- the border: composited, not recoloured ---------- */
@@ -2023,17 +2066,68 @@ export function initProductBuilder() {
   const bleeds = (id) => bleedable(id) && variantOf(state.get(id) || {}) === 'cutout';
   const maxZoomFor = (id) => (bleeds(id) ? CUTOUT_MAX_ZOOM : BASE_MAX_ZOOM);
 
+  /**
+   * How much of the wrap the cutout may use, per edge.
+   *
+   * The studio defaults to "face": a figure printed down the side of a frame is
+   * the fault this setting exists to stop, and somebody designing a catalogue
+   * piece should get the safe answer without asking for it.
+   *
+   * The customer builder defaults to "wrap", which is what it does today and
+   * what it is meant to do -- the note above this function is about the
+   * customer's cut-out running off the page on purpose. Writing it down rather
+   * than leaving it implied is what makes their preview and their print agree
+   * at every finish instead of by coincidence.
+   */
+  let cutoutClip = MODE === 'studio' ? clipAll(CLIP_TO_FACE) : clipAll(CLIP_TO_WRAP);
+
+  /** Reflect the current setting in the control, and show/hide the whole row. */
+  function syncCutoutClipUI() {
+    const box = $('clipBox');
+    if (!box) return;                       // customer builder has no control
+    const on = bleedable(selected) && bleeds(selected);
+    box.hidden = !on;
+    if (!on) return;
+    const all = (where) => CLIP_EDGES.every((e) => cutoutClip[e] === where);
+    $('clipAllFace').setAttribute('aria-pressed', String(all(CLIP_TO_FACE)));
+    $('clipAllWrap').setAttribute('aria-pressed', String(all(CLIP_TO_WRAP)));
+    document.querySelectorAll('.clip-edge').forEach((b) => {
+      b.setAttribute('aria-pressed', String(cutoutClip[b.dataset.edge] === CLIP_TO_FACE));
+    });
+    const hint = $('clipHint');
+    if (hint) {
+      hint.textContent = wrapIn()
+        ? 'Pressed = trimmed at the face. The bright line on the canvas is where it stops.'
+        : 'A poster has no wrap, so this changes nothing until a canvas finish is chosen.';
+    }
+  }
+
+  const setCutoutClip = (next) => {
+    cutoutClip = normaliseCutoutClip(next) || cutoutClip;
+    if (bleedable(selected)) applyPanelClip(selected);
+    drawFaceGuide();
+    syncCutoutClipUI();
+  };
+
   /** Point the panel's clip at either its art window or the bleeding version. */
   function applyPanelClip(id) {
     const n = nodes[id];
     if (!n || !n.clip || n.clip.tagName !== 'rect') return;   // shaped panels keep their path
     const p = n.panel;
-    const { c, dx, dy } = geom();
-    // The whole page including the wrap is exactly the viewBox.
+    const g = geom();
+    /* The bleeding version is the shared rule, per edge, so what is on screen
+       is what reprojectScene will work out again at print time. */
     const box = bleeds(id)
-      ? { x: -dx, y: -dy, width: c.width + 2 * dx, height: c.height + 2 * dy }
+      ? cutoutClipRect(g.c, g, cutoutClip)
       : { x: p.x, y: p.y, width: p.width, height: p.height };
     Object.entries(box).forEach(([k, v]) => n.clip.setAttribute(k, v));
+    if (bleeds(id)) {
+      n.clip.setAttribute('data-role', 'cutout-clip');
+      for (const edge of CLIP_EDGES) n.clip.setAttribute(`data-clip-${edge}`, cutoutClip[edge]);
+    } else {
+      n.clip.removeAttribute('data-role');
+      for (const edge of CLIP_EDGES) n.clip.removeAttribute(`data-clip-${edge}`);
+    }
   }
 
   /* Fetch the background-removed PNG and hold it alongside the styled JPEG.
@@ -2965,6 +3059,10 @@ export function initProductBuilder() {
         $('variantStyled').disabled = v === 'styled';
       }
     }
+    /* The sides control follows the selection and the variant: it belongs to
+       the cutout layer and means nothing anywhere else. */
+    syncCutoutClipUI();
+    drawFaceGuide();
 
     /* At the cap there is nothing a replacement could do: the new photograph
        would upload and then be refused a style, leaving the customer worse off
@@ -3301,6 +3399,17 @@ export function initProductBuilder() {
   $('replace').addEventListener('click', () => ask(selected));
   on('variantCutout', 'click', () => showVariant(selected, 'cutout'));
   on('variantStyled', 'click', () => showVariant(selected, 'styled'));
+  on('clipAllFace', 'click', () => setCutoutClip(clipAll(CLIP_TO_FACE)));
+  on('clipAllWrap', 'click', () => setCutoutClip(clipAll(CLIP_TO_WRAP)));
+  document.querySelectorAll('.clip-edge').forEach((b) => {
+    b.addEventListener('click', () => {
+      const edge = b.dataset.edge;
+      setCutoutClip({
+        ...cutoutClip,
+        [edge]: cutoutClip[edge] === CLIP_TO_FACE ? CLIP_TO_WRAP : CLIP_TO_FACE,
+      });
+    });
+  });
   $('swap').addEventListener('click', () => {
     if (swapFrom) cancelSwap();          // the button doubles as Cancel
     else beginSwap(selected);
@@ -3618,6 +3727,10 @@ export function initProductBuilder() {
         faceInches: [T.size.w, T.size.h], wrapInches: wrapIn(),
         fileInches: [T.size.w + 2 * wrapIn(), T.size.h + 2 * wrapIn()],
       } : null,
+      /* Recorded only where it means something: the Classic cover's cut-out.
+         Its absence on every other design is what keeps those scenes on the
+         path that touches nothing. */
+      ...(bleeds(CUTOUT_PANEL_OF_COVER) ? { cutoutClip: { ...cutoutClip } } : {}),
       background: T.bg && T.bg.type === 'colour' ? { colour: bg } : T.bg ? { artColours } : null,
       panels: T.panels.map((p) => {
         const s = state.get(p.id);
@@ -4771,6 +4884,11 @@ export function initProductBuilder() {
          which is the LARGEST. See resumeSize in _shared/sizes.mjs. */
       const picked = resumeSize(r.output, T.sizes);
       if (picked) T.size = picked;
+      /* A design reopens with the sides it was saved with. Absent leaves the
+         mode default alone, which for the studio is "face" and for a customer
+         is what their builder has always done. */
+      const savedClip = normaliseCutoutClip(r.cutoutClip);
+      if (savedClip) cutoutClip = savedClip;
       buildSizes();
       sizeBoard();
       svg.setAttribute('viewBox', viewBoxNow());

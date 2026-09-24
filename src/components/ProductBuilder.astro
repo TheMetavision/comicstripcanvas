@@ -259,6 +259,32 @@ const builderData = JSON.stringify(resolvePaletteTokens({
             <button id="variantCutout" class="b-btn" aria-pressed="true">Cutout</button>
             <button id="variantStyled" class="b-btn" aria-pressed="false">Full picture</button>
           </div>
+          {/*
+            Studio only, and only on the Classic cover's cutout. A canvas wraps
+            the picture round the stretcher bars, so anything past the front
+            face prints down the SIDES of the frame -- which is the point for a
+            figure running off the bottom, and a fault for an arm sliced down
+            the left-hand edge. The boundary is drawn on the canvas while this
+            layer is selected: a bright line where the cutout stops at the face,
+            a faint dashed one where it carries on into the wrap.
+          */}
+          {mode === 'studio' && (
+            <div id="clipBox" hidden>
+              <div class="b-row">
+                <span class="b-lab">Cutout on sides</span>
+                <button id="clipAllFace" class="b-btn" aria-pressed="true">Trim to face</button>
+                <button id="clipAllWrap" class="b-btn" aria-pressed="false">Let it wrap</button>
+              </div>
+              <div class="b-row">
+                <span class="b-lab">Per edge</span>
+                <button class="b-btn clip-edge" data-edge="top" aria-pressed="true">Top</button>
+                <button class="b-btn clip-edge" data-edge="right" aria-pressed="true">Right</button>
+                <button class="b-btn clip-edge" data-edge="bottom" aria-pressed="true">Bottom</button>
+                <button class="b-btn clip-edge" data-edge="left" aria-pressed="true">Left</button>
+              </div>
+              <p class="b-hint" id="clipHint">Pressed = trimmed at the face.</p>
+            </div>
+          )}
           <div id="cutBox" hidden>
             <div class="b-row">
               <label for="cutOn" class="b-lab">Cut out subject</label>
