@@ -73,8 +73,10 @@ const { orderId, lineKey } = Astro.params;
   const lineKey = root.dataset.line!;
 
   const $ = (id: string) => document.getElementById(id)!;
+  /* Under /admin, so the browser sends the same Basic Auth it used for this
+     page and the edge function guards the calls as well as the view. */
   const api = (action: string) =>
-    `/api/order-print-file?action=${action}&order=${encodeURIComponent(orderId)}&line=${encodeURIComponent(lineKey)}`;
+    `/admin/api/order-print-file?action=${action}&order=${encodeURIComponent(orderId)}&line=${encodeURIComponent(lineKey)}`;
 
   const ROUTE_WORDS: Record<string, string> = {
     scene: 'the saved design, re-rendered at this size',

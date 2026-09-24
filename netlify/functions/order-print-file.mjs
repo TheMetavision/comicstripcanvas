@@ -7,17 +7,20 @@ import { PRINT_STORE } from './_shared/order-print.mjs';
  * The making is a background job -- 20-26 s for the largest sheet, well past
  * the ten seconds this has. So this is the small, fast half:
  *
- *   POST  ?action=start      hand the job to the renderer, return at once
- *   GET   ?action=status     working | ready | error | absent
- *   GET   ?action=download   the bytes, named so a human can file them
+ *   POST  /admin/api/order-print-file?action=start      hand the job over
+ *   GET   /admin/api/order-print-file?action=status     working|ready|error|absent
+ *   GET   /admin/api/order-print-file?action=download   the bytes
  *
- * Not secret-protected itself, and deliberately so: it lives behind
- * /admin/print-file/... which the Basic Auth edge function guards, and the
- * whole /api/* space is deliberately open because the shop's own pages live
- * there. What it exposes is a picture of artwork the shop sells, addressable
- * only by an order id AND a line key -- but an order id is not a password, so
- * if this ever needs to be private it needs its own secret rather than
- * obscurity. Said out loud here rather than assumed.
+ * UNDER /admin ON PURPOSE. The edge function admin-auth.ts guards /admin/*, so
+ * these three inherit the same Basic Auth as the page that calls them. It used
+ * to live at /api/order-print-file, which is open like the rest of /api/*
+ * because the shop's own pages are there -- an order id and a line key are not
+ * a password, and that was protection by obscurity.
+ *
+ * The path is checked HERE as well, and that is not belt and braces: every
+ * function is permanently addressable at /.netlify/functions/<name>, which no
+ * redirect and no edge function covers. A request that did not come in under
+ * /admin/ has gone round the guard, so it is refused whatever it asks for.
  */
 
 const bad = (msg, status = 400) =>
@@ -45,6 +48,19 @@ async function refuse(store, pending, error) {
 
 export default async (req) => {
   const url = new URL(req.url);
+
+  /* Only reachable through the guarded path. A rewrite preserves the URL the
+     caller asked for, so this sees /admin/api/... when it came the right way
+     and /.netlify/functions/... or /api/... when it did not. 404 rather than
+     403: there is nothing at those addresses now, and saying so invites less
+     than announcing that something is being withheld. */
+  if (!/^\/admin\//.test(url.pathname)) {
+    return new Response('Not found', {
+      status: 404,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
+
   const action = url.searchParams.get('action') || 'status';
   const orderId = url.searchParams.get('order');
   const lineKey = url.searchParams.get('line');
@@ -91,9 +107,18 @@ export default async (req) => {
        never started -- the bug studio-save had, which worked in every local
        test because netlify dev is one long-lived process. */
     try {
-      const res = await fetch(`${origin}/api/order-print-file-render`, {
+      /* Straight at the function, with no public alias in netlify.toml: the
+         renderer is not something anyone outside this file should be able to
+         start. It checks the shared secret as well, because /.netlify/functions
+         is addressable whatever the redirects say. */
+      const res = await fetch(`${origin}/.netlify/functions/order-print-file-background`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(process.env.PERSONALISATION_ACTION_SECRET
+            ? { 'X-CSC-Action-Secret': process.env.PERSONALISATION_ACTION_SECRET }
+            : {}),
+        },
         body: JSON.stringify({ orderId, lineKey }),
       });
       if (!res.ok && res.status !== 202) {

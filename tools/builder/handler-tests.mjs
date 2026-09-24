@@ -92,6 +92,10 @@ function resetAll() {
   process.env.STRIPE_SECRET_KEY = 'sk_test_stub';
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_stub';
   process.env.GOOGLE_AI_API_KEY = 'stub-gemini-key';
+  /* The renderer refuses a job without this, and refuses outright when it is
+     unset, so the harness has to be configured the way production is or every
+     print-file test would be exercising the "not configured" branch. */
+  process.env.PERSONALISATION_ACTION_SECRET = 'stub-action-secret';
   printJobs = [];
   delete process.env.STYLE_DAILY_MAX;
   delete process.env.STUDIO_STYLE_DAILY_MAX;
@@ -144,11 +148,15 @@ globalThis.fetch = async (url, init = {}) => {
       return new Response('not found', { status: 404 });
     }
   }
-  if (href.includes('/api/order-print-file-render')) {
+  if (href.includes('order-print-file-background')) {
     const body = JSON.parse(init.body || '{}');
     printJobs.push(body);
-    return orderPrintRender(new Request('https://test.local/api/order-print-file-render', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: init.body,
+    /* The headers are forwarded, not replaced: the renderer checks the shared
+       action secret, so dropping them here would test a door with no lock. */
+    return orderPrintRender(new Request(href, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(init.headers || {}) },
+      body: init.body,
     }));
   }
   throw new Error(`handler-tests: unexpected fetch to ${href}`);
@@ -896,7 +904,7 @@ say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
   };
 
   const api = (action, extra = '') =>
-    new Request(`https://test.local/api/order-print-file?action=${action}`
+    new Request(`https://test.local/admin/api/order-print-file?action=${action}`
       + `&order=order-print-1&line=line-a${extra}`,
     { method: action === 'start' ? 'POST' : 'GET' });
 
@@ -990,7 +998,7 @@ say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
   });
 
   const forLine = async (lineKey) => {
-    const url = `https://test.local/api/order-print-file?action=start`
+    const url = `https://test.local/admin/api/order-print-file?action=start`
       + `&order=order-print-2&line=${lineKey}`;
     await orderPrintFile(new Request(url, { method: 'POST' }));
     return (await orderPrintFile(new Request(
@@ -1012,6 +1020,39 @@ say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
   ok(/fullbleed/.test(fullBleed.filename) && !/fullbleed/.test(classic.filename),
     'and the filenames say which is which',
     `${classic.filename} | ${fullBleed.filename}`);
+
+  /* ---- the locks ----
+     Both of these are the only thing standing between an order id and a print
+     file, so both are exercised rather than trusted. The edge function guards
+     /admin/*, but a function is permanently addressable at
+     /.netlify/functions/<name>, which no redirect and no edge function covers. */
+  for (const bypass of [
+    'https://test.local/api/order-print-file?action=status&order=order-print-2&line=bl-classic',
+    'https://test.local/.netlify/functions/order-print-file?action=status&order=order-print-2&line=bl-classic',
+    'https://test.local/order-print-file?action=download&order=order-print-2&line=bl-classic',
+  ]) {
+    const res = await orderPrintFile(new Request(bypass, { method: 'GET' }));
+    ok(res.status === 404, `refused off the guarded path: ${new URL(bypass).pathname}`,
+      String(res.status));
+  }
+
+  /* The renderer, reached directly with no shared secret. It answers 202
+     whatever happens -- a background function acks before it runs -- so what
+     proves the refusal is that it did no work. */
+  const jobsBefore = printJobs.length;
+  const sneaked = await orderPrintRender(new Request(
+    'https://test.local/.netlify/functions/order-print-file-background',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: 'order-print-2', lineKey: 'bl-classic' }) }));
+  ok(sneaked.status === 404, 'the renderer refuses a job with no shared secret',
+    String(sneaked.status));
+  ok(printJobs.length === jobsBefore, 'and nothing was queued by it');
+  const wrong = await orderPrintRender(new Request(
+    'https://test.local/.netlify/functions/order-print-file-background',
+    { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSC-Action-Secret': 'not-it' },
+      body: JSON.stringify({ orderId: 'order-print-2', lineKey: 'bl-classic' }) }));
+  ok(wrong.status === 404, 'and refuses a wrong one', String(wrong.status));
 }
 
 say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');

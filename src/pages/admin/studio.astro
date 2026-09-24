@@ -13,10 +13,19 @@ import ProductBuilder from '../../components/ProductBuilder.astro';
  * which family it opens on. `?t=` is applied to the mount point by the inline
  * script, which runs before the island's module script.
  *
- * NOT AUTHENTICATED. There is no admin auth in this project to put it behind --
- * see the note in the page body. What protects the destructive part is the
- * shared secret on /api/studio-save: this page cannot create anything without
- * it, so an unauthenticated visitor gets a builder and nothing else.
+ * AUTHENTICATED. netlify/edge-functions/admin-auth.ts guards /admin/* with HTTP
+ * Basic Auth, so this page is behind it -- as is everything else added under
+ * /admin since, including /admin/print-file and /admin/api/order-print-file.
+ *
+ * That is not the only layer and was never meant to be. The shared secret on
+ * /api/studio-save still protects the destructive part independently: the
+ * functions live under /api/*, which is deliberately open because the shop's
+ * own pages are there, so a page guard alone would protect the view and not
+ * the action.
+ *
+ * (This comment used to say there was no admin auth in the project. The edge
+ * function was added afterwards and the note was not, which is worth saying
+ * because the wrong version of it was true for a while.)
  */
 const FAMILIES = [
   { key: 'cover', label: 'Cover' },

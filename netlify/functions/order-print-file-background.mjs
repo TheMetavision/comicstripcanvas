@@ -52,7 +52,39 @@ const mark = async (store, key, state, extra = {}) => {
   } catch { /* the render matters more than the note about it */ }
 };
 
+/**
+ * Only order-print-file.mjs starts this, and that one is behind /admin.
+ *
+ * Checked here too because a function is permanently addressable at
+ * /.netlify/functions/<name>, which no redirect and no edge function covers --
+ * so the guard on the caller is not a guard on this. The same shared secret the
+ * Studio actions use; the same reasoning as there about what it is worth, which
+ * is a speed bump against drive-by traffic rather than real authentication.
+ *
+ * Unset is a fault everywhere but a developer's machine: refusing outright is
+ * how a missing variable gets noticed, and passing everything through is how
+ * an open endpoint ships. Mirrors admin-auth.ts.
+ */
+function refuseUnauthorised(req) {
+  const expected = process.env.PERSONALISATION_ACTION_SECRET || '';
+  const isLocal = process.env.NETLIFY_DEV === 'true' || process.env.CONTEXT === 'dev';
+  if (!expected) {
+    if (isLocal) return null;
+    console.error('order-print-file: PERSONALISATION_ACTION_SECRET is not set — refusing.');
+    return new Response('not configured', { status: 503 });
+  }
+  const given = req.headers.get('x-csc-action-secret') || '';
+  /* Length-independent compare, as the Studio actions do. */
+  if (given.length !== expected.length) return new Response('Not found', { status: 404 });
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0 ? null : new Response('Not found', { status: 404 });
+}
+
 export default async (req) => {
+  const refused = refuseUnauthorised(req);
+  if (refused) return refused;
+
   let job = {};
   try {
     job = await req.json().catch(() => ({}));

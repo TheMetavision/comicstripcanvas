@@ -195,14 +195,20 @@
   status = 200
   force = true
 
-# The print file for an order line. /api/order-print-file is the small
-# synchronous half (start, status, download); /api/order-print-file-render is
-# the renderer, which is a background function and needs its -background suffix
-# hidden the same way the other three do. This rule must come BEFORE the /api/*
-# catch-all, which would otherwise look for a function of the literal name.
+# The print file for an order line: start, status and download.
+#
+# Under /admin DELIBERATELY. Everything in /api/* is open -- the shop's own
+# pages live there -- and an order id with a line key is not a password. Routing
+# it here puts it behind admin-auth.ts, the same Basic Auth as the page that
+# calls it, with no second credential to manage.
+#
+# There is deliberately NO alias for the renderer. It is a background function
+# that only the route above starts, it checks the shared action secret, and
+# giving it a public address would be giving the internet a way to queue
+# 6300x8700 rasters.
 [[redirects]]
-  from = "/api/order-print-file-render"
-  to = "/.netlify/functions/order-print-file-background"
+  from = "/admin/api/order-print-file"
+  to = "/.netlify/functions/order-print-file"
   status = 200
   force = true
 
@@ -216,6 +222,17 @@
 [functions."order-print-file-background"]
   memory = "3gb"
   external_node_modules = ["@resvg/resvg-js", "sharp"]
+
+# The old public address, closed. /api/* maps to functions BY NAME, so without
+# this rule /api/order-print-file would still reach the function -- and the
+# whole point of moving it was that /api/* is not guarded. The function refuses
+# anything that did not arrive under /admin/ as well, because
+# /.netlify/functions/<name> is addressable whatever the redirects say.
+[[redirects]]
+  from = "/api/order-print-file"
+  to = "/404"
+  status = 404
+  force = true
 
 # Route /api/* requests to Netlify Functions.
 # Required for the contact form (src/pages/contact.astro POSTs to /api/contact
