@@ -1,6 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
-import { PRINT_STORE } from './_shared/order-print.mjs';
+import { PRINT_STORE, openPrintStore } from './_shared/order-print.mjs';
 import { STUDIO_STORE, isUploadId } from './_shared/studio-uploads.mjs';
 import { sweepGuardCounters } from './_shared/spend-guard.mjs';
 
@@ -394,7 +394,7 @@ const PRINT_RETENTION_DAYS = 30;
 
 export async function sweepOrderPrints({ dryRun = false, now = new Date(), deps = {} } = {}) {
   const sanity = deps.sanity || defaultSanity();
-  const store = (deps.stores || {})[PRINT_STORE] || getStore(PRINT_STORE);
+  const store = (deps.stores || {})[PRINT_STORE] || openPrintStore(getStore);
   const label = dryRun ? 'print sweep (DRY RUN)' : 'print sweep';
   const nowMs = now.getTime();
   const report = { examined: 0, deleted: [], blobsDeleted: 0, errors: [] };

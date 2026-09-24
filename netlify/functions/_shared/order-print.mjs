@@ -12,6 +12,28 @@ import { CLASSIC, FULL_BLEED, styleOr } from './artwork-styles.mjs';
  *  lifetime, different owner, and mixing them makes the retention sweep guess. */
 export const PRINT_STORE = 'order-prints';
 
+/**
+ * Open the print store, reading STRONGLY.
+ *
+ * Netlify Blobs reads are eventually consistent unless you ask otherwise, and
+ * this store is written by one function and read immediately by another. That
+ * is exactly the case eventual consistency breaks, and it broke it: on
+ * production, the status route said "ready" and the download route, a moment
+ * later, said "not made yet" -- two reads of the same key, one fresh and one
+ * stale. The file was there the whole time; the store listing shows it written
+ * at 15:04 with the status note pointing straight at it.
+ *
+ * It never showed up under netlify dev because the local blob server answers
+ * from one copy, so every read is strong by accident.
+ *
+ * Opened through one helper so a future caller cannot quietly get the default
+ * again -- which is what the original three getStore(PRINT_STORE) calls did.
+ */
+export const openPrintStore = (getStore) => getStore({
+  name: PRINT_STORE,
+  consistency: 'strong',
+});
+
 /** Cart format -> the finish print-geometry knows about. */
 export const FINISH_OF_FORMAT = {
   poster: 'poster',
