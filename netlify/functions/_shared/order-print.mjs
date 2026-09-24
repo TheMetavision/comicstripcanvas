@@ -109,6 +109,120 @@ export function downloadName({ orderNumber, productTitle, sizeKey, finish, style
   return `${parts.filter(Boolean).join('-')}.png`;
 }
 
+/**
+ * Was this line written by the webhook that stamps its own keys?
+ *
+ * Everything before September 2026 recorded only what a human reads -- a title,
+ * a format label, a size label -- and nothing a machine can act on. Those lines
+ * are not missing a print file; they predate the idea of one being attached.
+ * Treating them as faults lit up all fourteen orders in the dataset at once,
+ * which is the fastest way to teach somebody to ignore a warning.
+ *
+ * sizeKey rather than productSlug: the webhook sets sizeKey unconditionally on
+ * a stock line, and productSlug only when the cart carried a slug.
+ */
+export const isStamped = (line) => Boolean(line && line.sizeKey);
+
+/**
+ * A line that was never going to be printed: the artwork fee, and anything else
+ * carrying an em dash for its format and size. Not a fault and not a product.
+ */
+export const isFeeLine = (line) => {
+  /* An absent format or size counts as blank, not just an em dash. A stock
+     line always carries both -- the webhook has set them on every branch it
+     has ever had -- so a line with neither is a fee line or something
+     malformed, and both are better left alone than looked up. The cost of
+     being wrong here is a missing button on one line; the cost the other way
+     is a product offered against a line that was never for one. */
+  const blank = (v) => v === '—' || v === '-' || v === '' || v == null;
+  return Boolean(line) && blank(line.format) && blank(line.size);
+};
+
+/**
+ * A personalised line from the old flow, which recorded no buildKind.
+ *
+ * webhook.mjs's legacy branch keys these `pers-<timestamp>` (and once
+ * `pers-icon-<timestamp>`), alongside the `artfee-` line above. They are
+ * printed from the customer's own brief on the Personalisations entry, exactly
+ * like a modern built line -- so they have no stock product, and hunting for
+ * one produces "no product for Personalised Comic Book Icon" against ten of the
+ * fourteen orders in the dataset. That is the same false alarm this change
+ * exists to remove, one flow older.
+ */
+export const isLegacyBuildLine = (line, lineKey = '') =>
+  Boolean(line) && !line.buildKind && /^pers(-|$)/.test(String(lineKey || line._key || ''));
+
+/** Is this line printed from a stock product at all? */
+export const isStockLine = (line, lineKey = '') =>
+  Boolean(line) && !line.buildKind && !isFeeLine(line) && !isLegacyBuildLine(line, lineKey);
+
+/**
+ * Where to look for the product a line was for, most reliable first.
+ *
+ * `named` means the line said so outright and there is nothing to fall back to:
+ * a wrong slug must fail rather than quietly resolve to something else.
+ * Otherwise the line's own _key is the best evidence -- the webhook built it as
+ * <slug>-<style>-<format>-<size>-<index>, and before styles existed without the
+ * style -- so each suffix is stripped in turn.
+ */
+export function slugCandidates(line = {}, lineKey = '') {
+  const named = line.productSlug || line.slug || null;
+  if (named) return { candidates: [named], named: true };
+
+  const parts = String(lineKey || '').split('-').filter(Boolean);
+  const candidates = [];
+  for (let take = parts.length - 1; take >= 1; take--) {
+    const c = parts.slice(0, take).join('-');
+    if (c && !candidates.includes(c)) candidates.push(c);
+  }
+  return { candidates, named: false };
+}
+
+/**
+ * Which product this line was for.
+ *
+ * The lookups are injected so the same rules serve the renderer, which has a
+ * server client and a write token, and the Studio panel, which has neither.
+ *
+ * An ambiguous title REFUSES. Three published products are called "Bob Marley"
+ * -- bob-marley-cover, bob-marley-icon and bob-marley -- so picking the first
+ * would offer somebody a different picture from the one that was bought, and
+ * look entirely reasonable doing it.
+ *
+ * @param bySlug  async (slug) => product | null
+ * @param byTitle async (title) => [{ slug }]
+ */
+export async function resolveLineProduct({ line = {}, lineKey = '', bySlug, byTitle }) {
+  const { candidates, named } = slugCandidates(line, lineKey);
+  for (const slug of candidates) {
+    const found = await bySlug(slug);
+    if (found) return { product: found, by: named ? 'slug' : 'key' };
+  }
+  if (named) {
+    return { error: `no product with slug "${candidates[0]}"`, reason: 'missing' };
+  }
+
+  const title = line.productTitle;
+  if (!title) return { error: 'this line does not name a product', reason: 'missing' };
+
+  const matches = (await byTitle(title)) || [];
+  if (matches.length === 1) {
+    const slug = matches[0]?.slug || matches[0];
+    const found = await bySlug(slug);
+    if (found) return { product: found, by: 'title' };
+  }
+  if (matches.length > 1) {
+    const slugs = matches.map((m) => m?.slug || m);
+    return {
+      error: `"${title}" matches ${matches.length} products (${slugs.join(', ')}) `
+        + 'and this line does not say which',
+      reason: 'ambiguous',
+      candidates: slugs,
+    };
+  }
+  return { error: `no product for "${title}"`, reason: 'missing' };
+}
+
 /** Which scene id a line's style is printed from, if the product has one. */
 export const sceneIdFor = (product, style) =>
   (styleOr(style) === FULL_BLEED ? product?.fullBleed?.sceneId : product?.classicSceneId) || null;

@@ -134,9 +134,10 @@ export default defineType({
               styleLabel: 'artworkStyleLabel',
               printFile: 'printFile',
               buildKind: 'buildKind',
+              sizeKey: 'sizeKey',
               media: 'listingImageRef',
             },
-            prepare({ title, format, size, qty, price, style, styleLabel, printFile, buildKind, media }) {
+            prepare({ title, format, size, qty, price, style, styleLabel, printFile, buildKind, sizeKey, media }) {
               /* The style goes in the SUBTITLE, where a picker sees it without
                  opening the line. A two-style product is two orders that look
                  identical until you read which file to print -- and a one-style
@@ -147,8 +148,16 @@ export default defineType({
                 || (style === 'fullBleed' ? 'Full bleed' : null);
               /* A built line is fulfilled from its own approved render, so an
                  empty Print File is correct there and must not be shouted
-                 about. On a stock line it means there is nothing to print. */
-              const printMissing = !printFile && !buildKind;
+                 about. On a stock line it means there is nothing to print.
+
+                 And only on a line the current webhook wrote. Everything before
+                 September 2026 stored a title and two labels and nothing a
+                 machine can act on -- those lines are not missing a file, they
+                 predate one being attached, and flagging them lit up all
+                 fourteen orders in the dataset at once. sizeKey is the mark of
+                 a stamped line; the panel above resolves the product for the
+                 rest and shows its current master. */
+              const printMissing = !printFile && !buildKind && Boolean(sizeKey);
               return {
                 title: printMissing ? `⚠ PRINT FILE MISSING — ${title}` : `${title}`,
                 subtitle: `${styleName ? styleName + ' · ' : ''}${format} / ${size} × ${qty} — £${((price || 0) * (qty || 1)).toFixed(2)}`,

@@ -43,14 +43,23 @@ const structure = (S: any) =>
                  picture on the product page -- so nothing else distinguishes
                  it, and it cannot be fulfilled until the artwork exists. A
                  built line is excluded: those are printed from the render on
-                 their Personalisations entry and carry no printFile by design. */
+                 their Personalisations entry and carry no printFile by design.
+
+                 defined(sizeKey) excludes everything written before September
+                 2026. Those lines store a title and two labels and nothing a
+                 machine can act on, so an absent print file there says nothing
+                 about the product -- and without this the list held all
+                 fourteen orders in the dataset, every one of them a false
+                 alarm. A list that is always full is a list nobody opens. */
               S.listItem()
                 .title('Needs attention')
                 .child(
                   S.documentTypeList('order')
                     .title('Needs attention — no print file')
                     .filter(
-                      '_type == "order" && count(lineItems[!defined(printFile) && !defined(buildKind)]) > 0'
+                      '_type == "order" && count(lineItems['
+                      + '!defined(printFile) && !defined(buildKind) && defined(sizeKey)'
+                      + ']) > 0'
                     )
                     .defaultOrdering([{ field: 'createdAt', direction: 'desc' }])
                 ),

@@ -8,7 +8,7 @@ import { faceFor, renderFromScene, fitFlatMaster, readDpi } from './_shared/prin
 import { dataUri } from './_shared/scene.mjs';
 import {
   PRINT_STORE, keysFromLine, printKeyFor, sourceId, downloadName,
-  sceneIdFor, orientationFor,
+  sceneIdFor, orientationFor, resolveLineProduct,
 } from './_shared/order-print.mjs';
 
 /**
@@ -244,59 +244,19 @@ export default async (req) => {
 /**
  * Which product this line is for.
  *
- * Lines written from now on carry productSlug and this is one read. Older ones
- * do not, and the two obvious fallbacks are both traps:
- *
- *   slugifying the title  "Bob Marley" gives bob-marley, and the line was for
- *                         bob-marley-icon.
- *   matching the title    THREE published products are called "Bob Marley" --
- *                         bob-marley-cover, bob-marley-icon and bob-marley.
- *                         Picking the first would print a different picture
- *                         from the one that was bought, and it would look
- *                         entirely plausible doing it.
- *
- * So the line's own _key is tried first, which the webhook built as
- * <slug>-<style>-<format>-<size>-<index> (and, before styles existed, without
- * the style). Every suffix is stripped in turn and each candidate looked up.
- * If that finds nothing, the title is matched -- and an ambiguous title REFUSES
- * rather than choosing. A missing print file is a nuisance; the wrong one
- * reaches a customer's wall.
+ * The rules live in _shared/order-print.mjs, because the Studio's own panel has
+ * to answer exactly the same question about exactly the same lines -- and two
+ * implementations of "which product was this" would eventually disagree about
+ * one, which is a wrong picture offered to somebody about to print it.
  */
-async function findProduct(line, lineKey) {
-  const bySlug = (slug) => sanity.fetch(
-    `*[_type == "product" && slug.current == $slug][0]${PRODUCT_FIELDS}`, { slug });
-
-  if (line.productSlug || line.slug) {
-    const p = await bySlug(line.productSlug || line.slug);
-    if (p) return { product: p };
-    return { error: `no product with slug "${line.productSlug || line.slug}"` };
-  }
-
-  const parts = String(lineKey || '').split('-');
-  for (let take = parts.length - 1; take >= 1; take--) {
-    const candidate = parts.slice(0, take).join('-');
-    if (!candidate) continue;
-    const p = await bySlug(candidate);
-    if (p) return { product: p };
-  }
-
-  const sameTitle = await sanity.fetch(
-    `*[_type == "product" && title == $title]{ "slug": slug.current }`,
-    { title: line.productTitle }
-  );
-  if (sameTitle.length === 1) {
-    const p = await bySlug(sameTitle[0].slug);
-    if (p) return { product: p };
-  }
-  if (sameTitle.length > 1) {
-    return {
-      error: `"${line.productTitle}" matches ${sameTitle.length} products `
-        + `(${sameTitle.map((s) => s.slug).join(', ')}) and this line does not say which. `
-        + 'Refusing to guess — print from the product itself.',
-    };
-  }
-  return { error: `no product for "${line.productTitle}"` };
-}
+const findProduct = (line, lineKey) => resolveLineProduct({
+  line,
+  lineKey,
+  bySlug: (slug) => sanity.fetch(
+    `*[_type == "product" && slug.current == $slug][0]${PRODUCT_FIELDS}`, { slug }),
+  byTitle: (title) => sanity.fetch(
+    '*[_type == "product" && title == $title]{ "slug": slug.current }', { title }),
+});
 
 // Declared HERE, not in netlify.toml: the memory key in that file is not
 // applied by the bundler, which is how a studio render was killed mid-rasterise
