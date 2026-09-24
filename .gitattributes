@@ -1,0 +1,38 @@
+# Line endings, decided once.
+#
+# Without this, what lands in a commit depends on each machine's core.autocrlf
+# and on which tool last wrote the file. retention.mjs was committed as LF, a
+# later edit wrote it back as CRLF, and the next `git add` staged the whole file
+# as changed -- 669 added and 515 deleted for an edit that touched 154 lines.
+# A diff that size hides its own content, which is the real cost.
+#
+# text=auto eol=lf: git decides what is text, stores it with LF, and checks it
+# out with LF. Editors on Windows have handled LF for years, and every consumer
+# of this repository -- Netlify's build, the functions, node -- is happier with
+# it than with CRLF.
+* text=auto eol=lf
+
+# Binary, so git never inspects or converts the bytes. A "text" file that is
+# really an image gets its 0x0D bytes rewritten on checkout, and the result is
+# a corrupt file that looks fine in a diff because git will not show it.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.avif binary
+*.ico  binary
+*.pdf  binary
+
+# Fonts. tools/builder/renderer/_fonts and public/builder/fonts hold the two
+# licensed faces the print renderer loads explicitly, and a corrupted one does
+# not fall back -- prepareScene throws rather than substituting, by design.
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+
+# Media.
+*.mp4 binary
+*.webm binary
+*.mov binary
