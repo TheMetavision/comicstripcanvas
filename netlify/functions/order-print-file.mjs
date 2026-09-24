@@ -115,8 +115,8 @@ export default async (req) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(process.env.PERSONALISATION_ACTION_SECRET
-            ? { 'X-CSC-Action-Secret': process.env.PERSONALISATION_ACTION_SECRET }
+          ...(process.env.CSC_INTERNAL_SECRET
+            ? { 'X-CSC-Internal-Secret': process.env.CSC_INTERNAL_SECRET }
             : {}),
         },
         body: JSON.stringify({ orderId, lineKey }),

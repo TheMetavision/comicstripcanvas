@@ -6,7 +6,7 @@ import { STYLES, isStyle, sceneKey, printKey, legacySceneKey, legacyPrintKey, st
 /**
  * Run a studio render again, from the scene already in the store.
  *
- *     POST /api/studio-render/<productId>     X-CSC-Action-Secret: <secret>
+ *     POST /api/studio-render/<productId>     X-CSC-Internal-Secret: <secret>
  *     POST /api/studio-render/<productId>?style=fullBleed
  *
  * A save writes three things: the draft, the scene, and the request that starts
@@ -48,12 +48,12 @@ function sameSecret(given, expected) {
 const isId = (s) => typeof s === 'string' && /^[A-Za-z0-9._-]{1,120}$/.test(s) && !s.includes('..');
 
 export default async (req) => {
-  const expected = process.env.PERSONALISATION_ACTION_SECRET;
+  const expected = process.env.CSC_INTERNAL_SECRET;
   if (!expected) {
-    console.error('studio-rerender: PERSONALISATION_ACTION_SECRET is not set — refusing.');
+    console.error('studio-rerender: CSC_INTERNAL_SECRET is not set — refusing.');
     return json({ error: 'Re-rendering is not configured on this deploy' }, 503);
   }
-  if (!sameSecret(req.headers.get('x-csc-action-secret'), expected)) {
+  if (!sameSecret(req.headers.get('x-csc-internal-secret'), expected)) {
     console.warn('studio-rerender: rejected a call with a bad or missing secret');
     return json({ error: 'Not authorised' }, 401);
   }

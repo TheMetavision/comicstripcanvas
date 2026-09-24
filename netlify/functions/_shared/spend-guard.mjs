@@ -362,12 +362,12 @@ export function visitorKey(req, context) {
  */
 export function requestOrigin(req, { claimed = null } = {}) {
   if (originOr(claimed) !== STUDIO) return CUSTOMER;
-  const expected = process.env.PERSONALISATION_ACTION_SECRET;
+  const expected = process.env.CSC_INTERNAL_SECRET;
   if (!expected) {
     console.warn('spend-guard: a request claimed the studio origin but no secret is configured');
     return CUSTOMER;
   }
-  const given = req?.headers?.get ? req.headers.get('x-csc-action-secret') : null;
+  const given = req?.headers?.get ? req.headers.get('x-csc-internal-secret') : null;
   if (!sameSecret(given, expected)) {
     console.warn('spend-guard: a request claimed the studio origin with a bad or missing secret');
     return CUSTOMER;

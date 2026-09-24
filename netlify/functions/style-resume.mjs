@@ -61,8 +61,8 @@ export default async (req) => {
      force-rewrites /api/* to /.netlify/functions/, so assume this is reachable
      and require the shared secret for anything that is not the scheduler. This
      one SPENDS MONEY, so a bare GET must not be able to start it. */
-  const secret = process.env.PERSONALISATION_ACTION_SECRET;
-  const authorised = !!secret && req.headers.get('x-csc-action-secret') === secret;
+  const secret = process.env.CSC_INTERNAL_SECRET;
+  const authorised = !!secret && req.headers.get('x-csc-internal-secret') === secret;
   if (!scheduled && !authorised) {
     console.warn('style-resume: refused an unauthorised manual invocation');
     return json({ error: 'Not authorised' }, 401);

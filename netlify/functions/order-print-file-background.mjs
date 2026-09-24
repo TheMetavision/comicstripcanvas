@@ -66,14 +66,14 @@ const mark = async (store, key, state, extra = {}) => {
  * an open endpoint ships. Mirrors admin-auth.ts.
  */
 function refuseUnauthorised(req) {
-  const expected = process.env.PERSONALISATION_ACTION_SECRET || '';
+  const expected = process.env.CSC_INTERNAL_SECRET || '';
   const isLocal = process.env.NETLIFY_DEV === 'true' || process.env.CONTEXT === 'dev';
   if (!expected) {
     if (isLocal) return null;
-    console.error('order-print-file: PERSONALISATION_ACTION_SECRET is not set — refusing.');
+    console.error('order-print-file: CSC_INTERNAL_SECRET is not set — refusing.');
     return new Response('not configured', { status: 503 });
   }
-  const given = req.headers.get('x-csc-action-secret') || '';
+  const given = req.headers.get('x-csc-internal-secret') || '';
   /* Length-independent compare, as the Studio actions do. */
   if (given.length !== expected.length) return new Response('Not found', { status: 404 });
   let diff = 0;

@@ -1,125 +1,88 @@
-import React, { useState } from 'react';
 import type { DocumentActionComponent, DocumentActionProps } from 'sanity';
 
 /**
  * Approve / Hold / Re-render for pendingPersonalisation.
  *
- * Anything with a consequence outside Sanity — sending the customer their proof,
- * starting a render — happens in netlify/functions/personalisation-action.mjs,
- * not here. The Studio only asks.
+ * THERE IS NO SECRET IN THIS FILE, AND THERE CANNOT BE ONE.
  *
- * NOTE ON THE SECRET: SANITY_STUDIO_* values are inlined into the Studio bundle
- * at build time, and that bundle is public. This shared secret therefore keeps
- * out casual traffic, not a determined reader of the JavaScript. See the note in
- * netlify.toml.
+ * These buttons used to POST to /api/personalisation-action with a shared
+ * secret read from SANITY_STUDIO_PERSONALISATION_ACTION_SECRET. Vite inlines
+ * SANITY_STUDIO_* values at build time and the Studio bundle is served to
+ * anyone who asks, so that secret was public -- not in principle, in fact: the
+ * 40-character value was in comicstripcanvas.sanity.studio/static/sanity-*.js,
+ * six megabytes, no login, and the same secret also guarded studio-save,
+ * studio-upload and the renderers.
+ *
+ * A browser cannot keep a shared secret, so the fix is not a better secret. The
+ * work moved behind /admin, where the Basic Auth edge function challenges for a
+ * credential the operator types -- and these buttons now do the one thing a
+ * public bundle may safely do: open a URL.
+ *
+ * WHY OPEN A PAGE RATHER THAN FETCH
+ *
+ * The Studio is served from sanity.studio and the site from
+ * comicstripcanvas.co.uk. A cross-origin fetch does not carry Basic Auth, and a
+ * 401 on a cross-origin XHR does not prompt anybody for anything -- it just
+ * fails. Opening the page makes it a top-level navigation, which is exactly the
+ * case browsers DO challenge on. The page then calls the function same-origin,
+ * with the credentials the browser is already holding.
+ *
+ * The cost is that the Studio no longer sees the outcome, so it no longer
+ * claims one: the page reports what happened, and these buttons say only that
+ * it was opened.
  */
 
 const SITE =
   (import.meta as any).env?.SANITY_STUDIO_SITE_URL || 'https://comicstripcanvas.co.uk';
-const SECRET =
-  (import.meta as any).env?.SANITY_STUDIO_PERSONALISATION_ACTION_SECRET || '';
 
-async function callAction(action: string, id: string, extra: Record<string, unknown> = {}) {
-  const res = await fetch(`${SITE}/api/personalisation-action`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSC-Action-Secret': SECRET,
-    },
-    body: JSON.stringify({ action, id, ...extra }),
-  });
-  let body: any = {};
-  try { body = await res.json(); } catch { /* non-JSON error page */ }
-  if (!res.ok || body.ok === false) {
-    throw new Error(body.error || `${action} failed (${res.status})`);
-  }
-  return body;
-}
+const open = (id: string, action: string) => {
+  const url = `${SITE}/admin/personalisation/${encodeURIComponent(id)}?action=${action}`;
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
 
 const statusOf = (props: DocumentActionProps) =>
   ((props.draft || props.published) as any)?.status as string | undefined;
 
 /* ---------------------------------------------------------------- approve --- */
 export const ApproveAction: DocumentActionComponent = (props) => {
-  const [busy, setBusy] = useState(false);
   const status = statusOf(props);
   if (status !== 'rendered') return null;   // only a rendered proof can be approved
 
   return {
-    label: busy ? 'Approving…' : 'Approve',
+    label: 'Approve…',
     tone: 'positive',
-    disabled: busy,
-    onHandle: async () => {
-      setBusy(true);
-      try {
-        const r = await callAction('approve', props.id);
-        props.onComplete();
-        if (r.emailed === false) {
-          window.alert(
-            'Approved, but the proof email did not send:\n\n' +
-            (r.emailError || 'unknown reason') +
-            '\n\nThe customer has not been told. Re-send once that is fixed.'
-          );
-        }
-      } catch (err: any) {
-        window.alert('Could not approve:\n\n' + err.message);
-      } finally {
-        setBusy(false);
-      }
+    onHandle: () => {
+      open(props.id, 'approve');
+      props.onComplete();
     },
   };
 };
 
 /* ------------------------------------------------------------------- hold --- */
-export const HoldAction: DocumentActionComponent = (props) => {
-  const [busy, setBusy] = useState(false);
-
-  return {
-    label: busy ? 'Holding…' : 'Hold',
-    tone: 'critical',
-    disabled: busy,
-    onHandle: async () => {
-      // Deliberately a prompt: a hold always wants a reason, and the reason is
-      // the whole point of the action.
-      const note = window.prompt('Why is this going on hold?');
-      if (note === null) return;                 // cancelled
-      if (!note.trim()) {
-        window.alert('A hold needs a note saying why.');
-        return;
-      }
-      setBusy(true);
-      try {
-        await callAction('hold', props.id, { note: note.trim() });
-        props.onComplete();
-      } catch (err: any) {
-        window.alert('Could not put on hold:\n\n' + err.message);
-      } finally {
-        setBusy(false);
-      }
-    },
-  };
-};
+export const HoldAction: DocumentActionComponent = (props) => ({
+  label: 'Hold…',
+  tone: 'critical',
+  onHandle: () => {
+    /* The note is asked for on the page, not here. A hold always wants a
+       reason, and the page is where the reason can be typed, checked and shown
+       back -- a window.prompt in the Studio could only hand it to a request
+       this file is no longer allowed to make. */
+    open(props.id, 'hold');
+    props.onComplete();
+  },
+});
 
 /* -------------------------------------------------------------- re-render --- */
 export const RerenderAction: DocumentActionComponent = (props) => {
-  const [busy, setBusy] = useState(false);
   const status = statusOf(props);
   if (status !== 'rendered' && status !== 'on_hold') return null;
 
   return {
-    label: busy ? 'Starting…' : 'Re-render',
+    label: 'Re-render…',
     tone: 'caution',
-    disabled: busy,
-    onHandle: async () => {
-      setBusy(true);
-      try {
-        await callAction('rerender', props.id);
-        props.onComplete();
-      } catch (err: any) {
-        window.alert('Could not start a re-render:\n\n' + err.message);
-      } finally {
-        setBusy(false);
-      }
+    onHandle: () => {
+      open(props.id, 'rerender');
+      props.onComplete();
     },
   };
 };

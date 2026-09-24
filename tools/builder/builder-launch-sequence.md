@@ -96,7 +96,7 @@ it once triggered a real deletion.
 | `CUTOUT_SERVICE_URL` / `CUTOUT_TOKEN` | the Fly cutout service |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | **live**, not test |
 | `RESEND_API_KEY` | transactional email |
-| `PERSONALISATION_ACTION_SECRET` | Studio actions and `studio-save` |
+| `CSC_INTERNAL_SECRET` | Studio actions and `studio-save` |
 
 With either cutout variable unset the cutout step is skipped rather than failed:
 nothing is logged, the cover keeps its styled image, and the status endpoint
@@ -113,7 +113,7 @@ reports `cutoutEnabled: false` so the builder does not wait for it.
       the order above rather than rendering a separate one.
 - [ ] **Decide about `/admin/studio`.** There is no admin auth in this project,
       so the page is open to anyone with the URL. It is `noindex`, and
-      `studio-save` refuses without `PERSONALISATION_ACTION_SECRET`, which the
+      `studio-save` refuses without `CSC_INTERNAL_SECRET`, which the
       page prompts for once per session — so a visitor gets a builder and can
       save nothing. That may be enough, or it may not.
 - [ ] **Someone owns the review queue** and knows the promise the proof email

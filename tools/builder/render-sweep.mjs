@@ -408,7 +408,7 @@ export async function run(argv, deps = {}) {
 
   log('');
   log('  INCOMPLETE — the render never finished. Run it again from the stored scene:');
-  log('      POST /api/studio-render/<id>   X-CSC-Action-Secret: <secret>');
+  log('      POST /api/studio-render/<id>   X-CSC-Internal-Secret: <secret>');
   log('  RACE — the artwork is on the draft. Publish the product again to promote it.');
   log('  ORPHAN — no product has this id. Do NOT re-render: the document is gone,');
   log('      so the scene blob is stale and the render would recreate a deleted product.');

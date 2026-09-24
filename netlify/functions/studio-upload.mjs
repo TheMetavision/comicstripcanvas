@@ -79,12 +79,12 @@ const intHeader = (req, name) => {
 };
 
 export default async (req) => {
-  const expected = process.env.PERSONALISATION_ACTION_SECRET;
+  const expected = process.env.CSC_INTERNAL_SECRET;
   if (!expected) {
-    console.error('studio-upload: PERSONALISATION_ACTION_SECRET is not set — refusing.');
+    console.error('studio-upload: CSC_INTERNAL_SECRET is not set — refusing.');
     return json({ error: 'Uploading is not configured on this deploy' }, 503);
   }
-  if (!sameSecret(req.headers.get('x-csc-action-secret'), expected)) {
+  if (!sameSecret(req.headers.get('x-csc-internal-secret'), expected)) {
     console.warn('studio-upload: rejected a call with a bad or missing secret');
     return json({ error: 'Not authorised' }, 401);
   }

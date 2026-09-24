@@ -63,17 +63,31 @@ const newToken = () => {
   return [...b].map((n) => n.toString(16).padStart(2, '0')).join('');
 };
 
-export default async (req, context) => {
+export default async (req) => {
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
 
-  const expected = process.env.PERSONALISATION_ACTION_SECRET;
-  if (!expected) {
-    console.error('personalisation-action: PERSONALISATION_ACTION_SECRET is not set — refusing.');
-    return json({ ok: false, error: 'Actions are not configured on this deploy' }, 503);
-  }
-  if (!sameSecret(req.headers.get('x-csc-action-secret'), expected)) {
-    console.warn('personalisation-action: rejected a call with a bad or missing secret');
-    return json({ ok: false, error: 'Not authorised' }, 401);
+  /* GUARDED BY /admin, NOT BY A SECRET.
+
+     This used to require a shared secret that the Sanity Studio sent from the
+     browser. Vite inlines SANITY_STUDIO_* at build time and the Studio bundle
+     is served publicly, so that secret was downloadable by anyone --
+     confirmed, not assumed: the 40-character value was sitting in
+     comicstripcanvas.sanity.studio/static/sanity-BhzeSybN.js, 6 MB, no login.
+     And the same secret guarded studio-save, studio-upload and the renderers.
+
+     A browser cannot hold a shared secret. So the secret is gone from the
+     browser entirely and this now lives under /admin/, where admin-auth.ts
+     challenges for Basic Auth -- a credential the operator types and the
+     browser holds, which is what that mechanism is for. The Studio's buttons
+     open an /admin page and the page calls this same-origin.
+
+     Checked here as well as by the edge function: every function stays
+     addressable at /.netlify/functions/<name>, which no redirect and no edge
+     function covers. */
+  const path = new URL(req.url).pathname;
+  if (!/^\/admin\//.test(path)) {
+    console.warn(`personalisation-action: refused a call off the guarded path (${path})`);
+    return json({ ok: false, error: 'Not found' }, 404);
   }
 
   let body;

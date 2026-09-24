@@ -19,7 +19,7 @@ import type { Config, Context } from '@netlify/edge-functions';
  * /api/* is deliberately untouched. Every function lives there -- the customer
  * builder's uploads and status polls, the Studio's actions, the Stripe webhook
  * -- and a password on any of it would break the shop. This guards the page;
- * studio-save still refuses without PERSONALISATION_ACTION_SECRET, so there are
+ * studio-save still refuses without CSC_INTERNAL_SECRET, so there are
  * two independent layers and this is not the only one.
  */
 

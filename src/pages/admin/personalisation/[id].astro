@@ -1,0 +1,149 @@
+---
+export const prerender = false;
+
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+/**
+ * Approve / Hold / Re-render one personalisation.
+ *
+ * Opened from the buttons on the Sanity Studio document. The Studio bundle is
+ * public, so it cannot carry a credential and does not: it opens this URL, the
+ * Basic Auth edge function challenges for one, and the work happens here.
+ *
+ * prerender = false because the site builds static and this route has a build
+ * id in it. Nothing to prerender and nothing to cache.
+ */
+const { id } = Astro.params;
+const action = (Astro.url.searchParams.get('action') || '').toLowerCase();
+const KNOWN = ['approve', 'hold', 'rerender'];
+const wanted = KNOWN.includes(action) ? action : '';
+---
+
+<BaseLayout title="Personalisation" description="Internal.">
+  <main class="max-w-2xl mx-auto px-4 py-16">
+    <h1 class="font-bangers text-4xl text-comic-yellow mb-2">Personalisation</h1>
+    <p class="font-source text-gray-400 text-sm mb-8">
+      <code class="text-off-white">{id}</code>
+    </p>
+
+    <div
+      id="pa"
+      class="border-4 border-black bg-panel-dark p-6"
+      style="box-shadow: 4px 4px 0 #000;"
+      data-id={id}
+      data-action={wanted}
+    >
+      <p id="pa-state" class="font-russo text-off-white text-lg mb-2">Ready</p>
+      <p id="pa-detail" class="font-source text-gray-400 text-sm mb-5">
+        Choose what to do with this build.
+      </p>
+
+      <div id="pa-hold" class="mb-5 hidden">
+        <label class="font-source text-gray-300 text-sm block mb-2" for="pa-note">
+          Why is this going on hold?
+        </label>
+        <textarea
+          id="pa-note"
+          rows="3"
+          class="w-full bg-black border-4 border-black text-off-white font-source text-sm p-3"
+          placeholder="The reason is the whole point of a hold — it is shown on the build."
+        ></textarea>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <button id="pa-approve" class="btn-primary" type="button">APPROVE</button>
+        <button id="pa-hold-btn" class="btn-primary" type="button" style="background:#f03e2f;">HOLD</button>
+        <button id="pa-rerender" class="btn-primary" type="button" style="background:#f5a623;color:#000;">RE-RENDER</button>
+      </div>
+
+      <p id="pa-error" class="font-source text-sm mt-5 hidden" style="color:#ff6b6b;"></p>
+      <p id="pa-ok" class="font-source text-sm mt-5 hidden" style="color:#4caf50;"></p>
+    </div>
+
+    <p class="font-source text-gray-500 text-xs mt-6">
+      You are signed in to the admin area; there is no separate key for these actions.
+      Close the tab when you are done — the Studio will show the new status once it
+      refreshes.
+    </p>
+  </main>
+</BaseLayout>
+
+<script>
+  const root = document.getElementById('pa')!;
+  const id = root.dataset.id!;
+  const wanted = root.dataset.action || '';
+  const $ = (x: string) => document.getElementById(x)!;
+
+  const say = (state: string, detail: string) => {
+    $('pa-state').textContent = state;
+    $('pa-detail').textContent = detail;
+  };
+  const fail = (msg: string) => {
+    $('pa-ok').classList.add('hidden');
+    const e = $('pa-error');
+    e.textContent = msg;
+    e.classList.remove('hidden');
+  };
+  const done = (msg: string) => {
+    $('pa-error').classList.add('hidden');
+    const o = $('pa-ok');
+    o.textContent = msg;
+    o.classList.remove('hidden');
+  };
+
+  let busy = false;
+  async function run(action: string, extra: Record<string, unknown> = {}) {
+    if (busy) return;
+    busy = true;
+    say('Working…', `Sending ${action}.`);
+    try {
+      /* Same-origin and under /admin, so the browser attaches the Basic Auth
+         it was already challenged for. No secret travels from this page. */
+      const res = await fetch('/admin/api/personalisation-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, id, ...extra }),
+      });
+      let body: any = {};
+      try { body = await res.json(); } catch { /* not JSON */ }
+      if (!res.ok || body.ok === false) {
+        throw new Error(body.error || `${action} failed (${res.status})`);
+      }
+      say('Done', '');
+      if (action === 'approve' && body.emailed === false) {
+        fail('Approved, but the proof email did not send: '
+          + (body.emailError || 'unknown reason')
+          + '. The customer has not been told.');
+      } else {
+        done(action === 'approve' ? 'Approved, and the customer has been emailed their proof.'
+          : action === 'hold' ? 'On hold. The note is on the build.'
+            : 'A re-render has been started.');
+      }
+    } catch (err) {
+      say('Ready', 'Choose what to do with this build.');
+      fail((err as Error).message);
+    } finally {
+      busy = false;
+    }
+  }
+
+  $('pa-approve').addEventListener('click', () => run('approve'));
+  $('pa-rerender').addEventListener('click', () => run('rerender'));
+
+  const showHold = () => {
+    $('pa-hold').classList.remove('hidden');
+    ($('pa-note') as HTMLTextAreaElement).focus();
+  };
+  $('pa-hold-btn').addEventListener('click', () => {
+    const box = $('pa-hold');
+    if (box.classList.contains('hidden')) { showHold(); return; }
+    const note = ($('pa-note') as HTMLTextAreaElement).value.trim();
+    if (!note) { fail('A hold needs a note saying why.'); return; }
+    run('hold', { note });
+  });
+
+  /* The Studio opened this with an intent. Approve and re-render run straight
+     away; a hold stops to ask for its reason first. */
+  if (wanted === 'approve' || wanted === 'rerender') run(wanted);
+  else if (wanted === 'hold') { showHold(); say('Ready', 'Add a note, then press HOLD.'); }
+</script>

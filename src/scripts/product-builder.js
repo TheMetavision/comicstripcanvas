@@ -2297,7 +2297,7 @@ export function initProductBuilder() {
     for (let i = 0; i < total; i++) {
       const headers = {
         'Content-Type': 'application/octet-stream',
-        'X-CSC-Action-Secret': studioSecret(false),
+        'X-CSC-Internal-Secret': studioSecret(false),
         'X-Upload-Index': String(i),
         'X-Upload-Total': String(total),
         'X-Upload-Bytes': String(file.size),
@@ -4383,7 +4383,7 @@ export function initProductBuilder() {
     let products = [];
     try {
       const res = await fetch(`/api/studio-save?q=${encodeURIComponent(term.trim())}`, {
-        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+        headers: { 'X-CSC-Internal-Secret': studioSecret(false) },
       });
       if (res.status === 401) {
         try { sessionStorage.removeItem('csc-studio-secret'); } catch (e) { /* private mode */ }
@@ -4559,7 +4559,7 @@ export function initProductBuilder() {
       for (const [id, st] of filled) fd.append('upload:' + id, st.key);
       const res = await fetch('/api/studio-save', {
         method: 'POST',
-        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+        headers: { 'X-CSC-Internal-Secret': studioSecret(false) },
         body: fd,
       });
       const { data, text } = await readReply(res);
@@ -4591,7 +4591,7 @@ export function initProductBuilder() {
     let v = '';
     try { v = reset ? '' : (sessionStorage.getItem('csc-studio-secret') || ''); } catch (e) { /* private mode */ }
     if (!v) {
-      v = window.prompt('Studio secret (PERSONALISATION_ACTION_SECRET)') || '';
+      v = window.prompt('Studio secret (CSC_INTERNAL_SECRET)') || '';
       try { sessionStorage.setItem('csc-studio-secret', v); } catch (e) { /* private mode */ }
     }
     return v;
@@ -4620,7 +4620,7 @@ export function initProductBuilder() {
       for (const [id, st] of filled) fd.append('upload:' + id, st.key);
       const res = await fetch('/api/studio-save', {
         method: 'POST',
-        headers: { 'X-CSC-Action-Secret': studioSecret(false) },
+        headers: { 'X-CSC-Internal-Secret': studioSecret(false) },
         body: fd,
       });
       const { data, text } = await readReply(res);

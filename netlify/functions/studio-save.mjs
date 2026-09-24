@@ -115,12 +115,12 @@ function getSanity() {
 const HISTORY_LIMIT = 5;
 
 export default async (req) => {
-  const expected = process.env.PERSONALISATION_ACTION_SECRET;
+  const expected = process.env.CSC_INTERNAL_SECRET;
   if (!expected) {
-    console.error('studio-save: PERSONALISATION_ACTION_SECRET is not set — refusing.');
+    console.error('studio-save: CSC_INTERNAL_SECRET is not set — refusing.');
     return json({ error: 'Saving is not configured on this deploy' }, 503);
   }
-  if (!sameSecret(req.headers.get('x-csc-action-secret'), expected)) {
+  if (!sameSecret(req.headers.get('x-csc-internal-secret'), expected)) {
     console.warn('studio-save: rejected a call with a bad or missing secret');
     return json({ error: 'Not authorised' }, 401);
   }

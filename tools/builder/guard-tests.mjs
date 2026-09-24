@@ -84,23 +84,23 @@ say('\n1. WHICH BUDGET A CALL SPENDS FROM\n');
 
   /* The claim on its own is worth nothing. If it were, a customer could post
      origin=studio and spend the internal budget instead of their own. */
-  delete process.env.PERSONALISATION_ACTION_SECRET;
+  delete process.env.CSC_INTERNAL_SECRET;
   ok(requestOrigin(req(), {}) === CUSTOMER, 'a request that says nothing is a customer');
   ok(requestOrigin(req(), { claimed: 'studio' }) === CUSTOMER,
     'a bare claim of studio is refused when no secret is configured');
 
-  process.env.PERSONALISATION_ACTION_SECRET = 'the-studio-secret';
+  process.env.CSC_INTERNAL_SECRET = 'the-studio-secret';
   ok(requestOrigin(req(), { claimed: 'studio' }) === CUSTOMER,
     'and refused when the request carries no secret at all');
-  ok(requestOrigin(req({ 'x-csc-action-secret': 'wrong' }), { claimed: 'studio' }) === CUSTOMER,
+  ok(requestOrigin(req({ 'x-csc-internal-secret': 'wrong' }), { claimed: 'studio' }) === CUSTOMER,
     'and refused on a wrong secret');
-  ok(requestOrigin(req({ 'x-csc-action-secret': 'the-studio-secreT' }), { claimed: 'studio' }) === CUSTOMER,
+  ok(requestOrigin(req({ 'x-csc-internal-secret': 'the-studio-secreT' }), { claimed: 'studio' }) === CUSTOMER,
     'and on one that differs by a single character');
-  ok(requestOrigin(req({ 'x-csc-action-secret': 'the-studio-secret' }), { claimed: 'studio' }) === STUDIO,
+  ok(requestOrigin(req({ 'x-csc-internal-secret': 'the-studio-secret' }), { claimed: 'studio' }) === STUDIO,
     'the right secret AND the claim together are what make it studio');
-  ok(requestOrigin(req({ 'x-csc-action-secret': 'the-studio-secret' }), {}) === CUSTOMER,
+  ok(requestOrigin(req({ 'x-csc-internal-secret': 'the-studio-secret' }), {}) === CUSTOMER,
     'the secret alone does not — nothing is studio unless it says so');
-  delete process.env.PERSONALISATION_ACTION_SECRET;
+  delete process.env.CSC_INTERNAL_SECRET;
 }
 
 /* ------------------------------------------------------------ 2. ceilings */

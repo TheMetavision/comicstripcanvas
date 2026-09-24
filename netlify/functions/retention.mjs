@@ -629,8 +629,8 @@ export default async (req) => {
   // force-rewrites /api/* to /.netlify/functions/, so assume this is reachable
   // and require the shared secret for anything that is not the scheduler.
   // Nobody should be able to trigger a deletion sweep with a bare GET.
-  const secret = process.env.PERSONALISATION_ACTION_SECRET;
-  const authorised = !!secret && req.headers.get('x-csc-action-secret') === secret;
+  const secret = process.env.CSC_INTERNAL_SECRET;
+  const authorised = !!secret && req.headers.get('x-csc-internal-secret') === secret;
   if (!scheduled && !authorised) {
     console.warn('retention: refused an unauthorised manual invocation');
     return new Response(JSON.stringify({ error: 'Not authorised' }), {

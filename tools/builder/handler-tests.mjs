@@ -95,7 +95,7 @@ function resetAll() {
   /* The renderer refuses a job without this, and refuses outright when it is
      unset, so the harness has to be configured the way production is or every
      print-file test would be exercising the "not configured" branch. */
-  process.env.PERSONALISATION_ACTION_SECRET = 'stub-action-secret';
+  process.env.CSC_INTERNAL_SECRET = 'stub-action-secret';
   printJobs = [];
   delete process.env.STYLE_DAILY_MAX;
   delete process.env.STUDIO_STYLE_DAILY_MAX;
@@ -1050,7 +1050,7 @@ say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
   const wrong = await orderPrintRender(new Request(
     'https://test.local/.netlify/functions/order-print-file-background',
     { method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSC-Action-Secret': 'not-it' },
+      headers: { 'Content-Type': 'application/json', 'X-CSC-Internal-Secret': 'not-it' },
       body: JSON.stringify({ orderId: 'order-print-2', lineKey: 'bl-classic' }) }));
   ok(wrong.status === 404, 'and refuses a wrong one', String(wrong.status));
 }

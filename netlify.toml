@@ -29,13 +29,26 @@
 #                                    before the circuit breaker pauses new ones.
 #                                    Read per request, so raising it takes effect
 #                                    without a deploy. Default 300.
-#   PERSONALISATION_ACTION_SECRET    shared secret the Studio sends as
-#                                    X-CSC-Action-Secret on Approve / Hold /
-#                                    Re-render. The Studio side of the same value
-#                                    is SANITY_STUDIO_PERSONALISATION_ACTION_SECRET,
-#                                    set where the Studio is built. That bundle is
-#                                    public, so treat this as a speed bump against
-#                                    drive-by traffic, not as real authentication.
+#   CSC_INTERNAL_SECRET              sent as X-CSC-Internal-Secret between the
+#                                    SERVER's own pieces -- studio-save and the
+#                                    renderers, the print-file trigger, the
+#                                    scheduled sweeps -- and typed by an operator
+#                                    for the by-hand repair route. NEVER reaches a
+#                                    browser bundle.
+#
+#                                    It replaces PERSONALISATION_ACTION_SECRET,
+#                                    which the Sanity Studio also carried. Vite
+#                                    inlines SANITY_STUDIO_* at build time and that
+#                                    bundle is public, so the old value was
+#                                    downloadable from
+#                                    comicstripcanvas.sanity.studio/static/ by
+#                                    anyone. Treat it as burned: the name changed
+#                                    as well as the value, so nothing reads the old
+#                                    one whether or not it is deleted.
+#
+#                                    Anything a HUMAN triggers now lives under
+#                                    /admin and is guarded by Basic Auth
+#                                    (ADMIN_BASIC_USER / ADMIN_BASIC_PASS) instead.
 
 [functions]
   directory = "netlify/functions"
@@ -210,6 +223,31 @@
   from = "/admin/api/order-print-file"
   to = "/.netlify/functions/order-print-file"
   status = 200
+  force = true
+
+# Approve / Hold / Re-render, moved here for the same reason and a worse one.
+#
+# The Sanity Studio sent these with a shared secret read from a SANITY_STUDIO_*
+# variable. Vite inlines those at build time and the Studio bundle is public, so
+# the secret was downloadable -- confirmed by fetching
+# comicstripcanvas.sanity.studio/static/sanity-*.js and finding the value in it.
+# The same secret guarded studio-save, studio-upload and the renderers.
+#
+# A browser cannot hold a shared secret, so it no longer holds one: the Studio
+# buttons open /admin/personalisation/<id>, Basic Auth challenges, and the page
+# calls this same-origin.
+[[redirects]]
+  from = "/admin/api/personalisation-action"
+  to = "/.netlify/functions/personalisation-action"
+  status = 200
+  force = true
+
+# The old public address, closed. /api/* maps to functions BY NAME, so without
+# this rule the unguarded address would still reach the function.
+[[redirects]]
+  from = "/api/personalisation-action"
+  to = "/404"
+  status = 404
   force = true
 
 # The same size job as the studio renderer: a 16x24 in face with a 2.5 in
