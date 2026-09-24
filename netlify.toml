@@ -195,6 +195,28 @@
   status = 200
   force = true
 
+# The print file for an order line. /api/order-print-file is the small
+# synchronous half (start, status, download); /api/order-print-file-render is
+# the renderer, which is a background function and needs its -background suffix
+# hidden the same way the other three do. This rule must come BEFORE the /api/*
+# catch-all, which would otherwise look for a function of the literal name.
+[[redirects]]
+  from = "/api/order-print-file-render"
+  to = "/.netlify/functions/order-print-file-background"
+  status = 200
+  force = true
+
+# The same size job as the studio renderer: a 16x24 in face with a 2.5 in
+# gallery wrap is a 21x29 in sheet, 6300x8700 px, measured at 20-26 s and a peak
+# around 900 MB. resvg and sharp both ship a native .node binary esbuild cannot
+# inline, so both stay external.
+#
+# The memory line here is documentation and insurance -- see the long note
+# above. The value that reaches the platform is the one in the function source.
+[functions."order-print-file-background"]
+  memory = "3gb"
+  external_node_modules = ["@resvg/resvg-js", "sharp"]
+
 # Route /api/* requests to Netlify Functions.
 # Required for the contact form (src/pages/contact.astro POSTs to /api/contact
 # which gets rewritten to /.netlify/functions/contact).

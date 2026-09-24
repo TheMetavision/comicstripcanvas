@@ -30,7 +30,15 @@ export function getStore(nameOrOpts) {
       if (!e) return null;
       if (opts.type === 'json') return JSON.parse(e.value);
       if (opts.type === 'arrayBuffer') {
-        return e.value instanceof ArrayBuffer ? e.value : new TextEncoder().encode(String(e.value)).buffer;
+        if (e.value instanceof ArrayBuffer) return e.value;
+        /* A print file is stored as a Buffer. Stringifying one gives
+           "<Buffer 89 50 4e ...>" and the caller gets a text file with a PNG
+           name, so the bytes have to survive the round trip intact. */
+        if (ArrayBuffer.isView(e.value)) {
+          return e.value.buffer.slice(
+            e.value.byteOffset, e.value.byteOffset + e.value.byteLength);
+        }
+        return new TextEncoder().encode(String(e.value)).buffer;
       }
       return e.value;
     },

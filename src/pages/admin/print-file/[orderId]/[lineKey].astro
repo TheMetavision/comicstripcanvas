@@ -1,0 +1,164 @@
+---
+export const prerender = false;
+
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+
+/**
+ * Download the print file for one order line.
+ *
+ * Reached from the order in the Studio. The page starts the render, says what
+ * is happening while it runs, and downloads the file when it is there.
+ *
+ * Behind the /admin/* Basic Auth edge function, which is why there is no secret
+ * in the link and none in this page: the Studio bundle is public, so a token
+ * pasted into an order view would be a token published on the internet.
+ *
+ * prerender = false because the site builds static and this route has an order
+ * id in it. There is nothing to prerender and nothing to cache.
+ */
+const { orderId, lineKey } = Astro.params;
+---
+
+<BaseLayout title="Print file" description="Internal.">
+  <main class="max-w-2xl mx-auto px-4 py-16">
+    <h1 class="font-bangers text-4xl text-comic-yellow mb-2">Print file</h1>
+    <p class="font-source text-gray-400 text-sm mb-8">
+      Order <code class="text-off-white">{orderId}</code> ·
+      line <code class="text-off-white">{lineKey}</code>
+    </p>
+
+    <div
+      id="pf"
+      class="border-4 border-black bg-panel-dark p-6"
+      style="box-shadow: 4px 4px 0 #000;"
+      data-order={orderId}
+      data-line={lineKey}
+    >
+      <p id="pf-state" class="font-russo text-off-white text-lg mb-2">Starting…</p>
+      <p id="pf-detail" class="font-source text-gray-400 text-sm mb-4">
+        Building this line at the size and finish it was ordered at.
+      </p>
+
+      <div class="h-2 w-full bg-black border-2 border-black mb-4" aria-hidden="true">
+        <div id="pf-bar" class="h-full bg-comic-cyan transition-all duration-500" style="width: 8%"></div>
+      </div>
+
+      <dl id="pf-facts" class="font-source text-sm text-gray-300 hidden">
+        <div class="flex gap-2"><dt class="text-gray-500 w-28">Size</dt><dd id="pf-size"></dd></div>
+        <div class="flex gap-2"><dt class="text-gray-500 w-28">Finish</dt><dd id="pf-finish"></dd></div>
+        <div class="flex gap-2"><dt class="text-gray-500 w-28">Pixels</dt><dd id="pf-px"></dd></div>
+        <div class="flex gap-2"><dt class="text-gray-500 w-28">Made from</dt><dd id="pf-route"></dd></div>
+      </dl>
+
+      <a
+        id="pf-download"
+        class="btn-primary mt-6 inline-block text-center hidden"
+        href="#"
+      >DOWNLOAD PRINT FILE</a>
+
+      <p id="pf-error" class="font-source text-sm mt-4 hidden" style="color:#ff6b6b;"></p>
+    </div>
+
+    <p class="font-source text-gray-500 text-xs mt-6">
+      The first build of a line takes up to half a minute for a large gallery canvas.
+      After that it is kept, and this page is instant — until the product's artwork is
+      replaced, which makes a new file rather than serving the old one.
+    </p>
+  </main>
+</BaseLayout>
+
+<script>
+  const root = document.getElementById('pf')!;
+  const orderId = root.dataset.order!;
+  const lineKey = root.dataset.line!;
+
+  const $ = (id: string) => document.getElementById(id)!;
+  const api = (action: string) =>
+    `/api/order-print-file?action=${action}&order=${encodeURIComponent(orderId)}&line=${encodeURIComponent(lineKey)}`;
+
+  const ROUTE_WORDS: Record<string, string> = {
+    scene: 'the saved design, re-rendered at this size',
+    master: 'the stored print master, fitted to this size',
+  };
+
+  let bar = 8;
+  const nudge = () => {
+    /* Creeps towards 90 and stops: a bar that reaches the end while the job is
+       still going is a bar that is lying. */
+    bar = Math.min(90, bar + Math.max(1, (90 - bar) * 0.12));
+    $('pf-bar').style.width = `${bar}%`;
+  };
+
+  const fail = (msg: string) => {
+    $('pf-state').textContent = 'Could not make this file';
+    $('pf-detail').textContent = '';
+    $('pf-bar').style.width = '100%';
+    $('pf-bar').style.background = '#ff6b6b';
+    const e = $('pf-error');
+    e.textContent = msg;
+    e.classList.remove('hidden');
+  };
+
+  const openedAt = Date.now();
+
+  const ready = (info: any) => {
+    /* "cached" is only set on the start response, and the usual path reaches
+       here through a poll -- so the age of the file is what actually says
+       whether this click made it. Anything stamped before the page opened was
+       already there. */
+    const made = Date.parse(info.madeAt || '');
+    const fresh = Number.isFinite(made) ? made >= openedAt - 2000 : info.cached === false;
+    $('pf-state').textContent = 'Ready';
+    $('pf-detail').textContent = fresh
+      ? 'Made just now.'
+      : 'Already made for this line — served from the cache.';
+    $('pf-bar').style.width = '100%';
+    if (info.sizeKey) {
+      $('pf-size').textContent = info.sizeKey;
+      $('pf-finish').textContent = info.finish;
+      $('pf-px').textContent = info.width ? `${info.width} × ${info.height} @ ${info.dpi || 300} dpi` : '—';
+      $('pf-route').textContent = ROUTE_WORDS[info.route] || info.route || '—';
+      $('pf-facts').classList.remove('hidden');
+    }
+    const a = $('pf-download') as HTMLAnchorElement;
+    a.href = api('download');
+    a.classList.remove('hidden');
+    /* Start the download without waiting to be clicked -- this page exists to
+       produce a file, and whoever opened it wants the file. The button stays
+       for a second copy. */
+    window.location.href = a.href;
+  };
+
+  async function poll(attempt = 0): Promise<void> {
+    if (attempt > 150) return fail('Gave up waiting after two and a half minutes.');
+    nudge();
+    let res: Response;
+    try {
+      res = await fetch(api('status'));
+    } catch (err) {
+      return fail(`Lost contact with the server: ${(err as Error).message}`);
+    }
+    const info = await res.json().catch(() => ({}));
+    if (info.state === 'ready') return ready(info);
+    if (info.state === 'error') return fail(info.error || 'The renderer reported a failure.');
+    $('pf-state').textContent = 'Preparing…';
+    $('pf-detail').textContent = info.sizeKey
+      ? `Rendering ${info.sizeKey} ${info.finish}. Large canvases take longest.`
+      : 'Waiting for the renderer to pick the job up.';
+    setTimeout(() => poll(attempt + 1), 1000);
+  }
+
+  (async () => {
+    try {
+      const res = await fetch(api('start'), { method: 'POST' });
+      const info = await res.json().catch(() => ({}));
+      if (info.state === 'ready') return ready({ ...info, cached: true });
+      if (!res.ok && res.status !== 202) {
+        return fail(info.error || `The renderer refused the job (${res.status}).`);
+      }
+      poll();
+    } catch (err) {
+      fail(`Could not start the render: ${(err as Error).message}`);
+    }
+  })();
+</script>

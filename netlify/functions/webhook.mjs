@@ -407,6 +407,17 @@ async function fulfilOrder(session) {
                Falls back to the orientation-free label when the product could
                not be resolved, which is better than guessing a shape. */
             size: row ? sizeLabelFor(item.size, orient, '×') : (SIZE_LABELS[item.size] || item.size),
+            /* The KEYS as well as the labels. The labels are for a human and
+               have changed once already -- Medium was 16x12 until September
+               2026 -- so anything that has to MAKE something from this line
+               reads these and never parses the text. */
+            sizeKey: item.size,
+            formatKey: item.format,
+            orientation: orient,
+            /* Which product, as the shop addresses it. The line records a title
+               a human reads and a reference; neither is a slug, and slugifying
+               the title guesses. */
+            ...(item.slug ? { productSlug: item.slug } : {}),
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             artworkStyle: item.artworkStyle,

@@ -34,6 +34,9 @@
  * Stripe.
  */
 import { register } from 'node:module';
+import fsSync from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 register('./_stubs/hooks.mjs', import.meta.url);
 
@@ -49,6 +52,8 @@ const ROOT = new URL('../../', import.meta.url).href;
 const personaliseSave = (await import(`${ROOT}netlify/functions/personalise-save.mjs`)).default;
 const checkout = (await import(`${ROOT}netlify/functions/checkout.mjs`)).default;
 const webhook = (await import(`${ROOT}netlify/functions/webhook.mjs`)).default;
+const orderPrintFile = (await import(`${ROOT}netlify/functions/order-print-file.mjs`)).default;
+const orderPrintRender = (await import(`${ROOT}netlify/functions/order-print-file-background.mjs`)).default;
 const stylePhoto = (await import(`${ROOT}netlify/functions/style-photo-background.mjs`)).default;
 const genaiStub = await import('./_stubs/google-genai.mjs');
 const sharp = (await import('sharp')).default;
@@ -87,6 +92,7 @@ function resetAll() {
   process.env.STRIPE_SECRET_KEY = 'sk_test_stub';
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_stub';
   process.env.GOOGLE_AI_API_KEY = 'stub-gemini-key';
+  printJobs = [];
   delete process.env.STYLE_DAILY_MAX;
   delete process.env.STUDIO_STYLE_DAILY_MAX;
   delete process.env.CUTOUT_SERVICE_URL;
@@ -103,6 +109,7 @@ function resetAll() {
 let triggers = [];
 const realFetch = globalThis.fetch;
 let renders = [];
+let printJobs = [];
 globalThis.fetch = async (url, init = {}) => {
   const href = String(url);
   if (href.includes('/api/style-photo')) {
@@ -115,6 +122,34 @@ globalThis.fetch = async (url, init = {}) => {
   if (href.includes('/api/render-personalisation')) {
     renders.push({ url: href, body: JSON.parse(init.body || '{}') });
     return new Response('Accepted', { status: 202 });
+  }
+  /* The print-file trigger, PERFORMED rather than recorded. The rewrite in
+     netlify.toml is the only thing between the two halves in production, so
+     running the renderer here is what makes this an end-to-end test of the
+     click-through rather than a test of one half and a promise about the
+     other. The job is still recorded, so "was it started exactly once" stays
+     answerable -- which is what the cache assertions turn on. */
+  /* The renderer pulls its fonts and template artwork off the deployed site by
+     absolute URL. They are the files in public/, served at the same paths, so
+     the harness reads them from disk instead of refusing the request -- and the
+     print then contains the real overlay and the real fonts, which is the point
+     of rendering at all. A missing font makes prepareScene throw rather than
+     substitute, so this also keeps that guard honest. */
+  if (/^https?:\/\/[^/]+\/builder\//.test(href)) {
+    const rel = href.replace(/^https?:\/\/[^/]+/, '');
+    const onDisk = path.join(fileURLToPath(ROOT), 'public', rel);
+    try {
+      return new Response(fsSync.readFileSync(decodeURIComponent(onDisk)), { status: 200 });
+    } catch {
+      return new Response('not found', { status: 404 });
+    }
+  }
+  if (href.includes('/api/order-print-file-render')) {
+    const body = JSON.parse(init.body || '{}');
+    printJobs.push(body);
+    return orderPrintRender(new Request('https://test.local/api/order-print-file-render', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: init.body,
+    }));
   }
   throw new Error(`handler-tests: unexpected fetch to ${href}`);
 };
@@ -811,6 +846,172 @@ say('\n10b. WEBHOOK: SIZE READS THE WAY THE PICTURE IS SHAPED\n');
   const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
   ok(line?.artworkStyleLabel === 'Classic cover',
     'a two-style product names the style on the line', line?.artworkStyleLabel);
+}
+
+say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
+{
+  /* The whole click-through, with nothing mocked but the network and the
+     stores: start the job the way the page does, let the renderer run, ask for
+     the status the way the page polls, and download the bytes. Then do it
+     again to prove the cache, then change the artwork to prove it does not
+     serve the old picture. */
+  const SCENE_ID = 'studio-print-test';
+  const scenePng = await sharp({
+    create: { width: 64, height: 96, channels: 3, background: '#2266cc' },
+  }).png().toBuffer();
+
+  /* A minimal but real scene: a tokenised panel that covers the canvas, which
+     is the shape every icon has. */
+  const sceneDoc = {
+    template: 'icon-portrait',
+    canvas: { width: 1200, height: 1800, dpi: 300 },
+    output: { format: 'poster', faceInches: [4, 6], wrapInches: 0, fileInches: [4, 6] },
+    panels: [{ id: 'art' }],
+    svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1800" width="1200" height="1800">'
+      + '<defs><clipPath id="clip-art"><rect x="0" y="0" width="1200" height="1800"/></clipPath></defs>'
+      + '<g clip-path="url(#clip-art)">'
+      + '<image data-role="panel" data-panel="art" preserveAspectRatio="none" '
+      + 'href="{{IMAGE:art}}" x="0" y="0" width="1200" height="1800"/></g></svg>',
+  };
+
+  const seedForPrint = (sceneBytes) => {
+    resetAll();
+    blobStub.getStore('studio').set(`studio/${SCENE_ID}/classic/scene.json`, sceneBytes);
+    blobStub.getStore('studio').set(`studio/${SCENE_ID}/classic/art/art.png`, scenePng);
+    seed(product('gizmo', {
+      title: 'Gizmo',
+      classicSceneId: SCENE_ID,
+      images: [{ asset: { _ref: 'image-x', metadata: { dimensions: { aspectRatio: 0.6667 } } } }],
+    }));
+    sanityStub.docs.set('order-print-1', {
+      _id: 'order-print-1', _type: 'order', orderNumber: 'CSC-2001',
+      status: 'received',
+      lineItems: [{
+        _key: 'line-a', productTitle: 'Gizmo', productSlug: 'gizmo',
+        size: 'Small (8×12")', sizeKey: 'small',
+        format: 'Canvas (Gallery Frame)', formatKey: 'canvas-gallery',
+        artworkStyle: 'classic', quantity: 1, unitPrice: 28.99,
+      }],
+    });
+  };
+
+  const api = (action, extra = '') =>
+    new Request(`https://test.local/api/order-print-file?action=${action}`
+      + `&order=order-print-1&line=line-a${extra}`,
+    { method: action === 'start' ? 'POST' : 'GET' });
+
+  seedForPrint(JSON.stringify(sceneDoc));
+
+  const started = await orderPrintFile(api('start'));
+  const startBody = await started.json();
+  ok(started.status === 202 || started.status === 200,
+    'the page can start the job', `${started.status} ${JSON.stringify(startBody)}`);
+  ok(printJobs.length === 1, 'and exactly one job reached the renderer',
+    JSON.stringify(printJobs));
+  ok(printJobs[0]?.orderId === 'order-print-1' && printJobs[0]?.lineKey === 'line-a',
+    'for this order and this line');
+
+  const st = await (await orderPrintFile(api('status'))).json();
+  ok(st.state === 'ready', 'and the status says ready once it has run', JSON.stringify(st).slice(0, 160));
+  /* 8x12 face + 2.5in gallery wrap = 13x17 in = 3900x5100 at 300dpi. */
+  ok(st.width === 3900 && st.height === 5100,
+    'at the size that line was ordered, wrap included', `${st.width}x${st.height}`);
+  ok(st.dpi === 300, 'and 300 dpi', String(st.dpi));
+  ok(st.route === 'scene', 'made from the saved design', st.route);
+
+  const dl = await orderPrintFile(api('download'));
+  ok(dl.status === 200, 'the file downloads', String(dl.status));
+  ok((dl.headers.get('content-type') || '') === 'image/png', 'as a PNG',
+    dl.headers.get('content-type'));
+  ok(/attachment; filename="csc-2001-gizmo-small-portrait-gallery\.png"/
+    .test(dl.headers.get('content-disposition') || ''),
+  'named so a human can file it', dl.headers.get('content-disposition'));
+  const bytes = Buffer.from(await dl.arrayBuffer());
+  ok(bytes.length > 1000 && bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG',
+    'and the bytes really are a PNG', `${bytes.length} bytes`);
+  const dims = await sharp(bytes).metadata();
+  ok(dims.width === 3900 && dims.height === 5100,
+    'of the right pixel size', `${dims.width}x${dims.height}`);
+
+  /* ---- second request: the same file, not a second render ----
+     The renderer is asked again on purpose -- only it can tell whether the
+     artwork still matches -- so what proves the cache is that the file was not
+     REMADE: same key, same madeAt. */
+  const firstMadeAt = st.madeAt;
+  const again = await orderPrintFile(api('start'));
+  const againBody = await again.json();
+  ok(againBody.state === 'ready' && againBody.cached === true,
+    'a second request is served from the cache', JSON.stringify(againBody).slice(0, 120));
+  ok(againBody.madeAt === firstMadeAt,
+    'and nothing was rasterised again', `${firstMadeAt} -> ${againBody.madeAt}`);
+
+  /* ---- the artwork changes: the cached file must NOT be served ---- */
+  const keyBefore = (await (await orderPrintFile(api('status'))).json()).source;
+  const changed = { ...sceneDoc, canvas: { width: 1200, height: 1800, dpi: 300 }, note: 'redrawn' };
+  blobStub.getStore('studio').set(`studio/${SCENE_ID}/classic/scene.json`, JSON.stringify(changed));
+  await orderPrintFile(api('start'));
+  const after = await (await orderPrintFile(api('status'))).json();
+  ok(after.source !== keyBefore,
+    'a changed design makes a different file rather than serving the old one',
+    `${keyBefore} -> ${after.source}`);
+  ok(after.state === 'ready' && after.width === 3900, 'and the new one is still right');
+
+  /* ---- a cover bought in both styles: two designs, two files ----
+     The failure this guards is the one the order line's style exists for: two
+     lines that look identical until you read which file to print. */
+  resetAll();
+  const sceneFor = (tint) => JSON.stringify({
+    ...sceneDoc,
+    template: 'cover-fullbleed',
+    svg: sceneDoc.svg.replace('viewBox="0 0 1200 1800"', `viewBox="0 0 1200 1800" data-tint="${tint}"`),
+  });
+  blobStub.getStore('studio').set('studio/bl-classic/classic/scene.json', sceneFor('a'));
+  blobStub.getStore('studio').set('studio/bl-classic/classic/art/art.png', scenePng);
+  blobStub.getStore('studio').set('studio/bl-fb/fullBleed/scene.json', sceneFor('b'));
+  blobStub.getStore('studio').set('studio/bl-fb/fullBleed/art/art.png', scenePng);
+  seed(product('bruce-lee-cover', {
+    title: 'Bruce Lee',
+    classicSceneId: 'bl-classic',
+    images: [{ asset: { _ref: 'image-bl', metadata: { dimensions: { aspectRatio: 0.6665 } } } }],
+    fullBleed: {
+      sceneId: 'bl-fb',
+      listingImage: { asset: { _ref: 'image-blfb', metadata: { dimensions: { aspectRatio: 0.6665 } } } },
+    },
+  }));
+  const twoLines = ['classic', 'fullBleed'].map((style, i) => ({
+    _key: `bl-${style}`, productTitle: 'Bruce Lee', productSlug: 'bruce-lee-cover',
+    size: 'Medium (12×18")', sizeKey: 'medium',
+    format: 'Poster Print', formatKey: 'poster',
+    artworkStyle: style, quantity: 1, unitPrice: 12.99 + i,
+  }));
+  sanityStub.docs.set('order-print-2', {
+    _id: 'order-print-2', _type: 'order', orderNumber: 'CSC-2002',
+    status: 'received', lineItems: twoLines,
+  });
+
+  const forLine = async (lineKey) => {
+    const url = `https://test.local/api/order-print-file?action=start`
+      + `&order=order-print-2&line=${lineKey}`;
+    await orderPrintFile(new Request(url, { method: 'POST' }));
+    return (await orderPrintFile(new Request(
+      url.replace('action=start', 'action=status'), { method: 'GET' }))).json();
+  };
+
+  const classic = await forLine('bl-classic');
+  const fullBleed = await forLine('bl-fullBleed');
+
+  ok(classic.state === 'ready' && fullBleed.state === 'ready',
+    'a cover renders in both styles', `${classic.state}/${fullBleed.state}`);
+  ok(classic.width === 3600 && classic.height === 5400,
+    'Classic at Medium poster is 12x18 in = 3600x5400', `${classic.width}x${classic.height}`);
+  ok(fullBleed.width === 3600 && fullBleed.height === 5400,
+    'and so is Full bleed', `${fullBleed.width}x${fullBleed.height}`);
+  ok(classic.source !== fullBleed.source,
+    'but they are different files, made from different designs',
+    `${classic.source} vs ${fullBleed.source}`);
+  ok(/fullbleed/.test(fullBleed.filename) && !/fullbleed/.test(classic.filename),
+    'and the filenames say which is which',
+    `${classic.filename} | ${fullBleed.filename}`);
 }
 
 say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');

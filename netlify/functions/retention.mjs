@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { PRINT_STORE } from './_shared/order-print.mjs';
 import { STUDIO_STORE, isUploadId } from './_shared/studio-uploads.mjs';
 import { sweepGuardCounters } from './_shared/spend-guard.mjs';
 
@@ -369,6 +370,150 @@ export async function sweepStudioUploads({ dryRun = false, now = new Date(), dep
  * @param {object}  opts.deps    { sanity, stores } -- injectable so a dry run
  *                               can be driven from outside a Netlify context
  */
+/**
+ * The print files made per order line.
+ *
+ * These are DERIVED: every one can be made again from the product's saved
+ * design or its master, so there is nothing here to preserve and no customer
+ * photograph either. They are swept for the opposite reason to everything else
+ * in this file -- not because keeping them is a liability, but because they are
+ * tens of megabytes each and nothing else would ever collect them.
+ *
+ * Three rules, cheapest first:
+ *
+ *   superseded  more than one file for the same line. The key carries what the
+ *               file was made from, so a second one means the artwork changed
+ *               and the older is already unreachable -- the status note points
+ *               at the newest. This is the rule that does the real work.
+ *   orphaned    no order document with that id any more.
+ *   settled     the order was dispatched more than 30 days ago. Shorter than
+ *               the 90 days customer photographs get, because re-making one of
+ *               these is a click rather than a loss.
+ */
+const PRINT_RETENTION_DAYS = 30;
+
+export async function sweepOrderPrints({ dryRun = false, now = new Date(), deps = {} } = {}) {
+  const sanity = deps.sanity || defaultSanity();
+  const store = (deps.stores || {})[PRINT_STORE] || getStore(PRINT_STORE);
+  const label = dryRun ? 'print sweep (DRY RUN)' : 'print sweep';
+  const nowMs = now.getTime();
+  const report = { examined: 0, deleted: [], blobsDeleted: 0, errors: [] };
+
+  let blobs;
+  try {
+    ({ blobs } = await store.list({ prefix: 'print/' }));
+  } catch (err) {
+    console.error(`${label}: could not list the print store, skipping:`, err.message);
+    report.errors.push({ stage: 'list', error: err.message });
+    return report;
+  }
+
+  /* print/<orderId>/<lineKey>/<size>-<finish>-<style>-<source>.png */
+  const byLine = new Map();
+  for (const b of blobs) {
+    const m = /^print\/([^/]+)\/([^/]+)\/([^/]+)\.png$/.exec(b.key);
+    if (!m) continue;
+    const id = `${m[1]} ${m[2]}`;
+    if (!byLine.has(id)) byLine.set(id, []);
+    byLine.get(id).push({ key: b.key, orderId: m[1], lineKey: m[2], name: m[3] });
+  }
+  report.examined = byLine.size;
+  if (!byLine.size) {
+    console.log(`${label}: no print files to examine.`);
+    return report;
+  }
+
+  const orderIds = [...new Set([...byLine.values()].map((v) => v[0].orderId))];
+  let orders = [];
+  try {
+    orders = await sanity.fetch(
+      '*[_type == "order" && _id in $ids]{ _id, status, shippingEmailSentAt }',
+      { ids: orderIds }
+    );
+  } catch (err) {
+    console.error(`${label}: could not read the orders, skipping:`, err.message);
+    report.errors.push({ stage: 'orders', error: err.message });
+    return report;
+  }
+  const orderById = new Map(orders.map((o) => [o._id, o]));
+
+  const doomed = [];
+  for (const [, files] of byLine) {
+    const { orderId, lineKey } = files[0];
+    const order = orderById.get(orderId);
+
+    if (!order) {
+      for (const f of files) doomed.push({ ...f, rule: 'orphaned', reason: 'no such order' });
+      continue;
+    }
+
+    /* Newest wins. getMetadata carries madeAt; a file without one is treated as
+       oldest, which is the safe way round -- it gets swept only if something
+       newer exists for the same line. */
+    if (files.length > 1) {
+      const stamped = [];
+      for (const f of files) {
+        let at = 0;
+        try {
+          const meta = await store.getMetadata(f.key);
+          at = Date.parse(meta?.metadata?.madeAt || '') || 0;
+        } catch { /* treat as oldest */ }
+        stamped.push({ ...f, at });
+      }
+      stamped.sort((a, b) => b.at - a.at);
+      for (const f of stamped.slice(1)) {
+        doomed.push({ ...f, rule: 'superseded', reason: 'the artwork changed after this was made' });
+      }
+    }
+
+    const dispatched = order.shippingEmailSentAt ? Date.parse(order.shippingEmailSentAt) : NaN;
+    if (Number.isFinite(dispatched)) {
+      const age = Math.floor((nowMs - dispatched) / DAY);
+      if (age >= PRINT_RETENTION_DAYS) {
+        const newest = files.find((f) => !doomed.some((d) => d.key === f.key));
+        if (newest) {
+          doomed.push({ ...newest, rule: 'settled', reason: `dispatched ${age} days ago` });
+        }
+      }
+    }
+  }
+
+  for (const d of doomed) {
+    if (dryRun) {
+      console.log(`${label}: would delete ${d.key} (${d.rule}: ${d.reason})`);
+      report.deleted.push(d);
+      continue;
+    }
+    try {
+      await store.delete(d.key);
+      report.blobsDeleted++;
+      report.deleted.push(d);
+      console.log(`${label}: deleted ${d.key} (${d.rule}: ${d.reason})`);
+    } catch (err) {
+      report.errors.push({ key: d.key, error: err.message });
+    }
+  }
+
+  /* The status notes. Tiny, but one per line for ever otherwise, and a note
+     pointing at a file that has been swept makes the page say "absent" rather
+     than offering a download that 404s -- which is the behaviour we want, so
+     they are only removed once their file is gone. */
+  const live = new Set(blobs.map((b) => b.key));
+  for (const d of report.deleted) live.delete(d.key);
+  for (const b of blobs) {
+    if (!b.key.endsWith('.state')) continue;
+    const m = /^pending\/([^/]+)\/([^/]+)\.state$/.exec(b.key);
+    if (!m) continue;
+    const stillHasFile = [...live].some((k) => k.startsWith(`print/${m[1]}/${m[2]}/`));
+    if (stillHasFile) continue;
+    if (dryRun) { console.log(`${label}: would delete note ${b.key}`); continue; }
+    try { await store.delete(b.key); report.blobsDeleted++; } catch { /* next run */ }
+  }
+
+  console.log(`${label}: examined ${report.examined} line(s), deleted ${report.blobsDeleted} blob(s).`);
+  return report;
+}
+
 export async function runRetention({ dryRun = false, now = new Date(), deps = {} } = {}) {
   const sanity = deps.sanity || defaultSanity();
   const nowMs = now.getTime();
@@ -443,6 +588,15 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
      these are the shop's prepared artwork, uploaded in chunks and consumed by
      the renderer -- but the same job is the right place for it. */
   report.studioUploads = await sweepStudioUploads({ dryRun, now, deps: { stores } });
+
+  /* The print files made per order line. Derived, regenerable, and tens of MB
+     each; nothing else would ever collect them. */
+  try {
+    report.orderPrints = await sweepOrderPrints({ dryRun, now, deps: { sanity, stores } });
+  } catch (err) {
+    console.error('retention: print sweep failed:', err.message);
+    report.orderPrints = { error: err.message };
+  }
 
   /* The spend counters. Nothing to do with photographs at all -- they hold
      hashed visitor keys and integers -- but they are blobs nobody else will

@@ -1,4 +1,5 @@
 import { defineType, defineField } from 'sanity';
+import PrintFileLinks from '../components/PrintFileLinks';
 
 export default defineType({
   name: 'order',
@@ -43,6 +44,16 @@ export default defineType({
         { name: 'postcode', type: 'string', title: 'Postcode' },
         { name: 'country', type: 'string', title: 'Country' },
       ],
+    }),
+    /* The print files, above the lines they belong to: this is what somebody
+       opening an order to fulfil it has come for. Read-only and stores nothing
+       -- the panel is drawn from lineItems below. */
+    defineField({
+      name: 'printFiles',
+      title: 'Print Files',
+      type: 'string',
+      readOnly: true,
+      components: { field: PrintFileLinks },
     }),
     defineField({
       name: 'lineItems',

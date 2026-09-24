@@ -161,6 +161,40 @@ export function createClient() {
             return row;
           });
       }
+      /* The print-file renderer's two reads: one order by id, then the product
+         that line is for, by slug. Projected off the seeded documents like
+         every other branch here. */
+      if (/_type == "order" && _id == \$id/.test(q)) {
+        const doc = docs.get(params.id);
+        return doc && doc._type === 'order' ? clone(doc) : null;
+      }
+      if (/_type == "product" && slug\.current == \$slug/.test(q)) {
+        const p = products().find((d) => d.slug?.current === params.slug);
+        if (!p) return null;
+        return {
+          _id: p._id,
+          title: p.title ?? null,
+          slug: p.slug?.current ?? null,
+          edgeColour: p.edgeColour ?? null,
+          classicSceneId: p.classicSceneId ?? null,
+          fbSceneId: p.fullBleed?.sceneId ?? null,
+          printUrl: p.printFile?.asset?.url ?? null,
+          printAssetId: p.printFile?.asset?._ref ?? null,
+          fullBleedPrintUrl: p.fullBleed?.printFile?.asset?.url ?? null,
+          fullBleedAssetId: p.fullBleed?.printFile?.asset?._ref ?? null,
+          aspect: p.images?.[0]?.asset?.metadata?.dimensions?.aspectRatio ?? null,
+          fbAspect: p.fullBleed?.listingImage?.asset?.metadata?.dimensions?.aspectRatio ?? null,
+        };
+      }
+      if (/_type == "order" && _id in \$ids/.test(q)) {
+        const want = new Set(params.ids || []);
+        return [...docs.values()]
+          .filter((d) => d._type === 'order' && want.has(d._id))
+          .map((o) => ({
+            _id: o._id, status: o.status ?? null,
+            shippingEmailSentAt: o.shippingEmailSentAt ?? null,
+          }));
+      }
       if (/_type == "pendingPersonalisation" && _id in \$ids/.test(q)) {
         const want = new Set(params.ids || []);
         return [...docs.values()]
