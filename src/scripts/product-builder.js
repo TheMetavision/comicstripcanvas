@@ -59,6 +59,9 @@ import {
   BLANK_FALLBACK_SIDES, fitWithin, ladderFor, targetBytesFor, stepQuality,
 } from '../../netlify/functions/_shared/photo-input.mjs';
 import { builderSizes, resumeSize } from '../../netlify/functions/_shared/sizes.mjs';
+import {
+  FIT, wrapInchesFor, geom as sharedGeom,
+} from '../../netlify/functions/_shared/print-geometry.mjs';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -333,7 +336,10 @@ export function initProductBuilder() {
     };
     t.resize(size); return t;
   }
-  const WRAP = { poster: 0, standard: 1.5, gallery: 2.5 };
+  /* WRAP, FIT and geom() moved to netlify/functions/_shared/print-geometry.mjs.
+     Fulfilment has to lay a saved design onto the size that was ORDERED, which
+     is the same arithmetic as this -- and two copies of it would be two answers
+     to "where does the artwork sit", one of them reaching a press. */
   /* There was an ART_WRAP table here, recording "wrap already drawn into each
      template's artwork", and a banner that fired whenever the chosen finish
      asked for more wrap than the table declared. Every entry was 0, so it fired
@@ -458,23 +464,16 @@ export function initProductBuilder() {
     if (T.panels.length === 1) select(T.panels[0].id);
   }
 
-  function wrapIn() { return WRAP[fmt] || 0; }
+  function wrapIn() { return wrapInchesFor(fmt); }
   /* The artwork has one fixed shape; the chosen face may not share it. Scale so
      the whole design fits the face, pad the short axis with border, then add the
      wrap outside that. Each axis is worked out separately. */
-  // 'fill' crops a little of a decorative edge so the design fills the face;
-  // 'pad' keeps the whole layout visible and grows the border instead.
-  const FIT = {
-    strip: 'pad', 'icon-portrait': 'fill', 'icon-landscape': 'fill',
-    cover: 'fill', 'cover-fullbleed': 'fill',
-  };
   function geom() {
     const c = T.canvas, sz = T.size || { w: 1, h: 1 }, w = wrapIn();
-    const ppi = (FIT[TK] === 'pad') ? Math.max(c.width / sz.w, c.height / sz.h)
-      : Math.min(c.width / sz.w, c.height / sz.h);
-    const padX = (sz.w * ppi - c.width) / 2, padY = (sz.h * ppi - c.height) / 2;
-    const wrapPx = w * ppi;
-    return { c, sz, w, ppi, padX, padY, dx: padX + wrapPx, dy: padY + wrapPx };
+    /* The shared one, so the print made from a saved design sits exactly where
+       the preview says it does. The extra fields are what this file already
+       expected off geom(). */
+    return { ...sharedGeom(c, sz, FIT[TK], w), c, sz, w };
   }
   function viewBoxNow() {
     const { c, dx, dy } = geom();
