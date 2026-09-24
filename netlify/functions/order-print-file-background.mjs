@@ -1,6 +1,5 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
-import { createHash } from 'node:crypto';
 import { prepareScene, rasterise, memoryNote } from './_shared/render.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { sceneKey, legacySceneKey, artKey, styleOr, FULL_BLEED } from './_shared/artwork-styles.mjs';
@@ -8,7 +7,7 @@ import { faceFor, renderFromScene, fitFlatMaster, readDpi } from './_shared/prin
 import { dataUri } from './_shared/scene.mjs';
 import {
   PRINT_STORE, keysFromLine, printKeyFor, sourceId, downloadName,
-  sceneIdFor, orientationFor, resolveLineProduct, openPrintStore,
+  sceneIdFor, orientationFor, resolveLineProduct, openPrintStore, sceneRevOf,
 } from './_shared/order-print.mjs';
 
 /**
@@ -146,7 +145,7 @@ export default async (req) => {
         sceneJson = JSON.parse(raw);
         /* The scene's own bytes are the revision. A blob etag would do, but the
            bytes are already here and a hash of them cannot disagree with them. */
-        sceneRev = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+        sceneRev = sceneRevOf(raw);
       }
     }
     const masterUrl = styleOr(style) === FULL_BLEED ? product.fullBleedPrintUrl : product.printUrl;

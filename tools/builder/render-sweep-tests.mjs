@@ -256,7 +256,7 @@ say('\n5. END TO END, WITHOUT TOUCHING ANYTHING REAL\n');
   const out3 = [];
   const code3 = await run([], { log: (s) => out3.push(String(s)), error: () => {}, store: cleanStore, products, draftIds: new Set(), progress: () => {} });
   ok(code3 === 0, 'a clean sweep exits zero', String(code3));
-  ok(/nothing incomplete and nothing raced/.test(out3.join('\n')), 'and says so');
+  ok(/nothing incomplete, nothing stale and nothing raced/.test(out3.join('\n')), 'and says so');
 
   /* An unreadable blob is a row, not a crash. */
   const brokenStore = {

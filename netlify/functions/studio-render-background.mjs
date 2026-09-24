@@ -9,6 +9,7 @@ import {
   sceneKey, printKey, prevPrintKey, listingKey, legacySceneKey, legacyPrintKey,
   artKey, artWebKey, isArtKey, ART_WEB_SIDE, CUSTOMISE_FEE_DEFAULT,
 } from './_shared/artwork-styles.mjs';
+import { sceneRevOf } from './_shared/order-print.mjs';
 
 /**
  * Render the print master for a design saved from /admin/studio.
@@ -43,11 +44,86 @@ const sanityClient = () => (process.env.SANITY_WRITE_TOKEN ? createClient({
   token: process.env.SANITY_WRITE_TOKEN, useCdn: false,
 }) : null);
 
+/**
+ * The draft, and only ever the draft.
+ *
+ * Pictures attach to drafts because publishing is Alan's to do, and a render
+ * that wrote straight to the published document would put artwork live that
+ * nobody had looked at. The scene records its target as drafts.<id> and that is
+ * what this function patches.
+ *
+ * But a draft is CONSUMED by publishing. A product saved, rendered and then
+ * published has no drafts.<id> any more, so a re-render months later -- which
+ * is exactly what the repair route is for -- had nothing to land on: the patch
+ * threw, and because it threw between writing the print master and rewriting
+ * the scene, the render was left half-done with nothing anywhere saying so.
+ * Both published products in the cutoutClip migration failed this way.
+ *
+ * So the draft is created from the published document first, the way
+ * studio-save does it when a redraw targets a published product. It starts as
+ * a copy, which is what a draft of an unedited product is; the patch that
+ * follows puts the new pictures on it, and publishing it is still a person's
+ * decision. createIfNotExists loses a race to whoever got there first, which is
+ * the right way to lose it -- their draft is the one with the edits in it.
+ */
+export async function draftTargetFor(sanity, docId) {
+  const base = String(docId || '').replace(/^drafts\./, '');
+  if (!base) throw new Error('no document id to attach to');
+  const target = `drafts.${base}`;
+
+  const existing = await sanity.getDocument(target).catch(() => null);
+  if (existing) return { target, doc: existing, created: false };
+
+  const published = await sanity.getDocument(base).catch(() => null);
+  if (!published) {
+    throw new Error(`neither ${target} nor ${base} exists — there is no document to attach the artwork to`);
+  }
+  /* _rev belongs to the published document; carrying it over would make this a
+     write against a revision that is not this document's. */
+  const { _rev, ...body } = published;
+  await sanity.createIfNotExists({ ...body, _id: target });
+  const doc = await sanity.getDocument(target).catch(() => null);
+  return { target, doc: doc || { ...body, _id: target }, created: true };
+}
+
+/**
+ * Write the reason a render stopped onto the scene it was rendering.
+ *
+ * Best effort by definition: this runs because something already went wrong,
+ * and a store that cannot be written is not a second failure worth throwing
+ * from a catch block. The existing metadata is carried over so the record of
+ * the last good render -- including the rev it stamped -- survives; the body
+ * changing is what tells the sweep this scene is no longer the one that was
+ * rendered.
+ */
+export async function recordSceneError(store, sceneAt, rawScene, err) {
+  if (!store || !sceneAt || !rawScene) return false;
+  try {
+    const job = JSON.parse(rawScene);
+    const prev = await store.getMetadata(sceneAt).catch(() => null);
+    await store.set(sceneAt, JSON.stringify({
+      ...job,
+      renderError: String(err && err.message ? err.message : err).slice(0, 500),
+      renderErrorAt: new Date().toISOString(),
+    }), { metadata: { ...(prev?.metadata || {}), renderError: 'true' } });
+    return true;
+  } catch (e) {
+    console.error(`studio-render: could not record the failure on ${sceneAt}: ${e.message}`);
+    return false;
+  }
+}
+
 export default async (req) => {
   let id = null;
   /* Held out here so a failure anywhere below still removes the font directory
      rather than leaving a temp dir behind on a warm container. */
   let cleanupFonts = null;
+  /* And these, so the catch can write the reason onto the scene. A render that
+     dies in the middle leaves the print master written and the document
+     untouched, and until now the only trace was a log line in a function whose
+     logs come back empty. The scene is the one thing that is certainly still
+     there, so the scene is where the fault goes. */
+  let store = null, sceneAt = null, rawScene = null;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id;
@@ -66,13 +142,13 @@ export default async (req) => {
       return new Response('Bad id', { status: 400 });
     }
 
-    const store = getStore(STUDIO_STORE);
+    store = getStore(STUDIO_STORE);
     /* The trigger says which slot; the scene says so too. Either will do, and
        the legacy path is the third answer: a save that was in flight when this
        deploy landed wrote studio/<id>/scene.json with no style in it, and that
        is a Classic save by definition -- it predates there being another. */
     const asked = styleOr(body.style);
-    let sceneAt = sceneKey(id, asked);
+    sceneAt = sceneKey(id, asked);
     let raw = await store.get(sceneAt, { type: 'text' });
     if (!raw) {
       sceneAt = legacySceneKey(id);
@@ -83,6 +159,7 @@ export default async (req) => {
       console.error(`studio-render: no scene stored for ${id} (${asked}) — nothing to render`);
       return new Response('No scene', { status: 404 });
     }
+    rawScene = raw;
     const job = JSON.parse(raw);
     const style = styleOr(job.style || body.style);
 
@@ -202,12 +279,20 @@ export default async (req) => {
        do. Two sources because the trigger body is the thing that can be
        reconstructed wrongly by hand, and the scene is the thing that was
        written at save time and cannot. */
-    const docId = isDocId(body.docId) ? body.docId : (isDocId(job.docId) ? job.docId : null);
+    let docId = isDocId(body.docId) ? body.docId : (isDocId(job.docId) ? job.docId : null);
     if (!isDocId(body.docId) && docId) {
       console.log(`studio-render: no docId in the trigger — using ${docId} from the stored scene`);
     }
     let attached = 'no document';
+    let draftNote = '';
     if (sanity && docId) {
+      /* Before anything is uploaded: if there is nowhere to attach to, that is
+         a failure of this render, and it should be one BEFORE two assets are
+         pushed into Sanity that nothing will ever reference. The migration's
+         failed runs left exactly that behind. */
+      const draft = await draftTargetFor(sanity, docId);
+      docId = draft.target;
+      draftNote = draft.created ? ' (draft created from the published product)' : '';
       const slug = (title || 'artwork').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'artwork';
       const [listingAsset, printAsset] = await Promise.all([
         sanity.assets.upload('image', listingJpeg, {
@@ -227,7 +312,9 @@ export default async (req) => {
          one on display and the new render invisible at the end of the array.
          Whatever was in that slot is written into the history entry studio-save
          already made, so there is a way back to it. */
-      const current = await sanity.getDocument(docId);
+      /* The draft as draftTargetFor left it: either the one that was already
+         there, or the copy it has just made of the published product. */
+      const current = draft.doc;
       const alt = `${title} — Comic Strip Canvas`;
       const printRef = { _type: 'file', asset: { _type: 'reference', _ref: printAsset._id } };
 
@@ -340,10 +427,25 @@ export default async (req) => {
        reopen, so it stays. Re-running a render for the same id still works --
        better than before, since it no longer depends on uploads that may have
        been swept. */
-    await store.set(sceneKey(id, style), JSON.stringify({
-      ...job, id, docId, style, images: durable, renderedAt: new Date().toISOString(),
-    }), {
-      metadata: { id, docId, style, kind: 'scene', title, printWidth, dpi: DPI, rendered: 'true' },
+    /* Any error from a previous attempt goes with the success that replaces it,
+       or the scene would keep reporting a fault that has been fixed. */
+    const { renderError: _was, renderErrorAt: _whenn, ...clean } = job;
+    const sceneBody = JSON.stringify({
+      ...clean, id, docId, style, images: durable, renderedAt: new Date().toISOString(),
+    });
+    /* The rev of the bytes being written, recorded ALONGSIDE them rather than
+       inside them -- a hash cannot contain itself. It is the same rev
+       order-print-file keys a finished file on, so "has this scene been
+       rendered since it last changed" becomes one comparison: hash the scene
+       now, and see whether it is the one the last completed render wrote.
+       Anything that edits a scene afterwards -- a migration, a hand repair, the
+       error recorded below -- moves the body's hash away from this and the
+       sweep says so. */
+    await store.set(sceneKey(id, style), sceneBody, {
+      metadata: {
+        id, docId, style, kind: 'scene', title, printWidth, dpi: DPI,
+        rendered: 'true', renderedRev: sceneRevOf(sceneBody),
+      },
     });
     /* The legacy path, if that is where this one was read from, does go: it is
        the same scene at an older address and keeping both would leave two
@@ -363,12 +465,20 @@ export default async (req) => {
     console.log(
       `studio-render: "${title}" ${id} [${styleLabel(style)}] -> print ${print.width} x ${print.height} px ` +
       `(${printPng.length} B) @ ${DPI}dpi -> ${printAt}, listing ${listingInfo.width}x${listingInfo.height} ` +
-      `(${listingJpeg.length} B jpeg) -> ${attached}`
+      `(${listingJpeg.length} B jpeg) -> ${attached}${draftNote}`
     );
     return new Response('Rendered', { status: 200 });
   } catch (err) {
     if (cleanupFonts) cleanupFonts();
     console.error(`studio-render: ${id} failed:`, err.message);
+    /* Say so ON THE SCENE, not only in a log nobody can read. A render that
+       dies partway is invisible otherwise: the print master may already be
+       written, the timestamps still look like the last successful run, and the
+       sweep -- which compared savedAt against renderedAt -- saw nothing wrong.
+       Writing the reason here also moves the scene's hash away from the rev the
+       last completed render stamped, so the sweep flags it even if this write
+       is all that is left of the failure. */
+    await recordSceneError(store, sceneAt, rawScene, err);
     /* The draft exists with its history entry, so a failure here costs the
        pictures and nothing else -- and on a redraw the product keeps the
        artwork it already had rather than being left half-changed. Re-runnable

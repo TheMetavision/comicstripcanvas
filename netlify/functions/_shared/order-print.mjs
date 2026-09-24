@@ -5,8 +5,22 @@
  * page, so all three agree on the cache key. A cache whose key is computed in
  * three places is a cache that serves one job's file for another job.
  */
+import { createHash } from 'node:crypto';
 import { SIZE_KEYS, SIZE_NAME, orientationFromAspect } from './sizes.mjs';
 import { CLASSIC, FULL_BLEED, styleOr } from './artwork-styles.mjs';
+
+/**
+ * A scene's revision: a hash of its own bytes.
+ *
+ * One definition, because three things now compare it and they have to mean
+ * the same number. The print cache names a finished file after it, the renderer
+ * stamps it on the scene it has just written, and the sweep asks whether the
+ * scene it is looking at is still that one. A blob etag would do for any single
+ * pair of those, but a hash of the bytes cannot disagree with the bytes, and it
+ * survives a copy between stores.
+ */
+export const sceneRevOf = (raw) =>
+  createHash('sha256').update(typeof raw === 'string' ? raw : String(raw)).digest('hex').slice(0, 16);
 
 /** Where finished print files live. Separate from the studio store: different
  *  lifetime, different owner, and mixing them makes the retention sweep guess. */

@@ -3,7 +3,7 @@
  *
  *   node tools/builder/render-sweep.mjs [--all] [--json] [--out FILE]
  *
- * A studio render can fail in two ways and NEITHER of them tells anybody. The
+ * A studio render can fail in several ways and NONE of them tells anybody. The
  * document keeps its old picture, artworkHistory gains an entry suggesting work
  * happened, and the only sign is a customer looking at artwork that should have
  * changed. Both were found by hand, one at a time. This finds them in one pass.
@@ -15,6 +15,18 @@
  *               five days: invoked 245ms after the save, no completion, and
  *               nothing in the logs -- this function's log messages come back
  *               empty, so there is nothing to read.
+ *
+ *   STALE       the scene has changed since the render that last completed.
+ *               savedAt is written by studio-save and by nothing else, so a
+ *               scene edited by anything ELSE -- a migration, a hand repair, a
+ *               render that died after writing -- keeps a savedAt older than
+ *               its renderedAt and reads as healthy. The renderer now stamps
+ *               the rev of the bytes it wrote; if the scene no longer hashes to
+ *               it, these are not those bytes. The cutoutClip migration left
+ *               two products in exactly this state and the sweep said nothing.
+ *
+ *   FAILED      the render wrote down why it stopped. It used to die into a log
+ *               that comes back empty.
  *
  *   RACE        the render finished AFTER the document was published. The
  *               renderer attaches to the DRAFT and publishing is what promotes
@@ -42,6 +54,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { getStore } from '@netlify/blobs';
 import { parseArgs, printTable, humanMs, pool } from './_cli.mjs';
+import { sceneRevOf } from '../../netlify/functions/_shared/order-print.mjs';
 
 const SPEC = {
   all: 'boolean', json: 'boolean', out: 'string',
@@ -71,8 +84,10 @@ export const HELP = `
     NETLIFY_SITE_ID   / .netlify/state.json  -> siteId
     NETLIFY_AUTH_TOKEN                       -> else the Netlify CLI's own login
 
-  Two failure modes, neither of which announces itself:
+  Failure modes, none of which announces itself:
     INCOMPLETE  saved, never finished rendering — run the render again
+    STALE       edited since the last completed render — run the render again
+    FAILED      the render recorded why it stopped — read the reason first
     RACE        finished AFTER the publish — publish again to promote it
 `;
 
@@ -127,8 +142,23 @@ export async function readScene(store, key, { timeoutMs = READ_TIMEOUT_MS } = {}
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
   });
+  /* The BYTES, not the parsed object, because the scene's revision is a hash of
+     its own bytes and re-stringifying a parsed object does not reproduce them.
+     The metadata comes back in the same read: it carries the stamp the renderer
+     leaves, which is what says whether these bytes are the ones that were
+     rendered. A store that only offers get() -- the test stubs, and any older
+     client -- still works, with no stamp to compare. */
+  const read = typeof store.getWithMetadata === 'function'
+    ? store.getWithMetadata(key, { type: 'text' })
+    /* null, not {}: "there was no stamp" and "the stamp could not be read" are
+       different answers, and only the first is evidence of anything. */
+    : Promise.resolve(store.get(key, { type: 'json' })).then((data) => ({ data, metadata: null }));
   try {
-    return { scene: await Promise.race([store.get(key, { type: 'json' }), timeout]) };
+    const got = await Promise.race([read, timeout]);
+    const data = got && typeof got === 'object' && 'data' in got ? got.data : got;
+    const metadata = got && typeof got === 'object' && 'metadata' in got ? (got.metadata ?? null) : null;
+    if (typeof data !== 'string') return { scene: data, metadata, rev: null };
+    return { scene: JSON.parse(data), metadata, rev: sceneRevOf(data) };
   } catch (err) {
     return { error: err.message };
   } finally {
@@ -151,7 +181,10 @@ export function parseKey(key) {
  * second before the publish is fine and one that landed a second after is not,
  * and there is no useful middle to allow for.
  */
-export function classify({ savedAt, renderedAt, publishedAt, hasProduct, hasDraft, draftsKnown }) {
+export function classify({
+  savedAt, renderedAt, publishedAt, hasProduct, hasDraft, draftsKnown,
+  rev, renderedRev, rendererWrote, renderError,
+}) {
   if (!savedAt && !renderedAt) return { mode: 'unknown', why: 'scene has neither savedAt nor renderedAt' };
 
   /* No product comes FIRST, ahead of the unfinished check, because the two
@@ -173,6 +206,36 @@ export function classify({ savedAt, renderedAt, publishedAt, hasProduct, hasDraf
   }
 
   if (!renderedAt) return { mode: 'INCOMPLETE', why: 'saved, but the render never finished' };
+
+  /* Past here a render DID finish at some point. The question the timestamps
+     cannot answer is whether it finished on the scene that is there NOW.
+     savedAt is written by studio-save and by nothing else, so a scene edited by
+     anything other than a save -- a migration, a hand repair, a render that
+     died after writing -- keeps a savedAt older than its renderedAt and reads
+     as healthy. Both published products in the cutoutClip migration sat like
+     that: rewritten at 18:13, still claiming a render from eleven days before,
+     and the sweep had nothing to say. */
+  if (renderError) {
+    return { mode: 'FAILED', why: `the render recorded an error: ${String(renderError).slice(0, 160)}` };
+  }
+  /* The renderer stamps the rev of the bytes it wrote. If the scene no longer
+     hashes to it, these are not those bytes. */
+  if (renderedRev && rev && renderedRev !== rev) {
+    return {
+      mode: 'STALE',
+      why: `the scene has changed since it was rendered (rev ${rev}, last rendered ${renderedRev})`,
+    };
+  }
+  /* And for a scene written before that stamp existed, or by something that
+     dropped it: the renderer marks every scene it completes. A renderedAt with
+     no such mark means the last write was not a finished render. */
+  if (!renderedRev && rendererWrote === false) {
+    return {
+      mode: 'STALE',
+      why: 'the last thing to write this scene was not a completed render — it claims a renderedAt it cannot account for',
+    };
+  }
+
   if (!publishedAt) return { mode: 'ok', why: 'rendered' };
   if (new Date(renderedAt) <= new Date(publishedAt)) return { mode: 'ok', why: 'rendered before the publish' };
 
@@ -312,7 +375,7 @@ export async function run(argv, deps = {}) {
   const started = now();
 
   await pool(keys, concurrency, async (key) => {
-    const { scene, error: readErr } = await readScene(store, key, { timeoutMs });
+    const { scene, metadata, rev, error: readErr } = await readScene(store, key, { timeoutMs });
     done++;
     if (done % every === 0 || done === keys.length) {
       const rate = (done / Math.max(1, (now() - started) / 1000)).toFixed(1);
@@ -327,10 +390,16 @@ export async function run(argv, deps = {}) {
     const rawDocId = String(scene.docId || '');
     const docId = rawDocId.replace(/^drafts\./, '') || parsed.id;
     const product = products.get(docId) || products.get(parsed.id);
+    const meta = metadata || {};
     const verdict = classify({
       savedAt: scene.savedAt, renderedAt: scene.renderedAt,
       publishedAt: product?._updatedAt, hasProduct: !!product,
       hasDraft: draftIds.has(docId), draftsKnown,
+      rev, renderedRev: meta.renderedRev || null,
+      /* Only a judgement where the stamp could have been read at all. A stub
+         store with no metadata support must not make every scene look stale. */
+      rendererWrote: metadata ? meta.rendered === 'true' : undefined,
+      renderError: scene.renderError || null,
     });
 
     rows.push({
@@ -342,6 +411,11 @@ export async function run(argv, deps = {}) {
       savedAt: scene.savedAt || null,
       renderedAt: scene.renderedAt || null,
       publishedAt: product?._updatedAt || null,
+      /* Both revs in the record, so a STALE verdict can be checked rather than
+         believed: the scene hashes to one, the last completed render stamped
+         the other. */
+      rev: rev || null, renderedRev: meta.renderedRev || null,
+      renderError: scene.renderError || null,
       mode: verdict.mode, why: verdict.why,
     });
   });
@@ -390,7 +464,7 @@ export async function run(argv, deps = {}) {
     log('');
     for (const r of shown.filter((x) => x.mode !== 'ok')) log(`    ${r.title} — ${r.why}`);
   } else {
-    log('  nothing incomplete and nothing raced.');
+    log('  nothing incomplete, nothing stale and nothing raced.');
   }
 
   const counts = {};
@@ -409,6 +483,11 @@ export async function run(argv, deps = {}) {
   log('');
   log('  INCOMPLETE — the render never finished. Run it again from the stored scene:');
   log('      POST /api/studio-render/<id>   X-CSC-Internal-Secret: <secret>');
+  log('  STALE — the scene has been edited since the last completed render, so the');
+  log('      print master and the pictures are of an older design. Same remedy as');
+  log('      INCOMPLETE: run the render again from the stored scene.');
+  log('  FAILED — the render recorded why it stopped. Read the reason first; running');
+  log('      it again without fixing the cause just records it a second time.');
   log('  RACE — the artwork is on the draft. Publish the product again to promote it.');
   log('  ORPHAN — no product has this id. Do NOT re-render: the document is gone,');
   log('      so the scene blob is stale and the render would recreate a deleted product.');
