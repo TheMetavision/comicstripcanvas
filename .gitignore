@@ -47,3 +47,7 @@ tools/previous-slugs-backup-*.json
 
 artwork/
 photos/
+
+# Per-machine Claude Code permission rules (allow/ask/deny). Personal to a
+# working copy, not a project decision, so it stays out of the repository.
+.claude/settings.local.json

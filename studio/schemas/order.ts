@@ -86,6 +86,16 @@ export default defineType({
                 'and what was bought is what gets printed.',
             },
             {
+              name: 'listingImageRef',
+              title: 'Image As Bought',
+              type: 'image',
+              description:
+                'The listing image this customer was looking at when they ordered, pinned to ' +
+                'the asset itself. Replacing a product’s artwork later uploads a NEW asset, so ' +
+                'this keeps pointing at the picture that was actually bought — which is what we ' +
+                'owe them, whatever the product page shows now.',
+            },
+            {
               name: 'productRef',
               title: 'Product Reference',
               type: 'reference',
@@ -100,15 +110,23 @@ export default defineType({
               qty: 'quantity',
               price: 'unitPrice',
               style: 'artworkStyle',
+              printFile: 'printFile',
+              buildKind: 'buildKind',
+              media: 'listingImageRef',
             },
-            prepare({ title, format, size, qty, price, style }) {
+            prepare({ title, format, size, qty, price, style, printFile, buildKind, media }) {
               /* The style goes in the SUBTITLE, where a picker sees it without
                  opening the line. A two-style product is two orders that look
                  identical until you read which file to print. */
               const styleName = style === 'fullBleed' ? 'Full bleed' : 'Classic';
+              /* A built line is fulfilled from its own approved render, so an
+                 empty Print File is correct there and must not be shouted
+                 about. On a stock line it means there is nothing to print. */
+              const printMissing = !printFile && !buildKind;
               return {
-                title: `${title}`,
+                title: printMissing ? `⚠ PRINT FILE MISSING — ${title}` : `${title}`,
                 subtitle: `${styleName} · ${format} / ${size} × ${qty} — £${((price || 0) * (qty || 1)).toFixed(2)}`,
+                media,
               };
             },
           },

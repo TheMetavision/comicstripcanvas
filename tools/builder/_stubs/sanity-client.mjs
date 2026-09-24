@@ -22,6 +22,14 @@ export function reset() {
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
+/** What `asset->url` would resolve to for a seeded file/image asset. */
+const assetUrl = (asset) => {
+  if (!asset) return null;
+  if (asset.url) return asset.url;
+  if (!asset._ref) return null;
+  return `https://cdn.sanity.io/files/stub/production/${asset._ref}.png`;
+};
+
 /** Apply one patch operation set to a document, the way Sanity would. */
 function applyPatch(doc, ops) {
   for (const [k, v] of Object.entries(ops.set || {})) setPath(doc, k, v);
@@ -125,6 +133,20 @@ export function createClient() {
             const row = { slug: p.slug.current };
             if (/defined\(fullBleed\.printFile\.asset\)/.test(q)) {
               row.fullBleed = !!p.fullBleed?.printFile?.asset;
+            }
+            /* The webhook's print-file lookup, which dereferences the asset for
+               its URL. Distinct from checkout's query above, which only asks
+               whether a full-bleed file EXISTS -- matching on "->url" rather
+               than "defined(" keeps the two apart. A seeded asset may carry an
+               explicit url; otherwise one is derived from the ref, because what
+               the handler does with the value is pass it on, not parse it. */
+            if (/printFile\.asset->url/.test(q)) {
+              row.classic = assetUrl(p.printFile?.asset);
+              row.fullBleed = assetUrl(p.fullBleed?.printFile?.asset);
+            }
+            if (/images\[0\]\.asset\._ref/.test(q)) {
+              row.classicListing = p.images?.[0]?.asset?._ref ?? null;
+              row.fullBleedListing = p.fullBleed?.listingImage?.asset?._ref ?? null;
             }
             if (/personalisationFee/.test(q)) row.personalisationFee = p.personalisationFee;
             return row;

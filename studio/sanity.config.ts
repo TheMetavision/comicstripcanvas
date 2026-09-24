@@ -35,9 +35,34 @@ const structure = (S: any) =>
         .title('Orders')
         .icon(() => '\u{1F4E6}')
         .child(
-          S.documentTypeList('order')
+          S.list()
             .title('Orders')
-            .defaultOrdering([{ field: 'createdAt', direction: 'desc' }])
+            .items([
+              /* An order with a stock line that resolved no print file. The
+                 order is otherwise completely normal -- paid, confirmed, with a
+                 picture on the product page -- so nothing else distinguishes
+                 it, and it cannot be fulfilled until the artwork exists. A
+                 built line is excluded: those are printed from the render on
+                 their Personalisations entry and carry no printFile by design. */
+              S.listItem()
+                .title('Needs attention')
+                .child(
+                  S.documentTypeList('order')
+                    .title('Needs attention — no print file')
+                    .filter(
+                      '_type == "order" && count(lineItems[!defined(printFile) && !defined(buildKind)]) > 0'
+                    )
+                    .defaultOrdering([{ field: 'createdAt', direction: 'desc' }])
+                ),
+              S.divider(),
+              S.listItem()
+                .title('All orders')
+                .child(
+                  S.documentTypeList('order')
+                    .title('All Orders')
+                    .defaultOrdering([{ field: 'createdAt', direction: 'desc' }])
+                ),
+            ])
         ),
 
       // Personalisations — artwork built in the product builder. This is the

@@ -210,6 +210,14 @@ async function fulfilOrder(session) {
       let personalisationDetails = undefined;
       let itemRows;
       let personalisationRef = '';
+      /* Lines that are selling stock artwork but resolved no print file. The
+         order is still created and the customer still gets their confirmation
+         -- they have paid and we owe them the print -- but whoever fulfils it
+         has nothing to download, so it is said plainly at the top of the team
+         email and the order is pulled out in the Studio. Collected here rather
+         than recomputed from lineItems later so the email and the console
+         warning cannot disagree about which lines are affected. */
+      const missingPrint = [];
       // Track whether this is specifically a Comic Book Strip order, so the
       // email copy can be tailored (no Name/Title or Caption references).
       let isStrip = false;
@@ -339,7 +347,14 @@ async function fulfilOrder(session) {
           if (slugs.length) {
             const rows = await sanity.fetch(
               '*[_type == "product" && slug.current in $slugs]{ "slug": slug.current, ' +
-              '"classic": printFile.asset->url, "fullBleed": fullBleed.printFile.asset->url }',
+              '"classic": printFile.asset->url, "fullBleed": fullBleed.printFile.asset->url, ' +
+              /* The listing image the customer was looking at, per style, as an
+                 asset id rather than a URL. Snapshotted onto the line below so a
+                 later artwork replacement cannot quietly change what we agreed
+                 to send: a new upload is a new asset, and this id still points
+                 at the picture that was bought. */
+              '"classicListing": images[0].asset._ref, ' +
+              '"fullBleedListing": fullBleed.listingImage.asset._ref }',
               { slugs }
             );
             for (const r of rows) printBySlug[r.slug] = r;
@@ -361,7 +376,14 @@ async function fulfilOrder(session) {
               `webhook: no ${item.artworkStyle} print file for "${item.slug}" — ` +
               'the order line will name the style but carry no file'
             );
+            missingPrint.push({ title: item.title, style: styleLabel(item.artworkStyle) });
           }
+          /* Snapshotted for every line, built or not: a customised line is
+             fulfilled from its own render, but the listing image is still what
+             the customer was shown and is still worth pinning. */
+          const listingRef = printBySlug[item.slug]?.[
+            item.artworkStyle === FULL_BLEED ? 'fullBleedListing' : 'classicListing'
+          ] || null;
           return {
             _type: 'object',
             /* The style is part of the key: two lines of the same product in
@@ -375,6 +397,14 @@ async function fulfilOrder(session) {
             unitPrice: item.unitPrice,
             artworkStyle: item.artworkStyle,
             ...(printFile ? { printFile } : {}),
+            ...(listingRef
+              ? {
+                listingImageRef: {
+                  _type: 'image',
+                  asset: { _type: 'reference', _ref: listingRef },
+                },
+              }
+              : {}),
             ...(item.buildKind ? { buildKind: item.buildKind } : {}),
           };
         });
@@ -523,6 +553,33 @@ async function fulfilOrder(session) {
           </tfoot>
         </table>`;
 
+      /* Team email only, and first in the body. A line with no print file looks
+         completely normal everywhere else -- the product has a listing image,
+         checkout took the money, the confirmation went out -- so the only place
+         it can be caught is here, before anyone starts packing it. */
+      const missingPrintBlock = missingPrint.length
+        ? `<div style="background: #fdecea; padding: 18px 20px; border-bottom: 3px solid #d32f2f;">
+            <strong style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #b71c1c;">
+              ⚠ Print file missing &mdash; ${missingPrint.length === 1 ? 'this order cannot be printed yet' : `${missingPrint.length} lines cannot be printed yet`}
+            </strong>
+            <div style="margin-top: 12px;">
+              ${missingPrint
+                .map(
+                  (m) =>
+                    `<p style="margin: 4px 0; font-size: 15px; font-weight: bold; color: #b71c1c;">PRINT FILE MISSING &mdash; ${m.title} (${m.style})</p>`
+                )
+                .join('')}
+            </div>
+            <p style="margin: 12px 0 0; font-size: 13px; color: #611a15; line-height: 1.6;">
+              The customer has paid and their confirmation has been sent. There is no
+              file to download for the line${missingPrint.length === 1 ? '' : 's'} above &mdash; the product
+              carries no high-res print file for that artwork style. Produce the artwork, attach it
+              to the product in the Studio, then print. This order is listed under
+              <a href="${BRAND.studio}" style="color: #b71c1c; font-weight: bold;">Orders &rarr; Needs attention</a>.
+            </p>
+          </div>`
+        : '';
+
       const shippingBlock = `
         <div style="background: #f8f8f8; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${BRAND.pink};">
           <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #666;">Shipping Address</strong><br/><br/>
@@ -640,7 +697,7 @@ async function fulfilOrder(session) {
                 <p style="color: rgba(255,255,255,0.9); margin: 6px 0 0; font-size: 15px; font-weight: bold;">${orderNumber}</p>
                 <p style="color: rgba(255,255,255,0.8); margin: 4px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
-              
+              ${missingPrintBlock}
               <div style="padding: 24px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                   <div>

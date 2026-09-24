@@ -667,6 +667,103 @@ function seedPaidSessionWithBuild(buildId, id = 'cs_test_paid_1') {
     String(counter?.lastOrderNumber));
 }
 
+say('\n10a. WEBHOOK: A STOCK LINE WITH NO PRINT FILE IS FLAGGED, NOT BLOCKED\n');
+
+/* 62 published products have a listing image and no print file, so they sell
+   like anything else and produce an order nobody can fulfil. Purchase is
+   deliberately NOT blocked -- the money is taken and the customer is owed the
+   print either way -- so the whole defence is that the gap is impossible to
+   miss afterwards. That is what these assertions are about. */
+
+/* The team email, picked out by recipient: two sends happen per order, customer
+   then team, and only the team one carries the alert. */
+const teamMail = () => resendStub.sent.find((m) => (m.to || []).includes('team@test.local'));
+
+/* The predicate behind "Orders → Needs attention" in studio/sanity.config.ts:
+   count(lineItems[!defined(printFile) && !defined(buildKind)]) > 0. Written out
+   here rather than imported -- the desk filter is GROQ in a TS config and cannot
+   be -- so if one of the two changes, the other has to be looked at. */
+const needsAttention = (order) =>
+  (order?.lineItems || []).filter((l) => !l.printFile && !l.buildKind).length;
+
+const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
+
+{
+  resetAll();
+  /* A product exactly as those 62 are in production: a listing image, so it
+     looks complete and sells normally, and no print file behind it. */
+  seed(product('gizmo', { images: [{ asset: { _ref: LISTING_REF } }] }));
+  const session = seedPaidSessionWithBuild(null);
+  const r = await postWebhook(stripeEvent('checkout.session.completed', session));
+
+  ok(r.status === 200, 'the order is NOT blocked', `${r.status} ${r.text}`);
+  const order = sanityStub.docs.get(`order-${session.id}`);
+  ok(!!order, 'the order document was still created');
+  ok(order?.lineItems?.[0]?.printFile === undefined,
+    'and its line carries no print file');
+  ok(resendStub.sent.length === 2, 'both emails still went out',
+    String(resendStub.sent.length));
+
+  const html = teamMail()?.html || '';
+  /* "Classic cover" is styleLabel()'s wording, shared with the line-item table
+     lower down the same email rather than invented here. */
+  ok(html.includes('PRINT FILE MISSING &mdash; Gizmo (Classic cover)'),
+    'the team email names the product and the style');
+  ok(html.indexOf('PRINT FILE MISSING') < html.indexOf('Shipping Address'),
+    'at the top, above the order detail rather than buried in it');
+  ok(needsAttention(order) === 1, 'and the order matches Needs attention',
+    `${needsAttention(order)} line(s)`);
+
+  ok(order?.lineItems?.[0]?.listingImageRef?.asset?._ref === LISTING_REF,
+    'the image as bought is pinned to the asset the customer saw',
+    order?.lineItems?.[0]?.listingImageRef?.asset?._ref);
+}
+
+{
+  resetAll();
+  seed(product('gizmo', {
+    images: [{ asset: { _ref: LISTING_REF } }],
+    printFile: { asset: { _ref: 'file-print-master', url: 'https://cdn.test/print.png' } },
+  }));
+  const session = seedPaidSessionWithBuild(null, 'cs_test_paid_2');
+  const r = await postWebhook(stripeEvent('checkout.session.completed', session));
+  ok(r.status === 200, 'a printable line is accepted', String(r.status));
+
+  const order = sanityStub.docs.get(`order-${session.id}`);
+  ok(order?.lineItems?.[0]?.printFile === 'https://cdn.test/print.png',
+    'the line carries the resolved print file', order?.lineItems?.[0]?.printFile);
+  ok(!(teamMail()?.html || '').includes('PRINT FILE MISSING'),
+    'no alert in the team email');
+  ok(needsAttention(order) === 0, 'and nothing for Needs attention');
+  ok(order?.lineItems?.[0]?.listingImageRef?.asset?._ref === LISTING_REF,
+    'the image as bought is pinned on a good line too');
+}
+
+{
+  /* A built line carries no print file BY DESIGN -- it is printed from the
+     render on its own Personalisations entry. If that counted as missing, every
+     personalised order would raise a false alarm, which is the fastest way to
+     teach somebody to ignore the banner. */
+  resetAll();
+  const BUILD = `pp-${'d'.repeat(32)}`;
+  seed(product('gizmo', { images: [{ asset: { _ref: LISTING_REF } }] }));
+  sanityStub.docs.set(BUILD, {
+    _id: BUILD, _type: 'pendingPersonalisation', status: 'draft',
+    photos: [{ panel: 'art', styleStatus: 'done', styledKey: 'k' }],
+    templateId: 'cover',
+  });
+  const session = seedPaidSessionWithBuild(BUILD, 'cs_test_paid_3');
+  const r = await postWebhook(stripeEvent('checkout.session.completed', session));
+  ok(r.status === 200, 'a built line is accepted', String(r.status));
+
+  const order = sanityStub.docs.get(`order-${session.id}`);
+  ok(order?.lineItems?.[0]?.printFile === undefined,
+    'it carries no print file, as designed');
+  ok(!(teamMail()?.html || '').includes('PRINT FILE MISSING'),
+    'and raises NO false alarm');
+  ok(needsAttention(order) === 0, 'nor appears under Needs attention');
+}
+
 say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');
 {
   resetAll();
