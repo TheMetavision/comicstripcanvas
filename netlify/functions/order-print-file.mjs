@@ -1,5 +1,5 @@
 import { getStore } from '@netlify/blobs';
-import { PRINT_STORE } from './_shared/order-print.mjs';
+import { PRINT_STORE, openPrintStore } from './_shared/order-print.mjs';
 
 /**
  * Start / ask about / fetch the print file for one order line.
@@ -67,7 +67,7 @@ export default async (req) => {
 
   if (!isId(orderId) || !isId(lineKey)) return bad('order and line are required');
 
-  const store = getStore(PRINT_STORE);
+  const store = openPrintStore(getStore);
   const pending = `pending/${orderId}/${lineKey}`;
 
   if (action === 'start') {

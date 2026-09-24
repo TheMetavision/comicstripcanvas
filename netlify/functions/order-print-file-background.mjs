@@ -8,7 +8,7 @@ import { faceFor, renderFromScene, fitFlatMaster, readDpi } from './_shared/prin
 import { dataUri } from './_shared/scene.mjs';
 import {
   PRINT_STORE, keysFromLine, printKeyFor, sourceId, downloadName,
-  sceneIdFor, orientationFor, resolveLineProduct,
+  sceneIdFor, orientationFor, resolveLineProduct, openPrintStore,
 } from './_shared/order-print.mjs';
 
 /**
@@ -93,7 +93,7 @@ export default async (req) => {
       + `${lineKey || '(no line)'} — ${memoryNote()}`);
     if (!orderId || !lineKey) return new Response('Bad job', { status: 400 });
 
-    const prints = getStore(PRINT_STORE);
+    const prints = openPrintStore(getStore);
 
     const order = await sanity.fetch(
       `*[_type == "order" && _id == $id][0]{ _id, orderNumber, lineItems }`,
@@ -234,7 +234,7 @@ export default async (req) => {
   } catch (err) {
     console.error('order-print-file: failed —', err?.stack || err?.message || err);
     try {
-      await mark(getStore(PRINT_STORE), `pending/${job.orderId}/${job.lineKey}`, 'error',
+      await mark(openPrintStore(getStore), `pending/${job.orderId}/${job.lineKey}`, 'error',
         { error: err?.message || String(err) });
     } catch { /* nothing left to do */ }
     return new Response('Failed', { status: 500 });
