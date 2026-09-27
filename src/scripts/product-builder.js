@@ -64,6 +64,7 @@ import {
   CLIP_EDGES, CLIP_TO_FACE, CLIP_TO_WRAP, clipAll, normaliseCutoutClip,
   cutoutClipRect, faceBox,
 } from '../../netlify/functions/_shared/print-geometry.mjs';
+import { customiseCutout } from './customise-variant.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -2033,9 +2034,15 @@ export function initProductBuilder() {
      studio holds one, and the operator is telling us what it already is: a PNG
      they cut out themselves. So there the variant is a declaration rather than
      a choice between files, and it survives with nothing to point at. */
+  /* shopCutout is the third case, and it belongs with the studio's rather than
+     the customer's: on "Customise this design" the artwork IS the cut-out, so
+     there is no second file to point at and nothing to toggle between. The
+     scene declares it -- see src/scripts/customise-variant.js -- because
+     asking for a cutoutUrl a customise design can never have is what made the
+     preview clip to the art window while the print clipped to the page. */
   const variantOf = (s) => (MODE === 'studio'
     ? (s.variant === 'cutout' ? 'cutout' : 'styled')
-    : (s.cutoutUrl && s.variant !== 'styled' ? 'cutout' : 'styled'));
+    : ((s.cutoutUrl || s.shopCutout) && s.variant !== 'styled' ? 'cutout' : 'styled'));
 
   /** Is this template one where a cutout means anything at all? */
   const cutoutTemplate = () => TK === CUTOUT_TEMPLATE;
@@ -2110,6 +2117,12 @@ export function initProductBuilder() {
   };
 
   /** Point the panel's clip at either its art window or the bleeding version. */
+  /** The template's art window for a panel, as the clip would use it. */
+  const panelRectOf = (id) => {
+    const p = nodes[id] && nodes[id].panel;
+    return p ? { x: p.x, y: p.y, width: p.width, height: p.height } : null;
+  };
+
   function applyPanelClip(id) {
     const n = nodes[id];
     if (!n || !n.clip || n.clip.tagName !== 'rect') return;   // shaped panels keep their path
@@ -2117,11 +2130,16 @@ export function initProductBuilder() {
     const g = geom();
     /* The bleeding version is the shared rule, per edge, so what is on screen
        is what reprojectScene will work out again at print time. */
+    /* A customise scene saved before cutoutClip existed carries only the rect
+       it was saved with, and the print path leaves that rect alone at every
+       finish -- absent means "as it is". So the preview uses it unchanged too,
+       rather than recomputing something the printer will not. */
+    const stored = bleeds(id) ? (state.get(id) || {}).shopClipRect : null;
     const box = bleeds(id)
-      ? cutoutClipRect(g.c, g, cutoutClip)
+      ? (stored || cutoutClipRect(g.c, g, cutoutClip))
       : { x: p.x, y: p.y, width: p.width, height: p.height };
     Object.entries(box).forEach(([k, v]) => n.clip.setAttribute(k, v));
-    if (bleeds(id)) {
+    if (bleeds(id) && !stored) {
       n.clip.setAttribute('data-role', 'cutout-clip');
       for (const edge of CLIP_EDGES) n.clip.setAttribute(`data-clip-${edge}`, cutoutClip[edge]);
     } else {
@@ -4856,6 +4874,22 @@ export function initProductBuilder() {
     load(key);
     applyRecipe(data.recipe || {});
     await Promise.all(Object.entries(data.panels || {}).map(([panel, src]) => fillLocked(panel, src)));
+
+    /* Now that the panels hold the shop's artwork, let the SCENE say whether
+       that artwork is a cut-out and where it stops. Done after fillLocked
+       because it writes onto the state those fills created, and before the
+       redraw below so the first thing the customer sees is already right. */
+    if (bleedable(CUTOUT_PANEL_OF_COVER)) {
+      const slot = state.get(CUTOUT_PANEL_OF_COVER);
+      if (slot && !slot.demo) {
+        const window = panelRectOf(CUTOUT_PANEL_OF_COVER);
+        const decided = customiseCutout(data, window);
+        slot.shopCutout = decided.variant === 'cutout';
+        slot.shopClipRect = decided.rect;
+        console.log(`[builder] customise: ${CUTOUT_PANEL_OF_COVER} is ${decided.variant} — ${decided.why}`);
+        applyPanelClip(CUTOUT_PANEL_OF_COVER);
+      }
+    }
     if (artworkFailed) {
       /* The design loaded but its picture did not, which is the same thing from
          where the customer is sitting: there is nothing to put wording on. */
