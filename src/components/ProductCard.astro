@@ -22,7 +22,7 @@ const imageUrl = hasImage ? urlFor(product.images[0]).width(600).height(750).url
 ---
 
 <article class="product-card group relative flex flex-col overflow-hidden">
-  <a href={`/store/${product.slug}`} class="flex flex-col h-full">
+  <a href={`/store/${product.slug}/`} class="flex flex-col h-full">
     <div class="aspect-[4/5] bg-mid-grey relative overflow-hidden flex items-center justify-center">
       {imageUrl ? (
         <img

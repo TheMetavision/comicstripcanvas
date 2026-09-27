@@ -96,7 +96,7 @@ export const GET: APIRoute = async () => {
       // Generate optimised image URL (Google requires under 16MB, recommends 800x800+)
       const optimisedImage = `${mainImage}?w=1200&h=1200&fit=max&auto=format`;
 
-      const productUrl = `${SITE_URL}/store/${product.slug}`;
+      const productUrl = `${SITE_URL}/store/${product.slug}/`;
       const category = CATEGORY_LABELS[product.category] || product.category;
       const description = product.description
         ? truncate(product.description, 4900)

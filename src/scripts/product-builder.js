@@ -4803,7 +4803,7 @@ export function initProductBuilder() {
            basket line; this reads the same block. */
         const pd = document.getElementById('product-data');
         const slug = (pd && pd.dataset && pd.dataset.productSlug) || '';
-        back.href = slug ? `/store/${slug}` : '/store';
+        back.href = slug ? `/store/${slug}/` : '/store/';
         back.hidden = false;
       }
       const add = $('addBasket');

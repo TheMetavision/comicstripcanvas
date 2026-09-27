@@ -67,9 +67,9 @@ const template = 'cover' as const;
       <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-6">
         <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
         <span>/</span>
-        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <a href="/store/" class="hover:text-comic-yellow transition-colors">Store</a>
         <span>/</span>
-        <a href={`/store/${product.slug}`} class="hover:text-comic-yellow transition-colors truncate">
+        <a href={`/store/${product.slug}/`} class="hover:text-comic-yellow transition-colors truncate">
           {product.title}
         </a>
         <span>/</span>
@@ -107,7 +107,7 @@ const template = 'cover' as const;
           if (has) return;
           const other = asked === 'fullBleed' ? hasClassic : hasFullBleed;
           if (!other) return;
-          const to = `/store/${slug}/customise${asked === 'fullBleed' ? '' : '?style=fullbleed'}`;
+          const to = `/store/${slug}/customise/${asked === 'fullBleed' ? '' : '?style=fullbleed'}`;
           location.replace(to);
         })();
       </script>

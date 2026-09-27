@@ -83,7 +83,7 @@ const bodyHtml = renderBody(post.body);
       <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
         <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
         <span>/</span>
-        <a href="/blog" class="hover:text-comic-yellow transition-colors">Blog</a>
+        <a href="/blog/" class="hover:text-comic-yellow transition-colors">Blog</a>
         <span>/</span>
         <span class="text-off-white truncate">{post.title}</span>
       </nav>
@@ -124,7 +124,7 @@ const bodyHtml = renderBody(post.body);
     <div class="prose-comic" set:html={bodyHtml} />
 
     <div class="mt-12 pt-8 border-t-2 border-gray-700">
-      <a href="/blog"
+      <a href="/blog/"
          class="inline-flex items-center gap-2 font-russo text-sm text-comic-cyan hover:text-comic-yellow transition-colors uppercase tracking-wide">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -142,7 +142,7 @@ const bodyHtml = renderBody(post.body);
           {relatedPosts.map((rp: any) => {
             const rpImgUrl = rp.mainImage?.asset ? urlFor(rp.mainImage).width(600).height(338).url() : null;
             return (
-              <a href={`/blog/${rp.slug}`} class="product-card group block overflow-hidden">
+              <a href={`/blog/${rp.slug}/`} class="product-card group block overflow-hidden">
                 <div class="aspect-video overflow-hidden">
                   {rpImgUrl ? (
                     <img src={rpImgUrl} alt={rp.mainImage?.alt || rp.title} class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />

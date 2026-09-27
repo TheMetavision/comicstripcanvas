@@ -1,19 +1,19 @@
 ---
 const navLinks = [
   { label: 'Home', href: '/' },
-  { label: 'Services', href: '/services' },
+  { label: 'Services', href: '/services/' },
   {
     label: 'Store',
-    href: '/store',
+    href: '/store/',
     children: [
-      { label: 'All Products', href: '/store' },
-      { label: 'Comic Book Covers', href: '/store/comic-book-covers' },
-      { label: 'Comic Book Icons', href: '/store/comic-book-icons' },
-      { label: 'Comic Book Strips', href: '/store/comic-book-strips' },
+      { label: 'All Products', href: '/store/' },
+      { label: 'Comic Book Covers', href: '/store/comic-book-covers/' },
+      { label: 'Comic Book Icons', href: '/store/comic-book-icons/' },
+      { label: 'Comic Book Strips', href: '/store/comic-book-strips/' },
     ],
   },
-  { label: 'Blog', href: '/blog' },
-  { label: 'Contact', href: '/contact' },
+  { label: 'Blog', href: '/blog/' },
+  { label: 'Contact', href: '/contact/' },
 ];
 ---
 
@@ -55,7 +55,7 @@ const navLinks = [
       </div>
 
       <div class="flex items-center gap-4">
-        <a href="/personalise" class="hidden lg:block btn-primary text-sm py-2 px-5">
+        <a href="/personalise/" class="hidden lg:block btn-primary text-sm py-2 px-5">
           Personalise
         </a>
         <button id="cart-toggle" class="relative p-2 text-off-white hover:text-comic-yellow transition-colors">
@@ -108,7 +108,7 @@ const navLinks = [
           </a>
         )
       ))}
-      <a href="/personalise" class="btn-primary text-sm py-2 px-5 mt-3 inline-block">
+      <a href="/personalise/" class="btn-primary text-sm py-2 px-5 mt-3 inline-block">
         Personalise
       </a>
     </div>

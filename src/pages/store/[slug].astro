@@ -27,10 +27,10 @@ if (!product) {
 }
 
 const categoryLinks: Record<string, string> = {
-  'comic-book-covers': '/store/comic-book-covers',
-  'comic-book-icons': '/store/comic-book-icons',
-  'comic-book-strips': '/store/comic-book-strips',
-  'personalised': '/store/personalised',
+  'comic-book-covers': '/store/comic-book-covers/',
+  'comic-book-icons': '/store/comic-book-icons/',
+  'comic-book-strips': '/store/comic-book-strips/',
+  'personalised': '/store/personalised/',
 };
 
 const categoryLabels: Record<string, string> = {
@@ -83,7 +83,7 @@ const canCustomise = !product.isPersonalised && (customisable.classic || customi
    product is a guaranteed blank builder. */
 const customiseStyle = customisable.classic ? 'classic' : (customisable.fullBleed ? 'fullBleed' : null);
 const customiseHref = customiseStyle
-  ? `/store/${product.slug}/customise${customiseStyle === 'fullBleed' ? '?style=fullbleed' : ''}`
+  ? `/store/${product.slug}/customise/${customiseStyle === 'fullBleed' ? '?style=fullbleed' : ''}`
   : null;
 /* In pence on the document, because a £5 fee is honestly a whole number of
    them. Absent on almost everything, so the shared default is the ordinary
@@ -153,7 +153,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
       <nav class="flex items-center gap-2 font-source text-sm text-gray-500 mb-8">
         <a href="/" class="hover:text-comic-yellow transition-colors">Home</a>
         <span>/</span>
-        <a href="/store" class="hover:text-comic-yellow transition-colors">Store</a>
+        <a href="/store/" class="hover:text-comic-yellow transition-colors">Store</a>
         <span>/</span>
         <a href={categoryLinks[product.category]} class="hover:text-comic-yellow transition-colors">
           {categoryLabels[product.category]}
@@ -332,7 +332,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
           )}
 
           {!product.isPersonalised && (
-            <a href="/personalise" class="btn-secondary w-full text-xl text-center block mb-4">
+            <a href="/personalise/" class="btn-secondary w-full text-xl text-center block mb-4">
               ✏️ MAKE IT PERSONAL — PUT YOURSELF IN THE FRAME
             </a>
           )}
@@ -375,7 +375,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
           {relatedProducts.map((p: any) => {
             const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).url() : null;
             return (
-              <a href={`/store/${p.slug}`} class="product-card group block">
+              <a href={`/store/${p.slug}/`} class="product-card group block">
                 <div class="aspect-[3/2] overflow-hidden bg-mid-grey flex items-center justify-center">
                   {relImgUrl ? (
                     <img src={relImgUrl} alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />

@@ -45,7 +45,7 @@ const FAMILIES = [
       <span class="flex-1"></span>
       <span class="font-source text-sm text-gray-400">Template:</span>
       {FAMILIES.map((f) => (
-        <a href={`/admin/studio?t=${f.key}`}
+        <a href={`/admin/studio/?t=${f.key}`}
            data-family={f.key}
            class="family-tab border-[3px] border-black bg-panel-dark px-4 py-2 font-russo text-sm uppercase tracking-wide text-off-white hover:border-comic-yellow">
           {f.label}
