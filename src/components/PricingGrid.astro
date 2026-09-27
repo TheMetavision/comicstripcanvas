@@ -1,5 +1,11 @@
 ---
 import { sizeDim } from '../../netlify/functions/_shared/sizes.mjs';
+import { personalisationFees, exactly } from '../lib/personalisation-fee';
+
+/* Read at build time from the same field checkout charges. Two rows here used
+   to say "+£10.00" twice because both products charge £10; now the table says
+   what the data says, and one line when there is only one number to give. */
+const fees = await personalisationFees();
 
 const pricingData = [
   {
@@ -60,15 +66,18 @@ const pricingData = [
 
   <div class="bg-panel-dark border-4 border-black p-5" style="box-shadow: 4px 4px 0 #000000;">
     <h4 class="font-russo text-comic-yellow mb-3 uppercase tracking-wide text-sm">Personalisation Fee</h4>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
-        <span class="font-source text-gray-300 text-sm">Comic Book Covers & Icons</span>
-        <span class="price-tag text-lg">+£10.00</span>
-      </div>
-      <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
-        <span class="font-source text-gray-300 text-sm">Comic Book Strips</span>
-        <span class="price-tag text-lg">+£10.00</span>
-      </div>
+    <div class={`grid grid-cols-1 gap-4 ${fees.same ? '' : 'sm:grid-cols-2'}`}>
+      {fees.same ? (
+        <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
+          <span class="font-source text-gray-300 text-sm">All personalised designs</span>
+          <span class="price-tag text-lg">+{exactly(fees.fee)}</span>
+        </div>
+      ) : fees.categories.map((c) => (
+        <div class="flex items-center justify-between py-2 border-b-2 border-gray-700">
+          <span class="font-source text-gray-300 text-sm">{c.label}</span>
+          <span class="price-tag text-lg">+{exactly(c.fee)}</span>
+        </div>
+      ))}
     </div>
   </div>
 

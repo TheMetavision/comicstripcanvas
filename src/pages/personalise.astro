@@ -2,7 +2,8 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import FAQAccordion from '../components/FAQAccordion.astro';
 import { sanityClient } from '../lib/sanity';
-import { faqsByPageQuery, personalisationFeesQuery } from '../lib/queries';
+import { faqsByPageQuery } from '../lib/queries';
+import { personalisationFees } from '../lib/personalisation-fee';
 import { PRICES } from '../data/products';
 
 const faqs = await sanityClient.fetch(faqsByPageQuery, { page: 'personalise' });
@@ -44,19 +45,14 @@ const STYLE_DEFS = [
 
 // Fees come from Sanity, not from a constant here, so a card can never quote a
 // figure checkout would not charge. Missing means the build stops: a fallback
-// number is exactly the bug this is meant to prevent.
-const feeRows: Array<{ slug: string; personalisationFee?: number }> =
-  await sanityClient.fetch(personalisationFeesQuery, { slugs: STYLE_DEFS.map((s) => s.slug) });
-const feeBySlug = new Map(feeRows.map((r) => [r.slug, r.personalisationFee]));
+// number is exactly the bug this is meant to prevent. The same helper the
+// pricing table and the personalised page use, so all four agree by
+// construction rather than by everyone remembering.
+const fees = await personalisationFees();
+const feeBySlug = new Map(fees.categories.map((c) => [c.slug, c.fee]));
 
 const STYLES = STYLE_DEFS.map((style) => {
-  const fee = feeBySlug.get(style.slug);
-  if (typeof fee !== 'number' || !Number.isFinite(fee)) {
-    throw new Error(
-      `No personalisationFee in Sanity for "${style.slug}" (got ${JSON.stringify(fee)}). ` +
-      'Set it on the product document -- /personalise prices its cards from that field.'
-    );
-  }
+  const fee = feeBySlug.get(style.slug)!;
   // Matches the "from" price on the product page: cheapest format plus the fee.
   return { ...style, fee, from: PRICES.poster.small + fee };
 });

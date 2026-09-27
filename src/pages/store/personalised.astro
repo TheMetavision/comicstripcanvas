@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { createClient } from '@sanity/client';
+import { personalisationFees, feeSentence, feeAddPhrase, feeEachPhrase } from '../../lib/personalisation-fee';
 
 // Build-time only, so uncached for the same reason as src/lib/sanity.ts: the
 // CDN lags a publish, and a build triggered by a content edit could otherwise
@@ -22,6 +23,10 @@ const products = await client.fetch(
     images
   }`
 );
+
+/* The fee this page quotes three times, read once from the products that
+   charge it rather than written into the sentences. */
+const fees = await personalisationFees();
 ---
 
 <BaseLayout
@@ -149,7 +154,7 @@ const products = await client.fetch(
       Choose from three formats: a <a href="/store/comic-book-covers/" class="text-comic-red font-semibold hover:underline">Comic Book Cover</a> that puts your subject centre stage, a <a href="/store/comic-book-icons/" class="text-comic-red font-semibold hover:underline">Comic Book Icon</a> with bold graphic impact, or a <a href="/store/comic-book-strips/" class="text-comic-red font-semibold hover:underline">Comic Book Strip</a> — a single canvas of twelve bold comic art images that tells the full story.
     </p>
     <p>
-      Poster prints start from £9.99. Canvas prints from £26.99. Personalisation fee: +£10 for Covers, Icons and Strips. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.
+      Poster prints start from £9.99. Canvas prints from £26.99. {feeSentence(fees)}. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.
     </p>
   </section>
 
@@ -172,7 +177,7 @@ const products = await client.fetch(
         },
         {
           q: 'What is the difference between a personalised Cover, Icon, and Strip?',
-          a: 'A Comic Book Cover is a bold, magazine-style design with your subject as the star, in two styles: Classic cuts your subject out of the photo and sets them against a comic burst background, while Full bleed uses your whole photo edge to edge with the masthead and captions laid over it. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip is a single canvas featuring twelve comic art images — ideal for capturing a sequence of moments. Each carries a £10 personalisation fee.',
+          a: 'A Comic Book Cover is a bold, magazine-style design with your subject as the star, in two styles: Classic cuts your subject out of the photo and sets them against a comic burst background, while Full bleed uses your whole photo edge to edge with the masthead and captions laid over it. A Comic Book Icon is a graphic portrait with strong colours and a quote or text element. A Comic Book Strip is a single canvas featuring twelve comic art images — ideal for capturing a sequence of moments. ' + feeEachPhrase(fees) + '.',
         },
         {
           q: 'How long does a personalised canvas take to arrive?',
@@ -180,7 +185,7 @@ const products = await client.fetch(
         },
         {
           q: 'How much does a personalised comic canvas cost?',
-          a: 'Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). Add £10 to personalise a Cover, Icon or Strip. Canvas sizes (Small, Medium, Large) are priced separately.',
+          a: 'Poster prints start from £9.99. Canvas prints start from £26.99 (standard frame) or £28.99 (gallery frame). ' + feeAddPhrase(fees) + '. Canvas sizes (Small, Medium, Large) are priced separately.',
         },
       ].map(({ q, a }) => (
         <div class="border-l-4 border-comic-red pl-5">
