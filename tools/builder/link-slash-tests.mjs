@@ -98,6 +98,53 @@ for (const file of pages) {
 ok(badCanonical.size === 0, 'and no canonical URL redirects to itself',
   badCanonical.size ? [...badCanonical].slice(0, 5).join(', ') : '');
 
+/* And the addresses inside the structured data. Nobody clicks a BreadcrumbList,
+   but Google reads it as the site's own account of where its pages are, and a
+   breadcrumb that disagrees with the canonical on the same page is the site
+   contradicting itself. These had said /store/comic-book-covers while the
+   canonical beside them said /store/comic-book-covers/. */
+const SITE = 'https://comicstripcanvas.co.uk';
+const badSchema = new Map();
+/** Every string anywhere in a JSON-LD block, however deeply nested. */
+const strings = (node, out = []) => {
+  if (typeof node === 'string') out.push(node);
+  else if (Array.isArray(node)) node.forEach((n) => strings(n, out));
+  else if (node && typeof node === 'object') Object.values(node).forEach((n) => strings(n, out));
+  return out;
+};
+let schemaBlocks = 0;
+for (const file of pages) {
+  const html = fs.readFileSync(file, 'utf8');
+  for (const m of html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)) {
+    let parsed;
+    /* Unparseable structured data is a fault of its own, so it is reported
+       rather than skipped quietly. */
+    try { parsed = JSON.parse(m[1]); } catch {
+      badSchema.set(`(unparseable JSON-LD)`, new Set([path.relative(DIST, file).split(path.sep).join('/')]));
+      continue;
+    }
+    schemaBlocks++;
+    for (const value of strings(parsed)) {
+      if (!value.startsWith(SITE)) continue;
+      const [target] = value.slice(SITE.length).split(/[?#]/);
+      /* The bare origin is the home page and redirects to nothing. */
+      if (target === '' || target === '/' || target.endsWith('/')) continue;
+      if (isFile(target)) continue;
+      if (!isPage(target)) continue;
+      if (!badSchema.has(value)) badSchema.set(value, new Set());
+      badSchema.get(value).add(path.relative(DIST, file).split(path.sep).join('/'));
+    }
+  }
+}
+ok(badSchema.size === 0,
+  `and no JSON-LD url points at a page without its slash (${schemaBlocks} block(s) read)`,
+  badSchema.size ? `${badSchema.size} distinct url(s)` : '');
+if (badSchema.size) {
+  for (const [value, files] of [...badSchema].slice(0, 10)) {
+    say(`        ${value}  (${files.size} page(s), e.g. ${[...files][0]})`);
+  }
+}
+
 /* A link to somewhere that is not a page at all is a 404 with a nice colour
    scheme. /personalised was one, linked from all three category pages. */
 const dead = new Map();

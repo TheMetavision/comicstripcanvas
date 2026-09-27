@@ -30,10 +30,12 @@ const fullTitle = `${title} | Comic Strip Canvas`;
 // Breadcrumb from URL path
 const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
 const breadcrumbItems = [
-  { name: 'Home', url: siteUrl },
+  { name: 'Home', url: `${siteUrl}/` },
   ...pathSegments.map((seg, i) => ({
     name: seg.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-    url: `${siteUrl}/${pathSegments.slice(0, i + 1).join('/')}`,
+    /* With the trailing slash, so a breadcrumb names the address the page is
+       actually served at -- the same one the canonical gives. */
+    url: `${siteUrl}/${pathSegments.slice(0, i + 1).join('/')}/`,
   })),
 ];
 ---
@@ -108,22 +110,22 @@ const breadcrumbItems = [
         {
           "@type": "OfferCatalog",
           "name": "Comic Book Covers",
-          "url": `${siteUrl}/store/comic-book-covers`,
+          "url": `${siteUrl}/store/comic-book-covers/`,
         },
         {
           "@type": "OfferCatalog",
           "name": "Comic Book Icons",
-          "url": `${siteUrl}/store/comic-book-icons`,
+          "url": `${siteUrl}/store/comic-book-icons/`,
         },
         {
           "@type": "OfferCatalog",
           "name": "Comic Book Strips",
-          "url": `${siteUrl}/store/comic-book-strips`,
+          "url": `${siteUrl}/store/comic-book-strips/`,
         },
         {
           "@type": "OfferCatalog",
           "name": "Personalised Products",
-          "url": `${siteUrl}/store/personalised`,
+          "url": `${siteUrl}/store/personalised/`,
         },
       ],
     },
@@ -153,7 +155,7 @@ const breadcrumbItems = [
       "url": siteUrl,
       "potentialAction": {
         "@type": "SearchAction",
-        "target": `${siteUrl}/store?q={search_term_string}`,
+        "target": `${siteUrl}/store/?q={search_term_string}`,
         "query-input": "required name=search_term_string",
       },
     })}></script>
