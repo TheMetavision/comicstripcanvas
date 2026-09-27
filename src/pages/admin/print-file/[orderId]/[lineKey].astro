@@ -78,6 +78,14 @@ const { orderId, lineKey } = Astro.params;
   const api = (action: string) =>
     `/admin/api/order-print-file?action=${action}&order=${encodeURIComponent(orderId)}&line=${encodeURIComponent(lineKey)}`;
 
+  /* The bytes come from an EDGE function, not from the one that starts and
+     watches the job. A serverless response is capped at 6 MB buffered and
+     20 MB streamed, and every print file CSC makes is larger than the first
+     cap -- so the file had to be streamed from Blobs by something without
+     that ceiling. start and status are unchanged. */
+  const fileUrl =
+    `/admin/api/print-file/download?order=${encodeURIComponent(orderId)}&line=${encodeURIComponent(lineKey)}`;
+
   const ROUTE_WORDS: Record<string, string> = {
     scene: 'the saved design, re-rendered at this size',
     master: 'the stored print master, fitted to this size',
@@ -123,7 +131,7 @@ const { orderId, lineKey } = Astro.params;
       $('pf-facts').classList.remove('hidden');
     }
     const a = $('pf-download') as HTMLAnchorElement;
-    a.href = api('download');
+    a.href = fileUrl;
     a.classList.remove('hidden');
     /* Start the download without waiting to be clicked -- this page exists to
        produce a file, and whoever opened it wants the file. The button stays

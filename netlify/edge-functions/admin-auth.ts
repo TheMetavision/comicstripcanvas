@@ -1,4 +1,5 @@
 import type { Config, Context } from '@netlify/edge-functions';
+import { checkBasicAuth, runningLocally } from '../edge-lib/basic-auth.mjs';
 
 /**
  * HTTP Basic Auth in front of /admin/*.
@@ -23,77 +24,18 @@ import type { Config, Context } from '@netlify/edge-functions';
  * two independent layers and this is not the only one.
  */
 
-const REALM = 'Comic Strip Canvas admin';
-
-const challenge = () =>
-  new Response('Authentication required.', {
-    status: 401,
-    headers: {
-      'WWW-Authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store',
-    },
-  });
-
-/* Compare through SHA-256 rather than byte-by-byte on the raw values. Digests
-   are always 32 bytes, so the comparison cannot leak the length of the real
-   password the way an early length check would, and the loop below has no
-   branch that ends it early. */
-async function sameSecret(given: string, expected: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const [a, b] = await Promise.all([
-    crypto.subtle.digest('SHA-256', enc.encode(given)),
-    crypto.subtle.digest('SHA-256', enc.encode(expected)),
-  ]);
-  const x = new Uint8Array(a), y = new Uint8Array(b);
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
-  return diff === 0;
-}
+/* The check itself lives in ../edge-lib/basic-auth.mjs so that the download
+   edge function can make it too. It is outside edge-functions/ because Netlify
+   gives everything in here a route, and a shared helper with a route of its
+   own is a second front door. */
 
 export default async (request: Request, context: Context) => {
-  const user = Netlify.env.get('ADMIN_BASIC_USER') || '';
-  const pass = Netlify.env.get('ADMIN_BASIC_PASS') || '';
-
-  /* netlify dev sets NETLIFY_DEV; a real deploy reports its context instead.
-     Unset credentials are a convenience locally and a fault anywhere else. */
-  const isLocal = Netlify.env.get('NETLIFY_DEV') === 'true'
-    || Netlify.env.get('CONTEXT') === 'dev';
-
-  if (!user || !pass) {
-    if (isLocal) return context.next();
-    /* Not a 401: there is no password that would work, so inviting one would
-       be a lie. Not a pass-through either -- that is how /admin ends up open
-       because somebody forgot a variable. */
-    return new Response('admin auth not configured', {
-      status: 503,
-      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
-    });
-  }
-
-  const header = request.headers.get('authorization') || '';
-  const [scheme, encoded] = header.split(' ');
-  if (!encoded || scheme.toLowerCase() !== 'basic') return challenge();
-
-  let decoded: string;
-  try {
-    decoded = atob(encoded);
-  } catch {
-    return challenge();          // not valid base64; nothing to compare
-  }
-
-  // Only the FIRST colon separates them, so a password may contain colons.
-  const at = decoded.indexOf(':');
-  if (at < 0) return challenge();
-  const givenUser = decoded.slice(0, at);
-  const givenPass = decoded.slice(at + 1);
-
-  /* Both are always checked -- no && short-circuit -- so a wrong username and
-     a wrong password take the same path and the same time. */
-  const okUser = await sameSecret(givenUser, user);
-  const okPass = await sameSecret(givenPass, pass);
-  if (!(okUser && okPass)) return challenge();
-
+  const denied = await checkBasicAuth(request, {
+    user: Netlify.env.get('ADMIN_BASIC_USER') || '',
+    pass: Netlify.env.get('ADMIN_BASIC_PASS') || '',
+    isLocal: runningLocally(Netlify.env),
+  });
+  if (denied) return denied;
   return context.next();
 };
 

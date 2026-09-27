@@ -927,14 +927,27 @@ say('\n10c. THE PRINT FILE FOR AN ORDER LINE\n');
   ok(st.dpi === 300, 'and 300 dpi', String(st.dpi));
   ok(st.route === 'scene', 'made from the saved design', st.route);
 
+  /* The bytes no longer come from this function: a serverless response is
+     capped at 6 MB buffered and 20 MB streamed, and every print file CSC makes
+     is over the first. They are streamed by an edge function instead, and this
+     action redirects to it so an old link still lands somewhere that works.
+     See tools/builder/print-download-tests.mjs. */
   const dl = await orderPrintFile(api('download'));
-  ok(dl.status === 200, 'the file downloads', String(dl.status));
-  ok((dl.headers.get('content-type') || '') === 'image/png', 'as a PNG',
-    dl.headers.get('content-type'));
-  ok(/attachment; filename="csc-2001-gizmo-small-portrait-gallery\.png"/
-    .test(dl.headers.get('content-disposition') || ''),
-  'named so a human can file it', dl.headers.get('content-disposition'));
-  const bytes = Buffer.from(await dl.arrayBuffer());
+  ok(dl.status === 302, 'the download action redirects to the streaming route', String(dl.status));
+  const to = dl.headers.get('location') || '';
+  ok(to.startsWith('/admin/api/print-file/download?'), 'to the edge route', to);
+  ok(/order=order-print-1/.test(to) && /line=line-a/.test(to),
+    'carrying this order and line', to);
+
+  /* What the edge function would then serve: the note names a key, and the key
+     holds the finished file. Fetched the way the edge function fetches it. */
+  const prints = blobStub.getStore('order-prints');
+  const note = JSON.parse(await prints.get('pending/order-print-1/line-a.state'));
+  ok(note?.state === 'ready' && !!note.key, 'and the note it reads names a file', note?.key);
+  const meta = await prints.getMetadata(note.key);
+  ok(/csc-2001-gizmo-small-portrait-gallery\.png/.test(meta?.metadata?.filename || ''),
+    'named so a human can file it', meta?.metadata?.filename);
+  const bytes = Buffer.from(await prints.get(note.key, { type: 'arrayBuffer' }));
   ok(bytes.length > 1000 && bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG',
     'and the bytes really are a PNG', `${bytes.length} bytes`);
   const dims = await sharp(bytes).metadata();

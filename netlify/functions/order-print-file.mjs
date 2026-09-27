@@ -10,7 +10,8 @@ import { internalOrigin } from './_shared/origin.mjs';
  *
  *   POST  /admin/api/order-print-file?action=start      hand the job over
  *   GET   /admin/api/order-print-file?action=status     working|ready|error|absent
- *   GET   /admin/api/order-print-file?action=download   the bytes
+ *   GET   /admin/api/order-print-file?action=download   302 -> the edge route
+ *   GET   /admin/api/print-file/download                the bytes (edge, streamed)
  *
  * UNDER /admin ON PURPOSE. The edge function admin-auth.ts guards /admin/*, so
  * these three inherit the same Basic Auth as the page that calls them. It used
@@ -157,21 +158,23 @@ export default async (req) => {
   }
 
   if (action === 'download') {
-    const state = await store.get(`${pending}.state`, { type: 'json' }).catch(() => null);
-    if (state?.state !== 'ready' || !state.key) return bad('not made yet', 409);
-    const blob = await store.get(state.key, { type: 'arrayBuffer' }).catch(() => null);
-    if (!blob) return bad('the file is gone', 404);
-    const meta = await store.getMetadata(state.key).catch(() => null);
-    const name = meta?.metadata?.filename || 'print-file.png';
-    return new Response(blob, {
-      status: 200,
+    /* Gone from here on purpose. This read the whole blob into memory and
+       returned it, and a function response is capped at 6 MB buffered and
+       20 MB streamed -- caps that cannot be raised. Every print file CSC makes
+       is over the first: the smallest, an 8x12in poster, measured 8.9 MB, and
+       a 24x16in gallery canvas from a heavy master came to 118 MB. So this
+       action could not deliver a single file the renderer had just made.
+
+       The bytes now come from netlify/edge-functions/print-file-download.ts,
+       which streams them out of Blobs and has no such ceiling. Redirected
+       rather than deleted so that a bookmark, an open tab or a copied link
+       keeps working -- and lands on something that can actually answer. */
+    return new Response(null, {
+      status: 302,
       headers: {
-        'Content-Type': 'image/png',
-        'Content-Disposition': `attachment; filename="${name}"`,
-        'Content-Length': String(blob.byteLength),
-        /* Immutable: the key changes when the artwork does, so a cached copy
-           is only ever the file that key names. */
-        'Cache-Control': 'private, max-age=31536000, immutable',
+        Location: `/admin/api/print-file/download?order=${encodeURIComponent(orderId)}`
+          + `&line=${encodeURIComponent(lineKey)}`,
+        'Cache-Control': 'no-store',
       },
     });
   }
