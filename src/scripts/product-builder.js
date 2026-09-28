@@ -482,6 +482,44 @@ export function initProductBuilder() {
     const { c, dx, dy } = geom();
     return `${-dx} ${-dy} ${c.width + 2 * dx} ${c.height + 2 * dy}`;
   }
+
+  /**
+   * The viewBox actually in force, as four numbers.
+   *
+   * baseVal where the browser offers it, the attribute otherwise -- jsdom,
+   * which the drag tests drive the built bundle through, implements the second
+   * and not the first.
+   */
+  function viewBoxNums() {
+    const v = svg.viewBox && svg.viewBox.baseVal;
+    if (v && v.width) return [v.x, v.y, v.width, v.height];
+    const a = (svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+    if (a.length === 4 && a.every(Number.isFinite)) return a;
+    const c = (T && T.canvas) || { width: 1, height: 1 };
+    return [0, 0, c.width, c.height];
+  }
+
+  /**
+   * Canvas units per screen pixel: the ONE conversion between a pointer and
+   * the drawing.
+   *
+   * It has to come from the VIEWBOX, not from the canvas. sizeBoard() sizes
+   * the board to the viewBox extent -- the canvas plus its padding and wrap --
+   * so that is what a screen pixel is a slice of. Four places computed it from
+   * T.canvas.width instead, and the two differ by the padding and wrap on
+   * every template and finish the shop sells: a cover at poster dragged 8.6%
+   * too far, the same cover at gallery 17.2% too short, and only a strip at
+   * poster was right. The photograph slid away from the finger holding it.
+   *
+   * Zero width means the board is not laid out yet -- during a rebuild, or in
+   * a headless test before the first measure -- and 1 is what the old
+   * expression fell back to there.
+   */
+  const unitsPerPx = () => {
+    const w = viewBoxNums()[2];
+    const px = svg.getBoundingClientRect().width;
+    return px > 0 ? w / px : 1;
+  };
   function drawGuides() {
     ['trimGuide', 'trimUnder'].forEach((k) => { if (nodes[k]) { nodes[k].remove(); nodes[k] = null; } });
     if (!T.size || !wrapIn()) return;
@@ -746,7 +784,7 @@ export function initProductBuilder() {
         g.setPointerCapture(e.pointerId);
         bd = {
           px: e.clientX, py: e.clientY, dx: b.dx, dy: b.dy,
-          k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+          k: unitsPerPx(),
         };
       });
       g.addEventListener('pointermove', (e) => {
@@ -1015,7 +1053,7 @@ export function initProductBuilder() {
       el.setPointerCapture(e.pointerId);
       d = {
         px: e.clientX, py: e.clientY, ox: f.pos.x, oy: f.pos.y,
-        k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+        k: unitsPerPx(),
       };
     });
     el.addEventListener('pointermove', (e) => {
@@ -2644,15 +2682,11 @@ export function initProductBuilder() {
   const HANDLE_DRAW_PX = 11;     // what is actually drawn inside that hit area
   const CORNERS = [[0, 0], [1, 0], [0, 1], [1, 1]];   // fx, fy
 
-  /** Canvas units per screen pixel, for sizing handles against the fingertip. */
-  const perScreenPx = () =>
-    T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width);
-
   /** Canvas units -> client pixels, the inverse of reading a pointer event. */
   function clientOf(x, y) {
-    const b = svg.getBoundingClientRect(), k = perScreenPx();
-    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
-    return { x: b.left + (x - vb[0]) / k, y: b.top + (y - vb[1]) / k };
+    const b = svg.getBoundingClientRect(), k = unitsPerPx();
+    const [vx, vy] = viewBoxNums();
+    return { x: b.left + (x - vx) / k, y: b.top + (y - vy) / k };
   }
 
   function handleLayer() {
@@ -2671,7 +2705,7 @@ export function initProductBuilder() {
     const r = selected && nodes[selected] && s && !s.demo && !moveMode ? imageRect(selected) : null;
     while (g.firstChild) g.removeChild(g.firstChild);
     if (!r) return;
-    const k = perScreenPx();
+    const k = unitsPerPx();
     const box = mk('rect', {
       x: r.x, y: r.y, width: r.w, height: r.h, fill: 'none',
       stroke: '#EC008C', 'stroke-width': 2 * k, 'stroke-dasharray': `${9 * k} ${7 * k}`,
@@ -2778,11 +2812,13 @@ export function initProductBuilder() {
     const touches = new Map();
     let pinch = null;
 
+    /* The same basis as clientOf and every drag: one conversion, read from the
+       viewBox in force. */
     const svgPoint = (e) => {
       const b = svg.getBoundingClientRect();
-      const k = perScreenPx();
-      const vb = svg.getAttribute('viewBox').split(' ').map(Number);
-      return { x: vb[0] + (e.clientX - b.left) * k, y: vb[1] + (e.clientY - b.top) * k };
+      const k = unitsPerPx();
+      const [vx, vy] = viewBoxNums();
+      return { x: vx + (e.clientX - b.left) * k, y: vy + (e.clientY - b.top) * k };
     };
 
     hit.addEventListener('pointerdown', (e) => {
@@ -2807,7 +2843,7 @@ export function initProductBuilder() {
       hit.setPointerCapture(e.pointerId); hit.classList.add('dragging');
       drag = {
         px: e.clientX, py: e.clientY, ox: s.ox, oy: s.oy,
-        k: T.canvas.width / (svg.getBoundingClientRect().width || T.canvas.width),
+        k: unitsPerPx(),
       };
     });
     hit.addEventListener('pointermove', (e) => {
@@ -3755,7 +3791,6 @@ export function initProductBuilder() {
         return {
           id: p.id,
           image: s ? s.name : null,
-          placeholder: !!(s && s.demo),
           placeholder: !!(s && s.demo),
           transform: s ? { zoom: +s.zoom.toFixed(4), offsetX: Math.round(s.ox), offsetY: Math.round(s.oy) } : null,
           /* sourcePx and effectiveDpi describe the STYLED image, because that
