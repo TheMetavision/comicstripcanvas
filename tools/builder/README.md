@@ -14,6 +14,7 @@ Nothing in here is wired into the site yet — that's Steps 4 onward in
 | `ingest.py` | Turns any new blank template PNG into a manifest, masks and paths. |
 | `comicfx.py` | Prototype comic-style filter — the shape of the effect, not the final style. |
 | `fix-csc-copy.mjs` | Sanity copy corrections. Already applied (Step 2). |
+| `viewbox-audit.mjs` | Checks every stored scene's root viewBox against the fit recomputed from its own recipe, so a scene that kept a view zoom instead of the whole sheet is caught whenever it was saved: `node --env-file=.env tools/builder/viewbox-audit.mjs`. |
 | `site-wording-audit.md` | Page-by-page copy changes for Step 13. |
 | `builder-launch-sequence.md` | The plan and the prompts. |
 
