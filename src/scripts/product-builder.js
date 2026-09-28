@@ -561,6 +561,65 @@ export function initProductBuilder() {
   const view = { zoom: VIEW_MIN, panX: 0, panY: 0 };
   const zoomed = () => view.zoom > VIEW_MIN + 1e-6;
 
+  /* ---------- the Hand ----------
+   *
+   * Zoom without a Hand was half a feature. The pan only took drags on EMPTY
+   * board, and on a finished design there is almost no empty board -- a cover is
+   * photograph, burst and wording edge to edge -- so zooming in and dragging
+   * moved a photograph instead of the view. Which is the opposite of what a
+   * magnifier is for, and it moved something the customer had already placed.
+   *
+   * So the Hand is a mode, and while it is on it owns every drag on the board.
+   * Not "owns the ones nothing else wanted": the whole point is that it takes
+   * the gesture away from the photograph under it.
+   *
+   * It is VIEW state. It is not in the recipe, not in the export, not in a
+   * snapshot and not undoable -- undoing a look at something is not what anybody
+   * means by undo. The button carries data-no-undo for the same reason.
+   */
+  let hand = false;
+  /* What the Hand was before Space was held, so the key can put it back rather
+     than leaving it on. */
+  let handBeforeSpace = null;
+
+  /** The selection outline, lit or not: hidden while the Hand is on. */
+  function paintOutline() {
+    const o = selected && nodes[selected] && nodes[selected].outline;
+    if (!o) return;
+    o.setAttribute('stroke', hand ? '#000'
+      : (getComputedStyle(root).getPropertyValue('--b-accent').trim() || '#EC008C'));
+  }
+
+  /**
+   * Turn the Hand on or off.
+   *
+   * Deliberately does NOT touch `selected`. Clearing the selection would be the
+   * obvious way to hide the handles, and it would also put a change into the
+   * next undo snapshot -- so picking up the Hand would become an undoable edit.
+   * The handles and the outline are hidden instead, and the selection is exactly
+   * where it was when the Hand is put down.
+   */
+  function setHand(on) {
+    const next = !!on;
+    if (next === hand) return;
+    hand = next;
+    if (board) {
+      board.classList.toggle('hand-on', hand);
+      if (!hand) board.classList.remove('view-panning');
+    }
+    drawHandles();
+    paintOutline();
+    syncViewUI();
+  }
+
+  /** Is the caret in something that wants the space bar for itself? */
+  const typing = () => {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
+  };
+
   /** The fit viewBox as four numbers: what viewBoxNow() says, parsed. */
   function fitBox() {
     const { c, dx, dy } = geom();
@@ -604,6 +663,7 @@ export function initProductBuilder() {
   /** Back to the whole sheet. */
   function resetView() {
     view.zoom = VIEW_MIN; view.panX = 0; view.panY = 0;
+    setHand(false);
   }
 
   /**
@@ -629,6 +689,10 @@ export function initProductBuilder() {
        pan its centre needs. */
     view.panX = (at.x - fx * w + w / 2) - (f.x + f.w / 2);
     view.panY = (at.y - fy * h + h / 2) - (f.y + f.h / 2);
+    /* Zooming in is almost always a prelude to looking around, so the Hand comes
+       up with it and goes down again at Fit, where there is nothing to pan. It
+       can be switched off while zoomed to edit, and back on. */
+    setHand(z > VIEW_MIN + 1e-6);
     applyView();
   }
 
@@ -2854,6 +2918,9 @@ export function initProductBuilder() {
     const s = selected && state.get(selected);
     const r = selected && nodes[selected] && s && !s.demo && !moveMode ? imageRect(selected) : null;
     while (g.firstChild) g.removeChild(g.firstChild);
+    /* Nothing to grab while the Hand has the board: a handle on screen that
+       cannot be dragged is an invitation to a gesture that will pan instead. */
+    if (hand) return;
     if (!r) return;
     const k = unitsPerPx();
     const box = mk('rect', {
@@ -3455,8 +3522,21 @@ export function initProductBuilder() {
     const out = $('viewOut'); if (out) out.disabled = view.zoom <= VIEW_MIN + 1e-6;
     const inn = $('viewIn'); if (inn) inn.disabled = view.zoom >= VIEW_MAX - 1e-6;
     const fit = $('viewFit'); if (fit) fit.disabled = !zoomed();
+    const hd = $('viewHand');
+    if (hd) {
+      hd.setAttribute('aria-pressed', String(hand));
+      /* Never disabled. It may be picked up at Fit -- a drag then does nothing,
+         which is the honest answer -- and greying it out would make the mode
+         look broken rather than idle. */
+      hd.title = hand
+        ? 'Move around — nothing in the design moves. Click to edit again.'
+        : 'Move around — nothing in the design moves';
+    }
     /* Something to hang a cursor off, and what the pan handler below asks. */
-    if (board) board.classList.toggle('view-zoomed', zoomed());
+    if (board) {
+      board.classList.toggle('view-zoomed', zoomed());
+      board.classList.toggle('hand-on', hand);
+    }
   }
 
   /** A pointer event in canvas units, through the viewBox in force. */
@@ -3470,6 +3550,37 @@ export function initProductBuilder() {
   on('viewIn', 'click', () => setZoom(view.zoom + VIEW_STEP));
   on('viewOut', 'click', () => setZoom(view.zoom - VIEW_STEP));
   on('viewFit', 'click', () => { resetView(); applyView(); });
+  on('viewHand', 'click', () => setHand(!hand));
+
+  /* Space holds the Hand down, the way every drawing program does it, and lets
+     it go again on release -- restoring what it was rather than leaving it on,
+     because somebody who was editing expects to still be editing.
+
+     Not while typing: a space in a caption is a space, and this used to be the
+     kind of thing that ate one. Keyed on the code rather than the key, so a
+     layout that puts something else on that key still works. */
+  root.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat || typing()) return;
+    if (handBeforeSpace === null) handBeforeSpace = hand;
+    /* Only once the Hand is actually wanted: preventDefault on a space that is
+       going into a text field would swallow it. */
+    e.preventDefault();
+    setHand(true);
+  });
+  root.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space' || handBeforeSpace === null) return;
+    const was = handBeforeSpace;
+    handBeforeSpace = null;
+    setHand(was);
+  });
+  /* A window that loses focus mid-hold never sees the keyup, and the Hand would
+     stay down for good. */
+  window.addEventListener('blur', () => {
+    if (handBeforeSpace === null) return;
+    const was = handBeforeSpace;
+    handBeforeSpace = null;
+    setHand(was);
+  });
 
   /* Ctrl and the wheel, about the cursor -- the convention every drawing
      program uses, and the one gesture a trackpad pinch already sends. A PLAIN
@@ -3503,19 +3614,51 @@ export function initProductBuilder() {
 
     const mid = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
 
+    /* CAPTURE, not bubble, and that is the whole mechanism of the Hand.
+       A photograph, a text field, a box and a handle all listen on themselves,
+       and they are descendants of this <svg> -- so in the bubble phase they have
+       already started their drag by the time anything here runs. Capturing here
+       and stopping propagation is what takes the gesture off them. Without the
+       Hand the behaviour is unchanged: the early returns below decline the
+       gesture and it carries on down to whatever owns it. */
     svg.addEventListener('pointerdown', (e) => {
       down.set(e.pointerId, e);
       const two = down.size === 2;
+
+      if (hand) {
+        /* Every drag on the board, wherever it lands. Stopped here so nothing
+           underneath can select, move, resize or pinch while the Hand is out --
+           including the second finger of a pinch on a photograph. */
+        e.preventDefault();
+        e.stopPropagation();
+        /* At Fit there is nothing to pan, and the answer to a drag is that
+           nothing happens -- NOT that the design gets edited instead. The
+           gesture is still swallowed above. */
+        if (!zoomed()) return;
+        /* One finger is enough with the Hand out, so the midpoint of two is not
+           wanted: it would make a second finger landing lurch the view. */
+        pan = {
+          px: e.clientX, py: e.clientY,
+          ox: view.panX, oy: view.panY, k: unitsPerPx(), two: false,
+        };
+        board.classList.add('view-panning');
+        return;
+      }
+
       if (!two && (!zoomed() || ownsPointer(e.target))) return;
       if (two && ownsPointer(e.target)) return;      // the photo's pinch
       if (!zoomed()) return;
       const p = two ? mid(...down.values()) : { x: e.clientX, y: e.clientY };
       pan = { px: p.x, py: p.y, ox: view.panX, oy: view.panY, k: unitsPerPx(), two };
       board.classList.add('view-panning');
-    });
+    }, { capture: true });
 
     svg.addEventListener('pointermove', (e) => {
       if (down.has(e.pointerId)) down.set(e.pointerId, e);
+      /* While the Hand is out nothing downstream may see a move either: a
+         pointerdown it never received followed by moves it does is how a
+         half-started drag happens. */
+      if (hand) e.stopPropagation();
       if (!pan) return;
       const p = pan.two && down.size === 2 ? mid(...down.values()) : { x: e.clientX, y: e.clientY };
       /* MINUS: dragging right should bring what is to the left into view, the
@@ -3523,14 +3666,15 @@ export function initProductBuilder() {
       view.panX = pan.ox - (p.x - pan.px) * pan.k;
       view.panY = pan.oy - (p.y - pan.py) * pan.k;
       applyView();
-    });
+    }, { capture: true });
 
     const lift = (e) => {
       down.delete(e.pointerId);
+      if (hand) e.stopPropagation();
       if (pan && down.size < (pan.two ? 2 : 1)) { pan = null; board.classList.remove('view-panning'); }
     };
-    svg.addEventListener('pointerup', lift);
-    svg.addEventListener('pointercancel', lift);
+    svg.addEventListener('pointerup', lift, { capture: true });
+    svg.addEventListener('pointercancel', lift, { capture: true });
   }
 
   if (consentBox) consentBox.addEventListener('change', () => {
@@ -3626,8 +3770,7 @@ export function initProductBuilder() {
   function select(id) {
     if (selected && nodes[selected] && nodes[selected].outline) nodes[selected].outline.setAttribute('stroke', '#000');
     selected = id;
-    if (nodes[id].outline) nodes[id].outline.setAttribute('stroke',
-      getComputedStyle(root).getPropertyValue('--b-accent').trim() || '#EC008C');
+    paintOutline();
     drawHandles();
     syncPanel();
   }

@@ -206,6 +206,17 @@ const builderData = JSON.stringify(resolvePaletteTokens({
         <button id="viewIn" data-no-undo class="b-btn b-btn-sm" aria-label="Zoom in" title="Zoom in">+</button>
         <button id="viewFit" data-no-undo class="b-btn b-btn-sm" aria-label="Fit the whole design"
                 title="Fit the whole design">⤢</button>
+        {/*
+          The Hand. Zoom on its own moved photographs instead of the view,
+          because on a finished cover there is almost no empty board left to
+          drag. While this is pressed every drag moves the VIEW and nothing in
+          the design can be touched. aria-pressed rather than a class, so the
+          state is announced as well as drawn -- the .b-btn[aria-pressed] rule
+          below paints it.
+        */}
+        <button id="viewHand" data-no-undo class="b-btn b-btn-sm" type="button"
+                aria-pressed="false" aria-label="Move around the design"
+                title="Move around — nothing in the design moves">✋</button>
         <span class="mx-0.5 h-3.5 w-px bg-gray-600" aria-hidden="true"></span>
         {/*
           Undo puts the DESIGN back, never the work that was paid for: a photo
@@ -628,6 +639,13 @@ const builderData = JSON.stringify(resolvePaletteTokens({
     font-size: 0.78rem; line-height: 1.3;
   }
   .csc-builder #viewZoom { z-index: 5; }
+  /* The Hand's cursor. Both classes were being toggled before this and styled
+     nothing, so a zoomed board gave no hint that it could be moved. */
+  .csc-builder #board.hand-on { cursor: grab; }
+  .csc-builder #board.hand-on.view-panning { cursor: grabbing; }
+  /* Nothing underneath advertises a grab of its own while the Hand is out. */
+  .csc-builder #board.hand-on svg,
+  .csc-builder #board.hand-on .hit { cursor: inherit; }
   .csc-builder .b-btn-primary:hover { @apply bg-comic-red text-white; }
   .csc-builder .b-btn[aria-pressed='true'] {
     background: var(--b-accent);

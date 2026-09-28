@@ -417,7 +417,19 @@ say('\n  TWO FINGERS\n');
     const imgW = () => Number(img().getAttribute('width'));
     const vb = () => svg.getAttribute('viewBox');
 
-    /* ---- A. two fingers ON the photograph: its pinch, untouched ---- */
+    /* ---- A. two fingers ON the photograph: its pinch, untouched ----
+
+       The HAND has to be put down first, and that is new. Zooming in now picks
+       the Hand up, and while it is out it owns every drag on the board -- which
+       is the whole point of it, and is asserted the other way round two blocks
+       down. This block is about the editing gesture, so it edits. */
+    const handBtn = $('viewHand');
+    ok(handBtn.getAttribute('aria-pressed') === 'true',
+      'zooming in picked the Hand up', handBtn.getAttribute('aria-pressed'));
+    handBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    ok(handBtn.getAttribute('aria-pressed') === 'false', 'and it can be put down again');
+
     const vbA = vb(), wA = imgW();
     pointer(hit, 'pointerdown', 300, 300, { pointerId: 1 });
     pointer(hit, 'pointerdown', 340, 340, { pointerId: 2 });
@@ -432,6 +444,29 @@ say('\n  TWO FINGERS\n');
     ok(imgW() > wA, 'a pinch ON the photograph still zooms the photograph',
       `${wA.toFixed(0)} -> ${imgW().toFixed(0)} units`);
     ok(vb() === vbA, 'and leaves the view exactly where it was');
+
+    /* ---- A2. the same pinch with the Hand out: nothing happens to the photo ---- */
+    {
+      handBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+      ok(handBtn.getAttribute('aria-pressed') === 'true', 'the Hand is picked up again');
+      const wBefore = imgW();
+      pointer(hit, 'pointerdown', 300, 300, { pointerId: 21 });
+      pointer(hit, 'pointerdown', 340, 340, { pointerId: 22 });
+      await new Promise((r) => setTimeout(r, 0));
+      pointer(hit, 'pointermove', 260, 260, { pointerId: 21 });
+      pointer(hit, 'pointermove', 380, 380, { pointerId: 22 });
+      await new Promise((r) => setTimeout(r, 0));
+      pointer(hit, 'pointerup', 260, 260, { pointerId: 21 });
+      pointer(hit, 'pointerup', 380, 380, { pointerId: 22 });
+      await new Promise((r) => setTimeout(r, 30));
+      ok(imgW() === wBefore,
+        'a pinch on the photograph does NOT zoom it while the Hand is out',
+        `${wBefore.toFixed(0)} -> ${imgW().toFixed(0)} units`);
+      /* And back down, so B and everything after it is the old behaviour. */
+      handBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    }
 
     /* ---- B. two fingers on empty board: the view pans ---- */
     const vbB = vb(), wB = imgW();
