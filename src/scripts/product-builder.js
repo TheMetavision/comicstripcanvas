@@ -5761,10 +5761,18 @@ export function initProductBuilder() {
     if (data.missingPanels && data.missingPanels.length) {
       console.warn(`[builder] admin: no finished artwork for ${data.missingPanels.join(', ')}`);
     }
+    /* NO build() HERE, and this is the bug that reached Alan.
+       build() opens with `svg.textContent = ''; nodes = {}` -- it throws the
+       board away and draws it again from the template. fillPaidPanel has just
+       put the customer's photograph into nodes[id].img and laid it out, so a
+       build() after it destroys every one of those images and leaves the panel
+       empty at opacity 0.
+       It survived 48 assertions because they all read recipe(), which reads
+       `state`, and the state was perfectly intact -- only the board was blank.
+       applyRecipe already ends with rail() and build(), which is why
+       loadCustomise fills its panels AFTER it and never calls either again. */
     resetView();
     syncViewUI();
-    rail();
-    build();
     refresh();
     if (selected) syncPanel();
     veil('gone');
@@ -5802,7 +5810,12 @@ export function initProductBuilder() {
         .then((pair) => {
           const styledEl = pair[0], cutoutEl = pair[1];
           if (!styledEl) {
-            adminError = 'Part of this build would not load — reload before editing it.';
+            /* Names the panel: a reviewer reading this needs to know WHICH
+               photograph is missing, and on a twelve-panel strip "part of this
+               build" is not an answer. */
+            adminError = `The photograph for ${shot.id} would not load. Nothing has been `
+              + 'saved — reload this page before editing, because saving now would print '
+              + 'their design with an empty panel.';
             return resolve();
           }
           const rb = shot.removeBackground || {};
@@ -5857,6 +5870,63 @@ export function initProductBuilder() {
    * recipe() is the same function the customer's Add to basket uses, so what
    * lands on the document is the same shape the renderer has always been given.
    */
+  /**
+   * Why this edit must NOT be saved, or null.
+   *
+   * The editor writes over a design somebody paid for, so a load that went
+   * wrong has to be caught here rather than at the endpoint: by the time the
+   * recipe is built the damage is already described in it, and the endpoint
+   * cannot tell "the customer has no photograph in this panel" from "the
+   * photograph did not arrive this morning".
+   *
+   * Two things are checked, and both come from a real failure:
+   *
+   *   an empty panel   loadAdmin used to call build() after filling the panels,
+   *                    which threw the images away. The state survived, so the
+   *                    recipe looked perfect while the board was blank -- and a
+   *                    save would have stored a scene with the panel at
+   *                    opacity 0 and no geometry. The press would have printed a
+   *                    cover with no photograph on it.
+   *   the wrong sheet  the finish and size the customer BOUGHT, against the ones
+   *                    the editor is working in. Checked only when the order line
+   *                    can be identified without guessing; the endpoint says so.
+   */
+  function adminSaveRefusal() {
+    if (!adminScene) return 'This build is not loaded yet.';
+    if (adminError) return adminError;
+
+    /* Every panel the STORED recipe had a photograph in must still have one. */
+    const was = ((adminScene.recipe && adminScene.recipe.panels) || [])
+      .filter((p) => p && p.id && !p.placeholder && (p.styledKey || p.rawKey));
+    const empty = [];
+    for (const shot of was) {
+      const st = state.get(shot.id);
+      const node = nodes[shot.id];
+      const drawn = node && node.img && node.img.getAttribute('href');
+      if (!st || st.demo || !st.el || !drawn) empty.push(shot.id);
+    }
+    if (empty.length) {
+      return `The customer’s photograph is missing from ${empty.join(', ')}. `
+        + 'Nothing has been saved. Reload this page — saving now would print '
+        + 'their design with an empty panel.';
+    }
+
+    /* And the sheet. adminScene.orderedFormat is the recipe's own vocabulary,
+       resolved by the endpoint from the order line's formatKey. */
+    const wantFmt = adminScene.orderedFormat || null;
+    if (wantFmt && wantFmt !== fmt) {
+      return `This order is a ${FORMAT_LABEL[wantFmt] || wantFmt}, and the editor is `
+        + `on ${FORMAT_LABEL[fmt] || fmt}. Nothing has been saved — switch the output `
+        + 'to the one they bought, or reload.';
+    }
+    const wantSize = adminScene.orderedSizeKey || null;
+    if (wantSize && T.size && T.size.key && wantSize !== T.size.key) {
+      return `This order is size "${wantSize}" and the editor is on "${T.size.key}". `
+        + 'Nothing has been saved — put it back to the size they bought, or reload.';
+    }
+    return null;
+  }
+
   async function saveAdminEdit() {
     const btn = $('adminSave');
     const note = $('adminSaveNote');
@@ -5865,6 +5935,10 @@ export function initProductBuilder() {
       note.textContent = msg;
       note.className = bad ? 'b-hint text-comic-red' : 'b-hint';
     };
+    /* Before anything is sent, and before the button is even disabled: a refusal
+       must leave the reviewer able to read it and fix it. */
+    const refusal = adminSaveRefusal();
+    if (refusal) { say(refusal, true); return; }
     if (btn) btn.disabled = true;
     say('Saving…');
     try {

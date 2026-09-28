@@ -2414,6 +2414,62 @@ for (const status of ['draft', 'paid', 'preparing']) {
   ok(/&lt;script&gt;/.test(mail?.html || ''), '  and appears as text', 'escaped');
 }
 
+/* ---- the ordered finish, read from the order line ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  /* CSC-1006's real line: one personalised line, canvas with a standard wrap,
+     large. The recipe says "standard", the line says "canvas-standard", and the
+     editor has to be able to compare them. */
+  sanityStub.docs.set('order-cs_live_x', {
+    _id: 'order-cs_live_x', _type: 'order', orderNumber: 'CSC-1006',
+    customerEmail: 'buyer@test.local',
+    lineItems: [{
+      buildKind: 'personalised', formatKey: 'canvas-standard', sizeKey: 'large',
+      productSlug: 'personalised-book-covers', format: 'Canvas (Standard Frame)',
+      size: 'Large (16x24")', quantity: 1, unitPrice: 54.99,
+    }],
+  });
+  const r = await getScene();
+  ok(r.body.orderedFormatKey === 'canvas-standard',
+    'the load reports the ordered formatKey', r.body.orderedFormatKey);
+  ok(r.body.orderedFormat === 'standard',
+    "  translated into the recipe's own vocabulary", r.body.orderedFormat);
+  ok(r.body.orderedSizeKey === 'large', '  and the ordered size', r.body.orderedSizeKey);
+  ok(r.body.orderedUncheckable === null, '  with nothing preventing the check',
+    JSON.stringify(r.body.orderedUncheckable));
+}
+
+{
+  /* Two built lines and no way to tell which is this build: the answer must be
+     "cannot be checked", not a guess. A guess either blocks a legitimate save or
+     waves through the mismatch the check exists for. */
+  resetAll();
+  await seedPaidBuild('rendered');
+  sanityStub.docs.set('order-cs_live_x', {
+    _id: 'order-cs_live_x', _type: 'order', orderNumber: 'CSC-1007',
+    lineItems: [
+      { buildKind: 'personalised', formatKey: 'poster', sizeKey: 'small' },
+      { buildKind: 'personalised', formatKey: 'canvas-gallery', sizeKey: 'large' },
+    ],
+  });
+  const r = await getScene();
+  ok(r.body.orderedFormat === null, 'two built lines give no ordered finish',
+    JSON.stringify(r.body.orderedFormat));
+  ok(/2 built lines/.test(r.body.orderedUncheckable || ''),
+    '  and says why rather than guessing', r.body.orderedUncheckable);
+}
+
+{
+  /* A draft has no order at all, which is not an error. */
+  resetAll();
+  await seedPaidBuild('rendered', { orderId: undefined, orderNumber: undefined });
+  const r = await getScene();
+  ok(r.body.orderedFormat === null, 'a build with no order has no ordered finish');
+  ok(/no order line/.test(r.body.orderedUncheckable || ''),
+    '  and says so', r.body.orderedUncheckable);
+}
+
 globalThis.fetch = realFetch;
 say(`\n${pass} passed, ${fail} failed.`);
 process.exitCode = fail ? 1 : 0;

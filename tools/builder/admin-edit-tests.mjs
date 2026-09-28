@@ -117,7 +117,7 @@ const sceneReply = () => ({
  */
 const PAID = /personalise-save|personalisation-style|style-photo|studio-upload/;
 
-async function open(tag, { sceneOverride = null, sceneStatus = 200 } = {}) {
+async function open(tag, { sceneOverride = null, sceneStatus = 200, breakImages = false } = {}) {
   const html = fs.readFileSync(path.join(DIST, 'store/personalised-book-covers/index.html'), 'utf8');
   const bundle = html.match(/src="\/(_astro\/ProductBuilder\.astro[^"]+\.js)"/)[1];
   const asked = [];
@@ -135,7 +135,15 @@ async function open(tag, { sceneOverride = null, sceneStatus = 200 } = {}) {
              fetch(), so asserting on requests would have said the photographs
              were never loaded while they plainly were. */
           imgSrcs.push(String(v));
-          this._src = v; this.complete = true;
+          this._src = v;
+          /* A photograph that will not load: the endpoint named it, the bytes
+             never arrived. The panel stays empty, which is the state the Save
+             guard exists for. */
+          if (breakImages && /personalisation-photo/.test(String(v))) {
+            queueMicrotask(() => { if (this.onerror) this.onerror(); });
+            return;
+          }
+          this.complete = true;
           this.naturalWidth = 3000; this.naturalHeight = 4000;
           queueMicrotask(() => { this._l.forEach((f) => f()); if (this.onload) this.onload(); });
         }
@@ -489,6 +497,183 @@ say('\n6. A BUILD THAT MAY NOT BE EDITED STAYS SHUT\n');
        element is rendered by the server-side page for admin and customise
        modes, and this harness borrows a customer page, which has none. Its copy
        is covered by the endpoint test that returns whyNotEditable. */
+  } finally { b.close(); }
+}
+
+
+/* ─────────────── 7. the real CSC-1006 shape, and the board itself
+
+   Everything above this section asserts on recipe() -- which reads `state`, not
+   the DOM. That is exactly how a broken load passed 48 assertions: fillPaidPanel
+   sets the state AND the image href, loadAdmin then called build() again, and
+   build() opens with `svg.textContent = ''; nodes = {}`. So the state survived,
+   every recipe assertion passed, and the customer's photograph was not on the
+   board. Alan opened CSC-1006 and the art panel was empty.
+
+   So this section looks at the BOARD, with the shapes the real build has:
+   a Classic cover at 16x24 on a 1.5in wrap, a 4200x5800 canvas at 200dpi, one
+   art panel zoomed to 1.56, imageVariant "cutout", and a rawKey whose extension
+   differs from the styled one because the photograph was replaced mid-build. */
+
+say('\n7. THE PHOTOGRAPH REACHES THE BOARD (CSC-1006 SHAPES)\n');
+
+/* CSC-1006 as it actually is, with the id changed. Nothing here is invented:
+   the numbers, the two photoKeys with different extensions, the all-"wrap"
+   cutoutClip and the 200dpi canvas are the stored values. */
+const REAL_ID = `pp-${'1a'.repeat(16)}`;
+const realScene = () => ({
+  id: REAL_ID,
+  status: 'rendered',
+  editable: true,
+  orderNumber: 'CSC-1006',
+  template: 'cover',
+  templateId: 'cover',
+  printSize: '16 × 24 in',
+  outputFormat: 'standard',
+  editCount: 0,
+  rev: 'rev-real-1',
+  missingPanels: [],
+  recipe: {
+    template: 'cover',
+    canvas: { width: 4200, height: 5800, dpi: 200 },
+    output: {
+      format: 'standard', formatLabel: 'Canvas — standard wrap', sizeKey: 'large',
+      faceInches: [16, 24], wrapInches: 1.5, fileInches: [19, 27],
+    },
+    cutoutClip: { top: 'wrap', right: 'wrap', bottom: 'wrap', left: 'wrap' },
+    background: null,
+    panels: [{
+      id: 'art', image: '94778.jpg', placeholder: false,
+      transform: { zoom: 1.56, offsetX: 0, offsetY: 0 },
+      sourcePx: [3712, 4608], effectiveDpi: 143,
+      /* The raw is a .png and the styled a .jpg: the photograph was replaced
+         with a different format part-way through, which left two photoKeys. A
+         stub that used one extension for both would not have noticed. */
+      rawKey: `personalisation/${REAL_ID}/art.png`,
+      styledKey: `personalisation/${REAL_ID}/styled-art.jpg`,
+      styledPx: [3712, 4608],
+      imageVariant: 'cutout',
+      cutoutKey: `personalisation/${REAL_ID}/cutout-art.png`,
+      cutoutPx: [3712, 4608],
+      removeBackground: { on: false, spread: 34, soften: 2 },
+    }],
+    text: [{ id: 'title', value: 'A REAL TITLE', pos: { x: 40, y: 60 } }],
+    boxes: [], logo: null,
+  },
+  sceneSvg: '<svg id="svg" viewBox="-195.83333333333326 -362.5 4591.666666666666 6525"'
+    + ' xmlns="http://www.w3.org/2000/svg" width="4592" height="6525">'
+    + '<image data-role="panel" data-panel="art" href="{{IMAGE:art}}"/></svg>',
+  panels: {
+    art: {
+      styled: `/api/personalisation-photo/${REAL_ID}/art`,
+      cutout: `/api/personalisation-photo/${REAL_ID}/art?variant=cutout`,
+    },
+  },
+});
+
+{
+  const b = await open('admin-real', { sceneOverride: realScene() });
+  try {
+    /* The board, not the state. */
+    const panelImg = b.svg.querySelector('image[data-role="panel"][data-panel="art"]');
+    ok(!!panelImg, 'the art panel exists on the board');
+    const href = panelImg && (panelImg.getAttribute('href') || panelImg.getAttribute('xlink:href'));
+    ok(!!href, 'IT HAS AN IMAGE ON IT — the customer’s photograph', href || '(empty)');
+    ok(!!href && href.includes('/api/personalisation-photo/'),
+      '  which is the photograph served for this build', href || '(empty)');
+    ok(!!href && href.includes('variant=cutout'),
+      '  the cut-out, because that is the variant they settled on', href || '(empty)');
+    ok(panelImg && panelImg.getAttribute('opacity') !== '0',
+      '  and it is not drawn transparent', panelImg && panelImg.getAttribute('opacity'));
+
+    const hit = b.svg.querySelector('.hit');
+    ok(hit && hit.classList.contains('filled'),
+      'the panel counts as filled, so the placeholder is gone',
+      hit ? hit.getAttribute('class') : '(no hit)');
+    const num = b.svg.querySelector('[data-role="slot-number"], text.b-num');
+    ok(!num || num.getAttribute('opacity') === '0',
+      'and the "drop a photo here" number is hidden');
+
+    /* The ordered format and size, which is what the editor must open with. */
+    const r = await b.recipeOf();
+    ok(r.output.format === 'standard', 'the editor opens on the ordered finish', r.output.format);
+    ok(r.output.sizeKey === 'large', 'and the ordered size', r.output.sizeKey);
+    ok(r.output.faceInches[0] === 16 && r.output.faceInches[1] === 24,
+      'at 16x24 inches', JSON.stringify(r.output.faceInches));
+    ok(Math.abs((r.output.wrapInches || 0) - 1.5) < 0.001,
+      'with the 1.5 inch standard wrap it was bought with', String(r.output.wrapInches));
+
+    const panel = r.panels.find((p) => p.id === 'art');
+    ok(panel.transform.zoom === 1.56, 'the crop they chose is intact', String(panel.transform.zoom));
+    ok(panel.rawKey.endsWith('art.png') && panel.styledKey.endsWith('styled-art.jpg'),
+      'both keys survive, with their different extensions',
+      `${panel.rawKey.split('/').pop()} / ${panel.styledKey.split('/').pop()}`);
+    ok(panel.imageVariant === 'cutout', 'and the variant', panel.imageVariant);
+    ok(panel.placeholder === false, 'the panel is not reported as a placeholder');
+    ok(b.paidCalls().length === 0, 'and nothing paid for was requested');
+  } finally { b.close(); }
+}
+
+/* ─────────────── 8. the Save guard */
+
+say('\n8. A BROKEN LOAD CANNOT BE SAVED OVER A PAID DESIGN\n');
+{
+  /* A load where the artwork does not arrive: the endpoint named the panel but
+     the image 404s. Before the guard this would save a recipe whose art panel
+     is empty, over the design somebody paid for. */
+  const b = await open('admin-broken', {
+    sceneOverride: realScene(),
+    breakImages: true,
+  });
+  try {
+    const panelImg = b.svg.querySelector('image[data-role="panel"][data-panel="art"]');
+    const href = panelImg && panelImg.getAttribute('href');
+    ok(!href, 'the artwork did not load, so the panel is empty', href || '(empty)');
+
+    b.click(b.$('adminSave'));
+    await tick(300);
+    ok(b.savedBody() === null, 'Save sends NOTHING', JSON.stringify(b.savedBody()));
+    const note = b.$('adminSaveNote');
+    ok(!!note && /did not load|could not|empty|reload/i.test(note.textContent || ''),
+      'and says why, in terms a reviewer can act on', note && note.textContent);
+    /* A word boundary, not a bare /art/: the first version of this passed
+       because "Part of this build" contains "art". */
+    ok(/\bart\b/.test((note && note.textContent) || ''),
+      'naming the panel that is missing', note && note.textContent);
+  } finally { b.close(); }
+}
+
+{
+  /* And the other half of the guard: the finish or size disagreeing with what
+     was ordered. Here the endpoint reports the order line as a poster while the
+     recipe is a canvas -- exactly the mismatch that would print the wrong sheet. */
+  const scene = realScene();
+  scene.orderedFormat = 'poster';
+  scene.orderedSizeKey = 'large';
+  const b = await open('admin-mismatch', { sceneOverride: scene });
+  try {
+    b.click(b.$('adminSave'));
+    await tick(300);
+    ok(b.savedBody() === null, 'a finish that disagrees with the order line does not save',
+      JSON.stringify(b.savedBody()));
+    const note = b.$('adminSaveNote');
+    ok(!!note && /poster|finish|order/i.test(note.textContent || ''),
+      '  and says which is which', note && note.textContent);
+  } finally { b.close(); }
+}
+
+{
+  /* The guard must not cry wolf: the ordered format agreeing is the normal case
+     and has to save. */
+  const scene = realScene();
+  scene.orderedFormat = 'standard';
+  scene.orderedSizeKey = 'large';
+  const b = await open('admin-agrees', { sceneOverride: scene });
+  try {
+    b.click(b.$('adminSave'));
+    await tick(300);
+    ok(b.savedBody() !== null, 'when the order line agrees, the save goes through');
+    ok(b.savedBody()?.recipe?.output?.format === 'standard', '  carrying the ordered finish');
   } finally { b.close(); }
 }
 

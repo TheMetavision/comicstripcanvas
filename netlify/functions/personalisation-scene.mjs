@@ -51,6 +51,51 @@ const json = (body, status = 200) =>
   });
 
 /**
+ * The builder's own finish names, as the order line spells them.
+ *
+ * Kept in step with CART_FORMAT in product-builder.js. The two vocabularies
+ * exist because the basket, the price table and the feeds all speak
+ * "canvas-standard" while the geometry speaks "standard", and this is the one
+ * place they have to be compared: an editor opened on a poster for an order that
+ * bought a canvas would print the wrong sheet.
+ */
+const ORDERED_FORMAT = { poster: 'poster', standard: 'canvas-standard', gallery: 'canvas-gallery' };
+
+/**
+ * What the ORDER says this line is, as opposed to what the recipe says.
+ *
+ * Only answered when it can be answered without guessing. Order lines do not
+ * carry the build id, so a single personalised line is unambiguous and several
+ * are not -- and a wrong answer here would either block a legitimate save or
+ * wave through the mismatch it exists to catch. `why` says which case it is.
+ */
+export function orderedLineFor(order, doc) {
+  if (!order || !Array.isArray(order.lineItems)) {
+    return { formatKey: null, sizeKey: null, why: 'no order line to compare with' };
+  }
+  const built = order.lineItems.filter((l) => l
+    && (l.buildKind === 'personalised' || l.buildKind === 'customise'));
+  if (built.length === 1) {
+    return { formatKey: built[0].formatKey || null, sizeKey: built[0].sizeKey || null, why: null };
+  }
+  if (!built.length) {
+    return { formatKey: null, sizeKey: null, why: 'the order has no built line' };
+  }
+  /* Several. Narrow by the product this build belongs to if that is enough. */
+  const same = doc.productId
+    ? built.filter((l) => l.productId === doc.productId || l.productSlug === doc.productSlug)
+    : built;
+  if (same.length === 1) {
+    return { formatKey: same[0].formatKey || null, sizeKey: same[0].sizeKey || null, why: null };
+  }
+  return {
+    formatKey: null, sizeKey: null,
+    why: `the order has ${built.length} built lines and none of them names this build,`
+      + ' so the finish cannot be checked against it',
+  };
+}
+
+/**
  * Which statuses may be opened in the editor.
  *
  * The same three the save allows, for the obvious reason: offering a design for
@@ -106,6 +151,14 @@ export default async (req) => {
     if (!doc || doc._type !== 'pendingPersonalisation') {
       return json({ error: 'Unknown personalisation' }, 404);
     }
+
+    /* The order too, when there is one. A draft has no order and nothing to
+       compare against, which is not an error. */
+    const order = doc.orderId
+      ? await sanity.fetch('*[_id == $id][0]{ orderNumber, lineItems }', { id: doc.orderId })
+        .catch(() => null)
+      : null;
+    const ordered = orderedLineFor(order, doc);
 
     let recipe = null;
     try { recipe = doc.recipe ? JSON.parse(doc.recipe) : null; } catch {
@@ -164,6 +217,16 @@ export default async (req) => {
       missingPanels: missing,
       printSize: doc.printSize || null,
       outputFormat: doc.outputFormat || null,
+      /* What was BOUGHT, for the editor to refuse a save against. The recipe is
+         what the design says it is; this is what the customer paid for, and the
+         two disagreeing is the one difference that cannot be fixed by looking at
+         the proof. */
+      orderedFormat: ordered.formatKey
+        ? (Object.entries(ORDERED_FORMAT).find(([, v]) => v === ordered.formatKey) || [])[0] || null
+        : null,
+      orderedFormatKey: ordered.formatKey,
+      orderedSizeKey: ordered.sizeKey,
+      orderedUncheckable: ordered.why,
       customerNotes: doc.customerNotes || '',
       editCount: doc.editCount || 0,
       editedAt: doc.editedAt || null,
