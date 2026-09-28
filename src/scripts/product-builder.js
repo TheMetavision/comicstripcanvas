@@ -4297,8 +4297,38 @@ export function initProductBuilder() {
      something they didn't approve -- the builder exports its own SVG with every
      asset replaced by a token. The renderer swaps the tokens for full-resolution
      files and rasterises the identical document. */
+  /** The colour a panel outline has when nothing is selected. */
+  const OUTLINE_REST = '#000';
+
   function exportSVG() {
-    const c = sceneCopy();
+    /* The selected panel's outline is drawn in the ACCENT colour, and that
+       outline is a real part of the design -- the black border round a strip
+       or icon panel -- so it cannot simply be dropped the way the hit areas
+       and handles are. It has to go back to the colour it wears when nothing
+       is selected, for the length of one clone.
+
+       Left alone, whichever panel happened to be selected when Save was
+       pressed was recorded in the scene, and the press would print that
+       panel's border in cyan or magenta. It reached the recipe, the proof and
+       the print master alike.
+
+       Every outline is put back, not just the selected one: `selected` is the
+       one that SHOULD be lit, and an export that trusts it would still ship a
+       stray from any future path that lights an outline without going through
+       select(). The restore is in a finally because the alternative is a board
+       left drawn in the wrong colour if anything downstream throws. */
+    const wasLit = [];
+    for (const id in nodes) {
+      const o = nodes[id] && nodes[id].outline;
+      if (!o) continue;
+      const was = o.getAttribute('stroke');
+      if (was === OUTLINE_REST) continue;
+      wasLit.push([o, was]);
+      o.setAttribute('stroke', OUTLINE_REST);
+    }
+    let c;
+    try { c = sceneCopy(); }
+    finally { wasLit.forEach(([o, was]) => o.setAttribute('stroke', was)); }
     c.setAttribute('xmlns', SVGNS);
     c.removeAttribute('style');
     // Astro stamps a scoped-style id on the component's own <svg>. It is a screen
