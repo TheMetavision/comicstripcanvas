@@ -60,6 +60,10 @@ const sharp = (await import('sharp')).default;
 const guard = await import(`${ROOT}netlify/functions/_shared/spend-guard.mjs`);
 const { deleteBuild } = await import(`${ROOT}netlify/functions/_shared/delete-build.mjs`);
 const retention = await import(`${ROOT}netlify/functions/retention.mjs`);
+const personalisationScene = (await import(`${ROOT}netlify/functions/personalisation-scene.mjs`)).default;
+const personalisationEditSave = (await import(`${ROOT}netlify/functions/personalisation-edit-save.mjs`)).default;
+const personalisationAction = (await import(`${ROOT}netlify/functions/personalisation-action.mjs`)).default;
+const personalisationApprove = (await import(`${ROOT}netlify/functions/personalisation-approve.mjs`)).default;
 
 let pass = 0, fail = 0;
 const ok = (c, l, e = '') => {
@@ -2071,6 +2075,343 @@ for (const status of ['paid', 'rendered', 'in_production']) {
   ok(!/proof/i.test(html), '  and says nothing about a proof — there is not one');
   ok(/another email when your order has been dispatched/i.test(html),
     '  with dispatch as the next email');
+}
+
+
+/* ═══════════ 24. EDITING A PAID BUILD ON THE CUSTOMER'S BEHALF */
+
+say('\n24. EDIT AND RESEND THE PROOF\n');
+
+const EDIT_ID = `pp-${'c'.repeat(32)}`;
+
+/** The recipe a cover build carries, with a crop and paid artwork on it. */
+const paidRecipe = (over = {}) => ({
+  template: 'cover',
+  svg: '<svg viewBox="0 0 100 100"><text>CUSTOMER TITLE</text></svg>',
+  output: { format: 'standard', faceInches: [16, 24], sizeKey: 'large' },
+  background: { artColours: ['#123456'] },
+  panels: [{
+    id: 'art',
+    image: 'holiday.jpg',
+    placeholder: false,
+    /* The crop is the thing an edit must not silently lose. */
+    transform: { zoom: 1.85, offsetX: -120, offsetY: 64 },
+    sourcePx: [3000, 4000], effectiveDpi: 143,
+    rawKey: `personalisation/${EDIT_ID}/art.jpg`,
+    styledKey: `personalisation/${EDIT_ID}/styled-art.jpg`,
+    styledPx: [3000, 4000],
+    imageVariant: 'cutout',
+    cutoutKey: `personalisation/${EDIT_ID}/cutout-art.png`,
+    cutoutPx: [2900, 3900],
+    removeBackground: { on: false, spread: 34, soften: 2 },
+  }],
+  text: [{ id: 'title', value: 'CUSTOMER TITLE', pos: { x: 10, y: 20 } }],
+  boxes: [], logo: null,
+  ...over,
+});
+
+/** A paid, rendered build with a proof, as the renderer leaves one. */
+async function seedPaidBuild(status = 'rendered', over = {}) {
+  const recipe = paidRecipe();
+  const { svg, ...rest } = recipe;
+  sanityStub.docs.set(EDIT_ID, {
+    _id: EDIT_ID, _type: 'pendingPersonalisation', _rev: 'rev-paid-1',
+    status,
+    templateId: 'cover', printSize: '16 × 24 in', outputFormat: 'standard',
+    orderNumber: 'CSC-1006', orderId: 'order-cs_live_x', minEffectiveDpi: 143,
+    recipe: JSON.stringify(rest),
+    sceneSvg: svg,
+    proofUrl: `https://test.local/api/personalisation-proof/${EDIT_ID}`,
+    photos: [{
+      _type: 'styledPhoto', panel: 'art', styleStatus: 'done',
+      rawKey: `personalisation/${EDIT_ID}/art.jpg`,
+      styledKey: `personalisation/${EDIT_ID}/styled-art.jpg`,
+      cutoutKey: `personalisation/${EDIT_ID}/cutout-art.png`,
+    }],
+    photoKeys: [`personalisation/${EDIT_ID}/art.jpg`],
+    ...over,
+  });
+  await blobStub.getStore('renders').set(`renders/${EDIT_ID}/proof.png`, Buffer.from(JPEG).buffer);
+  return { id: EDIT_ID, recipe };
+}
+
+const getScene = async (id = EDIT_ID, tail = '') => {
+  const res = await personalisationScene(
+    new Request(`https://test.local/admin/api/personalisation-scene/${id}${tail}`), {});
+  const ct = res.headers.get('Content-Type') || '';
+  return { status: res.status, ct, body: ct.includes('json') ? await res.json().catch(() => ({})) : null, res };
+};
+const editSave = async (payload, path = '/admin/api/personalisation-edit-save') => {
+  renders = [];
+  const res = await personalisationEditSave(new Request(`https://test.local${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }), {});
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+};
+
+/* ---- the load ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const r = await getScene();
+  ok(r.status === 200, 'the admin load returns the build', String(r.status));
+  ok(r.body.editable === true, '  and says it is editable');
+  ok(r.body.template === 'cover', '  with its template', r.body.template);
+  ok(r.body.recipe?.panels?.[0]?.transform?.zoom === 1.85,
+    '  the crop comes back on the recipe', String(r.body.recipe?.panels?.[0]?.transform?.zoom));
+  ok(r.body.panels?.art?.styled?.includes('/api/personalisation-photo/'),
+    '  the panel points at the existing photo route', r.body.panels?.art?.styled);
+  ok(r.body.panels?.art?.cutout?.includes('variant=cutout'),
+    '  and offers the cut-out that was made');
+  ok(typeof r.body.rev === 'string' && r.body.rev.length > 0,
+    '  and hands back the revision to save against', r.body.rev);
+  ok(!JSON.stringify(r.body).includes('styled-art.jpg') === false,
+    '  the blob keys travel on the recipe, as the renderer needs them');
+}
+
+/* ---- the load refuses off the guarded path ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const res = await personalisationScene(
+    new Request(`https://test.local/api/personalisation-scene/${EDIT_ID}`), {});
+  ok(res.status === 404, 'the load refuses a call that did not arrive under /admin/', String(res.status));
+  const save = await editSave({ id: EDIT_ID, recipe: paidRecipe() }, '/api/personalisation-edit-save');
+  ok(save.status === 404, 'and so does the save', String(save.status));
+}
+
+/* ---- statuses ---- */
+for (const status of ['rendered', 'on_hold', 'approved']) {
+  resetAll();
+  await seedPaidBuild(status);
+  const r = await getScene();
+  ok(r.body.editable === true, `"${status}" can be opened for editing`);
+}
+for (const status of ['in_production', 'dispatched']) {
+  resetAll();
+  await seedPaidBuild(status);
+  const r = await getScene();
+  ok(r.body.editable === false, `"${status}" cannot be opened`);
+
+  const before = JSON.stringify(sanityStub.docs.get(EDIT_ID));
+  const save = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
+  ok(save.status === 409, `  and a save from "${status}" is refused`, String(save.status));
+  ok(/already approved this artwork/i.test(save.body.error || ''),
+    '  saying the customer has already approved it', (save.body.error || '').slice(0, 60));
+  ok(JSON.stringify(sanityStub.docs.get(EDIT_ID)) === before, '  with the document unchanged');
+  ok(renders.length === 0, '  and no render started');
+}
+for (const status of ['draft', 'paid', 'preparing']) {
+  resetAll();
+  await seedPaidBuild(status);
+  const save = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
+  ok(save.status === 409, `a save from "${status}" is refused too`, String(save.status));
+}
+
+/* ---- the save, and what it keeps ---- */
+{
+  resetAll();
+  const { recipe } = await seedPaidBuild('rendered');
+  const wasRecipe = sanityStub.docs.get(EDIT_ID).recipe;
+  const wasScene = sanityStub.docs.get(EDIT_ID).sceneSvg;
+
+  /* An edit: the title is retyped and the panel is nudged, but the paid keys
+     and the crop's shape travel with it exactly as the builder re-emits them. */
+  const edited = paidRecipe({
+    svg: '<svg viewBox="0 0 100 100"><text>TIDIED TITLE</text></svg>',
+    text: [{ id: 'title', value: 'TIDIED TITLE', pos: { x: 12, y: 18 } }],
+  });
+  edited.panels[0].transform = { zoom: 1.85, offsetX: -90, offsetY: 64 };
+
+  const r = await editSave({ id: EDIT_ID, recipe: edited, rev: 'rev-paid-1' });
+  ok(r.status === 200 && r.body.ok, 'the save is accepted', `${r.status} ${JSON.stringify(r.body).slice(0, 80)}`);
+
+  const doc = sanityStub.docs.get(EDIT_ID);
+  ok(doc.sceneSvg.includes('TIDIED TITLE'), '  the new scene is stored');
+  const saved = JSON.parse(doc.recipe);
+  ok(saved.panels[0].transform.offsetX === -90, '  the edited crop is stored',
+    String(saved.panels[0].transform.offsetX));
+  ok(saved.panels[0].transform.zoom === 1.85, '  and the zoom the customer chose survives',
+    String(saved.panels[0].transform.zoom));
+  ok(saved.panels[0].styledKey === `personalisation/${EDIT_ID}/styled-art.jpg`,
+    '  the styled key survives — without it the renderer has nothing to print');
+  ok(saved.panels[0].cutoutKey === `personalisation/${EDIT_ID}/cutout-art.png`,
+    '  and the cut-out key');
+  ok(saved.panels[0].imageVariant === 'cutout', '  and which image they chose');
+  ok(!('svg' in saved), '  the scene is on its own field, not inside the recipe');
+
+  /* The customer's own, kept once. */
+  ok(doc.customerOriginal?.recipe === wasRecipe, '  the customer’s recipe is kept');
+  ok(doc.customerOriginal?.sceneSvg === wasScene, '  and their scene');
+  ok(doc.customerOriginal.sceneSvg.includes('CUSTOMER TITLE'),
+    '  which still says what they wrote');
+  ok(r.body.keptOriginal === true, '  and the save reports it kept it');
+  ok(!!blobStub.dump('renders')[`renders/${EDIT_ID}/proof-customer.png`],
+    '  their proof is kept aside before the re-render overwrites it');
+  ok(r.body.originalProofKept === true, '  and the save says so');
+
+  ok(doc.editCount === 1, '  the edit is counted', String(doc.editCount));
+  ok(!!doc.editedAt, '  and stamped');
+  ok(doc.status === 'preparing', '  the build goes to preparing', doc.status);
+  ok(doc.proofUrl === undefined, '  the old proof url is cleared');
+  ok(renders.length === 1 && renders[0].body.id === EDIT_ID,
+    '  and the render was asked for', String(renders.length));
+  ok(doc.printSize === '16 × 24 in', '  the print size is re-derived', doc.printSize);
+}
+
+/* ---- a second edit leaves the original alone ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
+  const firstOriginal = JSON.stringify(sanityStub.docs.get(EDIT_ID).customerOriginal);
+
+  /* Back to a status an edit is allowed from, as a re-render would leave it. */
+  sanityStub.docs.set(EDIT_ID, { ...sanityStub.docs.get(EDIT_ID), status: 'rendered' });
+  const rev2 = sanityStub.docs.get(EDIT_ID)._rev;
+  const second = paidRecipe({
+    svg: '<svg viewBox="0 0 100 100"><text>SECOND PASS</text></svg>',
+  });
+  const r2 = await editSave({ id: EDIT_ID, recipe: second, rev: rev2 });
+  ok(r2.status === 200, 'a second edit is accepted', String(r2.status));
+  const doc = sanityStub.docs.get(EDIT_ID);
+  ok(JSON.stringify(doc.customerOriginal) === firstOriginal,
+    '  and customerOriginal is byte-identical — still THEIR design, not our first attempt');
+  ok(doc.customerOriginal.sceneSvg.includes('CUSTOMER TITLE'), '  which it is');
+  ok(doc.editCount === 2, '  the count goes up', String(doc.editCount));
+  ok(r2.body.keptOriginal === false, '  and the save says it kept nothing new');
+}
+
+/* ---- saving from approved kills the old link ---- */
+{
+  resetAll();
+  await seedPaidBuild('approved', {
+    approveToken: 'a'.repeat(48),
+    approvedAt: '2026-09-27T17:00:00Z',
+  });
+  const r = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
+  ok(r.status === 200, 'a save from approved is accepted', String(r.status));
+  ok(r.body.tokenRevoked === true, '  and reports the token revoked');
+  const doc = sanityStub.docs.get(EDIT_ID);
+  ok(doc.approveToken === undefined,
+    '  the approve token is gone — the emailed link now shows the expired page');
+  ok(doc.approvedAt === undefined,
+    '  and so is approvedAt: nobody has approved THIS design');
+
+  /* Proved through the customer's own endpoint rather than by reading the
+     field: the link is what the customer holds. */
+  const res = await personalisationApprove(new Request(
+    `https://test.local/api/personalisation-approve?id=${EDIT_ID}&t=${'a'.repeat(48)}`), {});
+  ok(res.status === 410, '  and the old link itself now answers 410', String(res.status));
+  ok(sanityStub.docs.get(EDIT_ID).status === 'preparing',
+    '  without advancing the build', sanityStub.docs.get(EDIT_ID).status);
+}
+
+/* ---- the revision lock ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const r = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-that-is-stale' });
+  ok(r.status === 409, 'a save against a stale revision is refused', String(r.status));
+  ok(r.body.conflict === true, '  as a conflict');
+  ok(sanityStub.docs.get(EDIT_ID).editCount === undefined, '  and nothing was counted');
+  ok(renders.length === 0, '  and no render started');
+}
+
+/* ---- the template cannot be swapped ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const r = await editSave({
+    id: EDIT_ID, rev: 'rev-paid-1',
+    recipe: paidRecipe({ template: 'strip' }),
+  });
+  ok(r.status === 400, 'a cover cannot be saved as a strip', String(r.status));
+  ok(/is a cover, not a strip/i.test(r.body.error || ''), '  and says which is which', r.body.error);
+}
+
+/* ---- an inlined image is refused, as on every other save path ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const r = await editSave({
+    id: EDIT_ID, rev: 'rev-paid-1',
+    recipe: paidRecipe({ svg: '<svg><image href="data:image/png;base64,AAA"/></svg>' }),
+  });
+  ok(r.status === 400, 'a scene with an inlined image is refused', String(r.status));
+}
+
+/* ---- the original proof route ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  const before = await getScene(EDIT_ID, '/original-proof');
+  ok(before.status === 404, 'before any edit there is no original kept', String(before.status));
+  await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
+  const after = await getScene(EDIT_ID, '/original-proof');
+  ok(after.status === 200, 'after an edit the customer’s proof can be viewed', String(after.status));
+  ok(after.ct === 'image/png', '  as a PNG', after.ct);
+}
+
+/* ---- the note on the proof email ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  sanityStub.docs.set('order-cs_live_x', {
+    _id: 'order-cs_live_x', _type: 'order', customerEmail: 'buyer@test.local',
+  });
+  const res = await personalisationAction(new Request(
+    'https://test.local/admin/api/personalisation-action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', id: EDIT_ID, note: 'We nudged the title up a little.' }),
+    }), {});
+  const body = await res.json().catch(() => ({}));
+  ok(res.status === 200 && body.ok, 'approve with a note succeeds', `${res.status}`);
+  ok(body.noteSent === true, '  and says the note went');
+  const mail = resendStub.sent.find((m) => m.to === 'buyer@test.local' || (m.to || []).includes?.('buyer@test.local'));
+  ok(!!mail, '  the proof email was sent');
+  ok(/A note from us/i.test(mail?.html || ''), '  with a labelled note box');
+  ok(/We nudged the title up a little\./.test(mail?.html || ''), '  carrying what was written');
+  ok((mail?.html || '').indexOf('A note from us') < (mail?.html || '').indexOf('personalisation-proof'),
+    '  above the proof image');
+  ok(sanityStub.docs.get(EDIT_ID).proofNote === 'We nudged the title up a little.',
+    '  and it is stored so the page can show what was sent');
+}
+
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  sanityStub.docs.set('order-cs_live_x', {
+    _id: 'order-cs_live_x', _type: 'order', customerEmail: 'buyer@test.local',
+  });
+  const res = await personalisationAction(new Request(
+    'https://test.local/admin/api/personalisation-action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', id: EDIT_ID }),
+    }), {});
+  await res.json().catch(() => ({}));
+  const mail = resendStub.sent.find((m) => m.to === 'buyer@test.local' || (m.to || []).includes?.('buyer@test.local'));
+  ok(!/A note from us/i.test(mail?.html || ''),
+    'with no note, no note box appears in the email');
+  ok(sanityStub.docs.get(EDIT_ID).proofNote === '',
+    '  and the stored note is cleared rather than left from a previous send');
+}
+
+/* ---- a note with markup in it cannot break the email ---- */
+{
+  resetAll();
+  await seedPaidBuild('rendered');
+  sanityStub.docs.set('order-cs_live_x', {
+    _id: 'order-cs_live_x', _type: 'order', customerEmail: 'buyer@test.local',
+  });
+  await personalisationAction(new Request(
+    'https://test.local/admin/api/personalisation-action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', id: EDIT_ID, note: '<script>bad()</script> & "quoted"' }),
+    }), {});
+  const mail = resendStub.sent.find((m) => m.to === 'buyer@test.local' || (m.to || []).includes?.('buyer@test.local'));
+  ok(!/<script>bad\(\)<\/script>/.test(mail?.html || ''), 'a note is escaped, not injected');
+  ok(/&lt;script&gt;/.test(mail?.html || ''), '  and appears as text', 'escaped');
 }
 
 globalThis.fetch = realFetch;

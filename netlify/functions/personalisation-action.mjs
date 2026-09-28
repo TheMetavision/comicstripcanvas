@@ -58,6 +58,13 @@ function sameSecret(given, expected) {
   return diff === 0;
 }
 
+/* The note is typed by a reviewer and goes into an HTML email, so it is escaped
+   rather than trusted. An apostrophe in "we've tidied the spacing" is harmless;
+   a stray angle bracket would silently eat the rest of the paragraph. */
+const escapeHtml = (s) => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 const newToken = () => {
   const b = new Uint8Array(24);
   crypto.getRandomValues(b);
@@ -103,7 +110,7 @@ export default async (req) => {
   const origin = internalOrigin(req);
 
   try {
-    if (action === 'approve') return await approve(doc, id, origin);
+    if (action === 'approve') return await approve(doc, id, origin, body.note);
     if (action === 'hold') return await hold(doc, id, body.note);
     if (action === 'rerender') return await rerender(doc, id, origin);
     return json({ ok: false, error: `Unknown action "${action}"` }, 400);
@@ -128,7 +135,7 @@ async function customerEmailFor(doc) {
 }
 
 /* ---------------------------------------------------------------- approve --- */
-async function approve(doc, id, origin) {
+async function approve(doc, id, origin, rawNote) {
   if (doc.status !== 'rendered') {
     return json({ ok: false, error: `Only a rendered proof can be approved (this is "${doc.status}")` }, 409);
   }
@@ -136,10 +143,22 @@ async function approve(doc, id, origin) {
     return json({ ok: false, error: 'There is no proof to send' }, 409);
   }
 
+  /* An optional line to the customer, shown above the proof. Most sends have
+     nothing to say; the ones that do are usually "we tidied the caption
+     spacing" after an edit, and the customer should hear that from us rather
+     than notice it themselves. Stored as well as sent, so the build's page can
+     show what was actually written instead of only that something was. */
+  const note = typeof rawNote === 'string' ? rawNote.trim().slice(0, 1200) : '';
+
   // Minted before the email so the link in it is the one we stored.
   const token = newToken();
   const approvedAt = new Date().toISOString();
-  await sanity.patch(id).set({ status: 'approved', approvedAt, approveToken: token }).commit();
+  const patch = { status: 'approved', approvedAt, approveToken: token };
+  /* Written even when empty, and deliberately: a second approval with nothing
+     to say must not leave the first one's note on the document, where the page
+     would show it as the note that went with this proof. */
+  patch.proofNote = note;
+  await sanity.patch(id).set(patch).commit();
 
   // The customer address lives on the order the webhook stamped onto this
   // document, not on the personalisation itself.
@@ -161,7 +180,7 @@ async function approve(doc, id, origin) {
       to: email,
       replyTo: shopEmail,
       subject,
-      html: proofEmailHtml({ proofUrl: doc.proofUrl, approveLink, shopEmail, subject }),
+      html: proofEmailHtml({ proofUrl: doc.proofUrl, approveLink, shopEmail, subject, note }),
     });
     if (error) throw new Error(typeof error === 'string' ? error : error.message || 'Resend rejected the send');
   } catch (err) {
@@ -171,8 +190,9 @@ async function approve(doc, id, origin) {
     return json({ ok: true, status: 'approved', emailed: false, emailError: err.message });
   }
 
-  console.log(`personalisation-action: ${id} approved and proof emailed to ${email}`);
-  return json({ ok: true, status: 'approved', emailed: true });
+  console.log(`personalisation-action: ${id} approved and proof emailed to ${email}`
+    + `${note ? ' with a note' : ''}`);
+  return json({ ok: true, status: 'approved', emailed: true, noteSent: !!note });
 }
 
 /* ------------------------------------------------------------------- hold --- */
@@ -207,7 +227,7 @@ async function rerender(doc, id, origin) {
 }
 
 /* ------------------------------------------------------------------ email --- */
-function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject }) {
+function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
   const mailto = `mailto:${shopEmail}?subject=${encodeURIComponent('Re: ' + subject)}`;
   const B = EMAIL_BRAND;
   const body = `font-family: ${B.sans}; font-size: 15px; line-height: 1.6; color: #444444;`;
@@ -228,6 +248,22 @@ function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject }) {
             <p style="margin: 0; ${body}">This is exactly the layout you set in the builder &mdash; your photos, your wording, your sizing. Nothing has been moved.</p>
           </td>
         </tr>
+
+        ${note ? `
+        <tr>
+          <td style="padding: 18px 24px 0;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+              <tr>
+                <td style="border-left: 5px solid ${B.pink}; background: #f7f7f7; padding: 14px 16px;">
+                  <p style="margin: 0 0 6px; font-family: ${B.sans}; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.06em; color: ${B.dark};">
+                    A note from us
+                  </p>
+                  <p style="margin: 0; font-family: ${B.sans}; font-size: 15px; line-height: 1.6; color: #444444; white-space: pre-wrap;">${escapeHtml(note)}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>` : ''}
 
         <tr>
           <td align="center" style="padding: 22px 24px;">

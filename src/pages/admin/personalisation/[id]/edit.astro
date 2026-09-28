@@ -1,0 +1,137 @@
+---
+export const prerender = false;
+
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import ProductBuilder from '../../../../components/ProductBuilder.astro';
+import { sanityClient } from '../../../../lib/sanity';
+
+/**
+ * Edit a customer's paid build, then re-render their proof.
+ *
+ * Behind Basic Auth like everything under /admin/. The builder itself is the
+ * ordinary customer builder -- same controls, same geometry, same undo, same
+ * zoom -- opened in admin mode, which changes three things and nothing else:
+ * where the design is loaded from, that nothing may be uploaded or re-styled,
+ * and where Save goes. See the note beside ADMIN in product-builder.js.
+ *
+ * The status is checked HERE as well as in the two endpoints, so a build that
+ * cannot be edited says so on a page rather than behind a veil. The endpoints
+ * are still the authority -- this check is a courtesy, and it is possible for
+ * the status to change between this render and the save, which is what the
+ * revision check on the save is for.
+ *
+ * prerender = false: the id is in the route and there is nothing to cache.
+ */
+const { id } = Astro.params;
+
+const EDITABLE = new Set(['rendered', 'on_hold', 'approved']);
+const VALID_ID = typeof id === 'string' && /^pp-[0-9a-f]{32}$/.test(id);
+
+let doc: any = null;
+let loadError: string | null = null;
+if (VALID_ID) {
+  try {
+    /* The tokenless client, which works because the production dataset is
+       publicly readable -- the same thing checkout.mjs relies on for the fee.
+       This page is behind Basic Auth; the dataset being public is a separate
+       fact, recorded in CLAUDE.md. */
+    doc = await sanityClient.fetch(
+      `*[_id == $id][0]{ _id, _type, status, templateId, orderNumber, printSize,
+        editCount, editedAt, customerNotes,
+        "hasOriginal": defined(customerOriginal.sceneSvg) }`,
+      { id }
+    );
+  } catch (err: any) {
+    loadError = err?.message || 'Could not read this build.';
+  }
+}
+
+const wrongType = !!doc && doc._type !== 'pendingPersonalisation';
+const editable = !!doc && !wrongType && EDITABLE.has(doc.status);
+/* The template the builder opens on. It is corrected from the recipe once the
+   scene arrives, so this only decides which blank template exists for the
+   half-second before that -- but getting it right avoids building a cover and
+   then throwing it away to build a strip. */
+const template = (doc?.templateId === 'strip' ? 'strip'
+  : doc?.templateId?.startsWith('icon') ? 'icon-portrait'
+  : 'cover') as 'strip' | 'cover' | 'icon-portrait';
+
+const backHref = `/admin/personalisation/${id}`;
+---
+
+<BaseLayout title="Edit a customer's design" description="Internal.">
+  <main class="mx-auto max-w-[1400px] px-4 py-10">
+    <div class="mb-5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+      <h1 class="m-0 font-bangers text-4xl text-comic-yellow">Edit this design</h1>
+      <a href={backHref} class="font-source text-sm text-comic-cyan underline">&larr; back to the build</a>
+    </div>
+
+    {!VALID_ID && (
+      <p class="border-4 border-black bg-panel-dark p-6 font-source text-off-white">
+        That is not a personalisation id.
+      </p>
+    )}
+
+    {VALID_ID && loadError && (
+      <p class="border-4 border-black bg-panel-dark p-6 font-source text-off-white">
+        Could not read this build: <code>{loadError}</code>
+      </p>
+    )}
+
+    {VALID_ID && !loadError && !doc && (
+      <p class="border-4 border-black bg-panel-dark p-6 font-source text-off-white">
+        No build with that id.
+      </p>
+    )}
+
+    {VALID_ID && !loadError && doc && !editable && (
+      <div class="border-4 border-black bg-panel-dark p-6" style="box-shadow: 4px 4px 0 #000;">
+        <p class="m-0 font-russo text-lg text-off-white">This build cannot be edited.</p>
+        <p class="mt-2 font-source text-sm text-gray-400">
+          {wrongType
+            ? 'That id is not a personalisation.'
+            : doc.status === 'in_production' || doc.status === 'dispatched'
+            ? 'The customer has already approved this artwork, so it cannot be changed here — what they '
+              + 'approved is what goes to print. If it genuinely has to change, put it on hold first and tell them why.'
+            : doc.status === 'paid' || doc.status === 'preparing'
+            ? 'This build is still being rendered. Wait for the proof, then edit it.'
+            : doc.status === 'draft' || doc.status === 'awaiting_payment'
+            ? 'This build has not been paid for yet, so it is still the customer’s to finish.'
+            : `Status is "${doc.status || 'none'}".`}
+        </p>
+        <p class="mt-4"><a href={backHref} class="btn-primary">Back to the build</a></p>
+      </div>
+    )}
+
+    {VALID_ID && !loadError && doc && editable && (
+      <>
+        <div class="mb-4 flex flex-wrap gap-x-6 gap-y-1 border-4 border-black bg-panel-dark px-4 py-3 font-source text-sm text-gray-300">
+          <span>Order <strong class="text-off-white">{doc.orderNumber || '(unpaid)'}</strong></span>
+          <span>Status <strong class="text-off-white">{doc.status}</strong></span>
+          <span>{doc.printSize || '—'}</span>
+          {doc.editCount > 0 && (
+            <span class="text-comic-yellow">
+              Edited by us {doc.editCount} time{doc.editCount === 1 ? '' : 's'}
+            </span>
+          )}
+          {doc.status === 'approved' && (
+            <span class="text-comic-red">
+              Already approved — saving revokes their approve link
+            </span>
+          )}
+        </div>
+
+        {doc.customerNotes && (
+          <div class="mb-4 border-4 border-comic-yellow bg-dark-grey p-3">
+            <p class="m-0 font-russo text-xs uppercase tracking-wide text-comic-yellow">
+              What the customer asked for
+            </p>
+            <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-sm text-off-white">{doc.customerNotes}</p>
+          </div>
+        )}
+
+        <ProductBuilder template={template} mode="admin" buildId={id} />
+      </>
+    )}
+  </main>
+</BaseLayout>

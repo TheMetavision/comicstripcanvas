@@ -2,13 +2,21 @@
 export const prerender = false;
 
 import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { sanityClient } from '../../../lib/sanity';
 
 /**
- * Approve / Hold / Re-render one personalisation.
+ * Approve / Hold / Re-render / Edit one personalisation.
  *
  * Opened from the buttons on the Sanity Studio document. The Studio bundle is
  * public, so it cannot carry a credential and does not: it opens this URL, the
  * Basic Auth edge function challenges for one, and the work happens here.
+ *
+ * The build is read server-side now. It used to be a page of three buttons that
+ * knew nothing about the document, which was fine while the only question was
+ * "which button" -- but Approve is only legal from `rendered`, Edit from three
+ * statuses, and a build we have edited has things to say for itself. Offering
+ * every button always and letting the endpoint refuse is a worse experience
+ * than not offering the ones that cannot work.
  *
  * prerender = false because the site builds static and this route has a build
  * id in it. Nothing to prerender and nothing to cache.
@@ -17,14 +25,153 @@ const { id } = Astro.params;
 const action = (Astro.url.searchParams.get('action') || '').toLowerCase();
 const KNOWN = ['approve', 'hold', 'rerender'];
 const wanted = KNOWN.includes(action) ? action : '';
+
+const VALID_ID = typeof id === 'string' && /^pp-[0-9a-f]{32}$/.test(id);
+const EDITABLE = new Set(['rendered', 'on_hold', 'approved']);
+
+let doc: any = null;
+let loadError: string | null = null;
+if (VALID_ID) {
+  try {
+    /* The tokenless client, which works because the production dataset is
+       publicly readable -- the same thing checkout.mjs relies on. This page is
+       behind Basic Auth; the dataset being public is a separate fact, recorded
+       in CLAUDE.md. */
+    doc = await sanityClient.fetch(
+      `*[_id == $id][0]{ _id, _type, status, templateId, orderNumber, printSize, outputFormat,
+        proofUrl, approvedAt, customerApprovedAt, holdNote, renderError, proofNote,
+        editCount, editedAt, customerNotes, minEffectiveDpi,
+        "hasOriginal": defined(customerOriginal.sceneSvg),
+        "originalKeptAt": customerOriginal.savedAt }`,
+      { id }
+    );
+  } catch (err: any) {
+    loadError = err?.message || 'Could not read this build.';
+  }
+}
+const known = !!doc && doc._type === 'pendingPersonalisation';
+const canEdit = known && EDITABLE.has(doc.status);
+const canApprove = known && doc.status === 'rendered';
+const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_hold');
 ---
 
 <BaseLayout title="Personalisation" description="Internal.">
-  <main class="max-w-2xl mx-auto px-4 py-16">
-    <h1 class="font-bangers text-4xl text-comic-yellow mb-2">Personalisation</h1>
-    <p class="font-source text-gray-400 text-sm mb-8">
+  <main class="mx-auto max-w-2xl px-4 py-16">
+    <h1 class="mb-2 font-bangers text-4xl text-comic-yellow">Personalisation</h1>
+    <p class="mb-8 font-source text-sm text-gray-400">
       <code class="text-off-white">{id}</code>
     </p>
+
+    {loadError && (
+      <p class="mb-6 border-4 border-black bg-panel-dark p-4 font-source text-sm text-off-white">
+        Could not read this build: <code>{loadError}</code>. The buttons below still work.
+      </p>
+    )}
+
+    {known && (
+      <div class="mb-6 border-4 border-black bg-panel-dark p-4" style="box-shadow: 4px 4px 0 #000;">
+        <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-source text-sm">
+          <dt class="text-gray-400">Order</dt>
+          <dd class="m-0 text-off-white">{doc.orderNumber || '(not paid)'}</dd>
+          <dt class="text-gray-400">Status</dt>
+          <dd class="m-0 font-bold text-off-white">{doc.status || '(none)'}</dd>
+          <dt class="text-gray-400">Build</dt>
+          <dd class="m-0 text-off-white">
+            {doc.templateId || '?'}{doc.printSize ? `, ${doc.printSize}` : ''}
+            {doc.outputFormat ? ` (${doc.outputFormat})` : ''}
+            {typeof doc.minEffectiveDpi === 'number' ? `, ${doc.minEffectiveDpi} dpi` : ''}
+          </dd>
+          {doc.approvedAt && (
+            <>
+              <dt class="text-gray-400">Proof sent</dt>
+              <dd class="m-0 text-off-white">{new Date(doc.approvedAt).toLocaleString('en-GB')}</dd>
+            </>
+          )}
+          {doc.customerApprovedAt && (
+            <>
+              <dt class="text-gray-400">Customer approved</dt>
+              <dd class="m-0 text-off-white">{new Date(doc.customerApprovedAt).toLocaleString('en-GB')}</dd>
+            </>
+          )}
+        </dl>
+
+        {/* Edited by us. Said prominently, because everything else on this page
+            describes the customer's design and after an edit it is not only
+            theirs any more. */}
+        {doc.editCount > 0 && (
+          <div class="mt-4 border-l-[5px] border-comic-yellow bg-dark-grey p-3">
+            <p class="m-0 font-russo text-sm text-comic-yellow">
+              EDITED BY US &mdash; {doc.editCount} time{doc.editCount === 1 ? '' : 's'}
+            </p>
+            <p class="mt-1 mb-0 font-source text-xs text-gray-400">
+              Last edited {doc.editedAt ? new Date(doc.editedAt).toLocaleString('en-GB') : 'at an unknown time'}.
+              {doc.hasOriginal ? ' The customer’s own design is kept.' : ''}
+            </p>
+            {doc.hasOriginal && (
+              <p class="mt-2 mb-0 flex flex-wrap gap-3 font-source text-xs">
+                <a
+                  href={`/admin/api/personalisation-scene/${id}/original-proof`}
+                  target="_blank"
+                  rel="noopener"
+                  class="text-comic-cyan underline"
+                >View the proof they designed</a>
+                {doc.proofUrl && (
+                  <a href={doc.proofUrl} target="_blank" rel="noopener" class="text-comic-cyan underline">
+                    View the current proof
+                  </a>
+                )}
+              </p>
+            )}
+          </div>
+        )}
+
+        {doc.proofNote && (
+          <div class="mt-4 border-l-[5px] border-comic-pink bg-dark-grey p-3">
+            <p class="m-0 font-russo text-xs uppercase tracking-wide text-comic-pink">
+              Note sent to the customer with the proof
+            </p>
+            <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-sm text-off-white">{doc.proofNote}</p>
+          </div>
+        )}
+
+        {doc.holdNote && (
+          <div class="mt-4 border-l-[5px] border-comic-red bg-dark-grey p-3">
+            <p class="m-0 font-russo text-xs uppercase tracking-wide text-comic-red">On hold</p>
+            <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-sm text-off-white">{doc.holdNote}</p>
+          </div>
+        )}
+
+        {doc.renderError && (
+          <div class="mt-4 border-l-[5px] border-comic-red bg-dark-grey p-3">
+            <p class="m-0 font-russo text-xs uppercase tracking-wide text-comic-red">Last render failed</p>
+            <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-xs text-gray-300">{doc.renderError}</p>
+          </div>
+        )}
+
+        {doc.customerNotes && (
+          <div class="mt-4 border-l-[5px] border-gray-500 bg-dark-grey p-3">
+            <p class="m-0 font-russo text-xs uppercase tracking-wide text-gray-400">
+              What the customer asked for
+            </p>
+            <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-sm text-off-white">{doc.customerNotes}</p>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Edit comes first: after a look at the proof it is usually the reason
+        somebody opened this page, and Approve should not be the nearest button
+        to a design that still needs work. */}
+    {canEdit && (
+      <p class="mb-6">
+        <a href={`/admin/personalisation/${id}/edit`} class="btn-primary" style="background:#00AEEF;color:#000;">
+          EDIT DESIGN
+        </a>
+        <span class="ml-3 font-source text-xs text-gray-400">
+          Opens the builder on their artwork. Saving re-renders the proof.
+        </span>
+      </p>
+    )}
 
     <div
       id="pa"
@@ -33,36 +180,65 @@ const wanted = KNOWN.includes(action) ? action : '';
       data-id={id}
       data-action={wanted}
     >
-      <p id="pa-state" class="font-russo text-off-white text-lg mb-2">Ready</p>
-      <p id="pa-detail" class="font-source text-gray-400 text-sm mb-5">
+      <p id="pa-state" class="mb-2 font-russo text-lg text-off-white">Ready</p>
+      <p id="pa-detail" class="mb-5 font-source text-sm text-gray-400">
         Choose what to do with this build.
       </p>
 
       <div id="pa-hold" class="mb-5 hidden">
-        <label class="font-source text-gray-300 text-sm block mb-2" for="pa-note">
+        <label class="mb-2 block font-source text-sm text-gray-300" for="pa-note">
           Why is this going on hold?
         </label>
         <textarea
           id="pa-note"
           rows="3"
-          class="w-full bg-black border-4 border-black text-off-white font-source text-sm p-3"
+          class="w-full border-4 border-black bg-black p-3 font-source text-sm text-off-white"
           placeholder="The reason is the whole point of a hold — it is shown on the build."
         ></textarea>
       </div>
 
-      <div class="flex flex-wrap gap-3">
-        <button id="pa-approve" class="btn-primary" type="button">APPROVE</button>
-        <button id="pa-hold-btn" class="btn-primary" type="button" style="background:#f03e2f;">HOLD</button>
-        <button id="pa-rerender" class="btn-primary" type="button" style="background:#f5a623;color:#000;">RE-RENDER</button>
+      {/* The note that rides along with the proof. Always offered, because
+          "we tidied the caption for you" is worth saying whether or not this
+          particular proof followed an edit. */}
+      <div id="pa-approve-note" class={canApprove || !known ? 'mb-5' : 'mb-5 hidden'}>
+        <label class="mb-2 block font-source text-sm text-gray-300" for="pa-message">
+          Note to the customer <span class="text-gray-500">(optional &mdash; shown above the proof)</span>
+        </label>
+        <textarea
+          id="pa-message"
+          rows="3"
+          maxlength="1200"
+          class="w-full border-4 border-black bg-black p-3 font-source text-sm text-off-white"
+          placeholder="e.g. We nudged the title up a little so it clears the border — everything else is exactly as you set it."
+        ></textarea>
       </div>
 
-      <p id="pa-error" class="font-source text-sm mt-5 hidden" style="color:#ff6b6b;"></p>
-      <p id="pa-ok" class="font-source text-sm mt-5 hidden" style="color:#4caf50;"></p>
+      <div class="flex flex-wrap gap-3">
+        <button
+          id="pa-approve"
+          class="btn-primary"
+          type="button"
+          disabled={known && !canApprove}
+          title={known && !canApprove ? `Only a rendered proof can be approved (this is "${doc.status}")` : ''}
+        >APPROVE &amp; SEND PROOF</button>
+        <button id="pa-hold-btn" class="btn-primary" type="button" style="background:#f03e2f;">HOLD</button>
+        <button
+          id="pa-rerender"
+          class="btn-primary"
+          type="button"
+          style="background:#f5a623;color:#000;"
+          disabled={known && !canRerender}
+          title={known && !canRerender ? `Cannot re-render from "${doc.status}"` : ''}
+        >RE-RENDER</button>
+      </div>
+
+      <p id="pa-error" class="mt-5 hidden font-source text-sm" style="color:#ff6b6b;"></p>
+      <p id="pa-ok" class="mt-5 hidden font-source text-sm" style="color:#4caf50;"></p>
     </div>
 
-    <p class="font-source text-gray-500 text-xs mt-6">
+    <p class="mt-6 font-source text-xs text-gray-500">
       You are signed in to the admin area; there is no separate key for these actions.
-      Close the tab when you are done — the Studio will show the new status once it
+      Close the tab when you are done &mdash; the Studio will show the new status once it
       refreshes.
     </p>
   </main>
@@ -70,80 +246,87 @@ const wanted = KNOWN.includes(action) ? action : '';
 
 <script>
   const root = document.getElementById('pa')!;
-  const id = root.dataset.id!;
+  const id = root.dataset.id || '';
   const wanted = root.dataset.action || '';
   const $ = (x: string) => document.getElementById(x)!;
 
-  const say = (state: string, detail: string) => {
-    $('pa-state').textContent = state;
-    $('pa-detail').textContent = detail;
-  };
+  const state = $('pa-state'), detail = $('pa-detail');
+  const errBox = $('pa-error'), okBox = $('pa-ok');
+  const box = $('pa-hold');
+
+  const say = (s: string, d: string) => { state.textContent = s; detail.textContent = d; };
   const fail = (msg: string) => {
-    $('pa-ok').classList.add('hidden');
-    const e = $('pa-error');
-    e.textContent = msg;
-    e.classList.remove('hidden');
+    errBox.textContent = msg; errBox.classList.remove('hidden'); okBox.classList.add('hidden');
+    say('That did not work', 'Nothing has changed. You can try again.');
+    buttons(false);
   };
   const done = (msg: string) => {
-    $('pa-error').classList.add('hidden');
-    const o = $('pa-ok');
-    o.textContent = msg;
-    o.classList.remove('hidden');
+    okBox.textContent = msg; okBox.classList.remove('hidden'); errBox.classList.add('hidden');
+    say('Done', 'You can close this tab.');
+    buttons(true);
+  };
+  const buttons = (off: boolean) => {
+    for (const b of ['pa-approve', 'pa-hold-btn', 'pa-rerender']) {
+      (($(b)) as HTMLButtonElement).disabled = off;
+    }
   };
 
-  let busy = false;
   async function run(action: string, extra: Record<string, unknown> = {}) {
-    if (busy) return;
-    busy = true;
+    errBox.classList.add('hidden'); okBox.classList.add('hidden');
+    buttons(true);
     say('Working…', `Sending ${action}.`);
     try {
-      /* Same-origin and under /admin, so the browser attaches the Basic Auth
-         it was already challenged for. No secret travels from this page. */
+      /* Same-origin, under /admin, so the Basic Auth credential the browser is
+         already holding goes with it. */
       const res = await fetch('/admin/api/personalisation-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, id, ...extra }),
       });
-      let body: any = {};
-      try { body = await res.json(); } catch { /* not JSON */ }
-      if (!res.ok || body.ok === false) {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
         throw new Error(body.error || `${action} failed (${res.status})`);
       }
-      say('Done', '');
       if (action === 'approve' && body.emailed === false) {
         fail('Approved, but the proof email did not send: '
-          + (body.emailError || 'unknown reason')
-          + '. The customer has not been told.');
-      } else {
-        done(action === 'approve' ? 'Approved, and the customer has been emailed their proof.'
-          : action === 'hold' ? 'On hold. The note is on the build.'
-            : 'A re-render has been started.');
+          + (body.emailError || 'no reason given') + '. The customer has NOT been told.');
+        return;
       }
-    } catch (err) {
-      say('Ready', 'Choose what to do with this build.');
-      fail((err as Error).message);
-    } finally {
-      busy = false;
+      done(action === 'approve'
+        ? 'Approved, and the customer has been emailed their proof'
+          + (body.noteSent ? ' with your note.' : '.')
+        : action === 'hold' ? 'On hold. The note is on the build.'
+        : 'Queued for re-render. Refresh the Studio in a minute.');
+      /* The page describes a document that has just changed, so reload it
+         rather than leave a stale status and a live Approve button on screen. */
+      setTimeout(() => location.reload(), 1600);
+    } catch (e: any) {
+      fail(e.message || String(e));
     }
   }
 
-  $('pa-approve').addEventListener('click', () => run('approve'));
+  $('pa-approve').addEventListener('click', () => {
+    const msg = ($('pa-message') as HTMLTextAreaElement).value.trim();
+    run('approve', msg ? { note: msg } : {});
+  });
   $('pa-rerender').addEventListener('click', () => run('rerender'));
 
   const showHold = () => {
-    $('pa-hold').classList.remove('hidden');
+    box.classList.remove('hidden');
     ($('pa-note') as HTMLTextAreaElement).focus();
   };
   $('pa-hold-btn').addEventListener('click', () => {
-    const box = $('pa-hold');
     if (box.classList.contains('hidden')) { showHold(); return; }
     const note = ($('pa-note') as HTMLTextAreaElement).value.trim();
-    if (!note) { fail('A hold needs a note saying why.'); return; }
+    if (!note) { fail('A hold needs a note.'); return; }
     run('hold', { note });
   });
 
   /* The Studio opened this with an intent. Approve and re-render run straight
-     away; a hold stops to ask for its reason first. */
-  if (wanted === 'approve' || wanted === 'rerender') run(wanted);
-  else if (wanted === 'hold') { showHold(); say('Ready', 'Add a note, then press HOLD.'); }
+     away; a hold needs its note first. */
+  if (wanted === 'rerender') run(wanted);
+  else if (wanted === 'approve') {
+    say('Ready', 'Add a note if you want one, then press Approve.');
+    ($('pa-message') as HTMLTextAreaElement).focus();
+  } else if (wanted === 'hold') { showHold(); say('Ready', 'Add a note, then press HOLD.'); }
 </script>

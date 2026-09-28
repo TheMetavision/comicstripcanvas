@@ -22,7 +22,7 @@ import BOXES from '../data/builder/icon_boxes.json';
 import METRICS from '../data/builder/metrics.json';
 
 export type BuilderTemplate = 'strip' | 'cover' | 'icon-portrait';
-export type BuilderMode = 'customer' | 'studio' | 'customise';
+export type BuilderMode = 'customer' | 'studio' | 'customise' | 'admin';
 
 interface Props {
   /** Which template the builder opens on. Variants are switchable inside. */
@@ -38,6 +38,15 @@ interface Props {
   /** customise only: whose design this is. */
   productId?: string;
   /**
+   * admin only: which paid build is being edited on the customer's behalf.
+   *
+   * "admin" is customer mode with the load, the save and the paid work changed
+   * -- see the note beside ADMIN in product-builder.js. The page that mounts it
+   * is behind Basic Auth; nothing here checks that, and nothing here should:
+   * the endpoints it calls refuse anything that did not arrive under /admin/.
+   */
+  buildId?: string;
+  /**
    * The product's personalisation fee, in pounds, read from Sanity by the page.
    * Passed in rather than looked up here so the basket line, the product page
    * and checkout all price from the one field. Required on purpose: no default,
@@ -46,7 +55,11 @@ interface Props {
   personalisationFee?: number;
 }
 
-const { template, mode = 'customer', personalisationFee, productId } = Astro.props;
+const { template, mode = 'customer', personalisationFee, productId, buildId } = Astro.props;
+
+if (mode === 'admin' && !buildId) {
+  throw new Error('ProductBuilder: admin mode needs the buildId it is editing.');
+}
 
 if (mode === 'customise' && !productId) {
   throw new Error('ProductBuilder: customise mode needs the productId whose design it is opening.');
@@ -54,6 +67,8 @@ if (mode === 'customise' && !productId) {
 
 // Only the personalised flow prices anything here; a customised design is
 // priced from the product's customiseFee, which the builder gets with the scene.
+// Admin mode prices nothing -- the build was paid for weeks ago -- so the fee
+// is not required there even though everything else behaves as customer mode.
 if (mode === 'customer' && (typeof personalisationFee !== 'number' || !Number.isFinite(personalisationFee))) {
   throw new Error(
     `ProductBuilder: personalisationFee must be a number (got ${JSON.stringify(personalisationFee)}). ` +
@@ -96,10 +111,11 @@ const builderData = JSON.stringify(resolvePaletteTokens({
 
 <div
   id="csc-builder-root"
-  class={`csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]${mode === 'customise' ? ' relative' : ''}`}
+  class={`csc-builder comic-border flex h-auto flex-col bg-charcoal font-source text-off-white lg:h-[85vh] lg:min-h-[620px]${mode === 'customise' || mode === 'admin' ? ' relative' : ''}`}
   data-mode={mode}
   data-template={template}
   data-product-id={productId}
+  data-build-id={buildId}
 >
   {/* Customise mode opens covered.
 
@@ -113,16 +129,25 @@ const builderData = JSON.stringify(resolvePaletteTokens({
       Rendered server-side and visible by default: a veil that JavaScript has
       to put up is a veil that is not there for the first paint, which is
       exactly the moment the blank builder would show through. */}
-  {mode === 'customise' && (
+  {(mode === 'customise' || mode === 'admin') && (
     <div
       id="customiseVeil"
       class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-charcoal p-8 text-center"
     >
       <p id="customiseVeilTitle" class="m-0 font-bangers text-3xl uppercase tracking-wide text-comic-yellow">
-        Opening your design&hellip;
+        {mode === 'admin' ? 'Opening the customer’s build…' : 'Opening your design…'}
       </p>
-      <p id="customiseVeilBody" class="b-hint max-w-md">One moment &mdash; fetching the artwork.</p>
-      <a id="customiseVeilBack" class="btn-primary mt-2" href="/store/" hidden>Back to the product</a>
+      <p id="customiseVeilBody" class="b-hint max-w-md">
+        {mode === 'admin'
+          ? 'Fetching their photographs and the layout they saved.'
+          : 'One moment — fetching the artwork.'}
+      </p>
+      <a
+        id="customiseVeilBack"
+        class="btn-primary mt-2"
+        href={mode === 'admin' ? `/admin/personalisation/${buildId}` : '/store/'}
+        hidden
+      >{mode === 'admin' ? 'Back to the build' : 'Back to the product'}</a>
     </div>
   )}
 
@@ -363,9 +388,28 @@ const builderData = JSON.stringify(resolvePaletteTokens({
         </p>
       </section>
 
+      {/* Admin mode edits something that was bought weeks ago. There is no
+          basket, no fee and no consent to take -- the only thing to do is save
+          it and let a fresh proof be rendered. */}
+      {mode === 'admin' && (
+      <section id="adminBox">
+        <h3 class="b-h">Save and re-render</h3>
+        <p class="b-hint">
+          Saves this design over the customer&rsquo;s, then re-renders the proof. Their original is
+          kept. If they had already approved, their old approve link stops working.
+        </p>
+        <button id="adminSave" class="b-btn b-btn-primary mt-3 w-full">Save and re-render</button>
+        <p class="b-hint" id="adminSaveNote"></p>
+        <p class="b-hint mt-2">
+          The photographs cannot be replaced or re-styled here &mdash; that work is already paid for.
+          Crop, scale and position can all be changed.
+        </p>
+      </section>
+      )}
+
       {/* Both customer-facing modes buy something; only the consent box above
           is about photographs, and a customised design has none. */}
-      {mode !== 'studio' && (
+      {mode !== 'studio' && mode !== 'admin' && (
       <section id="basketBox">
         <h3 class="b-h">{mode === 'customise' ? 'Add your version to the basket' : 'Add to basket'}</h3>
         <label for="notes" class="b-lab">Anything we should know?</label>

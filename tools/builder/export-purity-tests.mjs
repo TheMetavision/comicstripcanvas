@@ -181,6 +181,44 @@ say('\n2. AND NOTHING ELSE FROM THE SCREEN\n');
   } finally { b.close(); }
 }
 
+/* ─────────────── 2b. the view is not part of the design */
+
+say('\n2b. ZOOMING IN DOES NOT CROP THE SAVED SCENE\n');
+{
+  const b = await open('personalised-book-covers', 'purity-zoom');
+  try {
+    const { window } = b;
+    const flat = await b.exportOf();
+    const vbOf = (s) => (/viewBox="([^"]+)"/.exec(s || '') || [])[1] || null;
+    const sizeOf = (s) => [
+      (/\swidth="(\d+)"/.exec(s || '') || [])[1],
+      (/\sheight="(\d+)"/.exec(s || '') || [])[1],
+    ].join('x');
+    ok(!!vbOf(flat), 'the export has a viewBox', vbOf(flat));
+
+    /* Zoom the VIEW in, twice, and pan it. */
+    const zoomIn = b.$('viewIn');
+    ok(!!zoomIn, 'there is a zoom-in control');
+    zoomIn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(60);
+    zoomIn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(60);
+
+    const live = b.svg.getAttribute('viewBox');
+    ok(live !== vbOf(flat),
+      'the board on screen really is showing a different rectangle now', live);
+
+    const zoomed = await b.exportOf();
+    ok(vbOf(zoomed) === vbOf(flat),
+      'but the exported scene keeps the WHOLE sheet',
+      `${vbOf(zoomed)} (want ${vbOf(flat)})`);
+    ok(sizeOf(zoomed) === sizeOf(flat),
+      'and the same width and height', `${sizeOf(zoomed)} (want ${sizeOf(flat)})`);
+    ok(zoomed === flat,
+      'so a design saved while zoomed in is byte-identical to one saved fitted');
+  } finally { b.close(); }
+}
+
 /* ─────────────── 3. the migration for what was already saved */
 
 say('\n3. PUTTING A STORED OUTLINE BACK TO BLACK\n');

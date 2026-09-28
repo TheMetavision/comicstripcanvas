@@ -175,11 +175,27 @@ export function initProductBuilder() {
      customer builder with the whole photograph half taken out rather than a
      builder of its own: same controls, same preview, same draft, same basket,
      and nothing that uploads, styles or crops. */
+  /* ADMIN is a flag on top of customer mode, not a mode of its own, and that is
+     deliberate. Editing somebody's build on their behalf IS customer editing:
+     the same controls, the same geometry, the same crop handles, the same
+     cut-out toggle, the same undo and the same zoom. A fourth MODE would make
+     every `MODE === 'customer'` test in this file false and quietly turn all of
+     that off one gate at a time.
+
+     So MODE stays 'customer' and only the three things that genuinely differ
+     are keyed on ADMIN: where the design is loaded FROM, that nothing may be
+     uploaded, styled or cut out (all of it is paid for and already done), and
+     where the save goes. */
+  const ADMIN = root.dataset.mode === 'admin';
+  const ADMIN_OF = ADMIN ? (root.dataset.buildId || '') : '';
   const MODE = ['studio', 'customise'].includes(root.dataset.mode) ? root.dataset.mode : 'customer';
   const CUSTOMISE = MODE === 'customise';
   /* Which product's design, and in which of its two styles. Only set in
      customise mode; the page reads them off the product it is showing. */
   const CUSTOMISE_OF = root.dataset.productId || '';
+  /* What the admin editor loaded, the revision it loaded at, and anything that
+     went wrong doing so. adminScene is read the way customiseScene is. */
+  let adminScene = null, adminRev = null, adminError = null;
   /* The style comes off the link the customer followed. The page is static and
      serves both styles, so the query string is where the choice lives; the data
      attribute is here for anything that mounts the island directly. */
@@ -1863,7 +1879,13 @@ export function initProductBuilder() {
     (Date.now() - pollStartedAt > STYLE_POLL_SLOW_AFTER_MS ? STYLE_POLL_SLOW_MS : STYLE_POLL_MS);
 
   function ensureStylePoll() {
-    if (MODE !== 'customer' || !saveId) return;
+    /* Never in admin mode. Not because polling costs anything -- it is a GET
+       that triggers nothing -- but because a poll that finds a finished panel
+       calls applyStyled, and applyStyled deliberately recentres the crop. It
+       is right for a customer whose photograph was just reframed by the model
+       and catastrophic here: it would throw away the framing we opened the
+       build to preserve. */
+    if (ADMIN || MODE !== 'customer' || !saveId) return;
     if (pollTimer !== null || pollPausedHidden) return;   // already running, or waiting on the tab
     if (!pollStartedAt) pollStartedAt = Date.now();
     pollTimer = setTimeout(runStylePoll, 0);
@@ -2367,6 +2389,9 @@ export function initProductBuilder() {
   async function retryStyle(id) {
     const s = state.get(id);
     if (!s || s.demo || !saveId) return false;
+    /* A model call, which is money. The artwork on an admin edit is already
+       bought and already made. */
+    if (ADMIN) { console.warn('[builder] admin edit: refusing to re-style — that is paid work'); return false; }
     if (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING) return false;
     s.styleState = STYLE_PENDING; s.styleError = null;
     s.styleClockAt = Date.now();        // a retry gets the full four minutes too
@@ -2405,6 +2430,7 @@ export function initProductBuilder() {
     const s = state.get(id);
     if (!s || s.demo || !s.file) return false;
     if (s.uploadState === PENDING || s.uploadState === UPLOADING) return false;
+    if (ADMIN) { console.warn('[builder] admin edit: refusing to upload — the photographs are already paid for'); return; }
     (MODE === 'studio' ? uploadStudio : upload)(id, s.file);
     return true;
   }
@@ -2787,6 +2813,7 @@ export function initProductBuilder() {
          chunked endpoint, because its artwork is far too big for one request
          and waiting until Save as product is what produced a 413 with no
          explanation attached to it. */
+      if (ADMIN) { console.warn('[builder] admin edit: refusing to upload — the photographs are already paid for'); return; }
       (MODE === 'studio' ? uploadStudio : upload)(id, file);
     };
     probe.src = url;
@@ -3068,7 +3095,10 @@ export function initProductBuilder() {
   const consentBox = $('consent');            // customer mode only
   /* Studio mode has nothing to consent to: the photos are never uploaded, so
      they stay in the browser for the length of the session and go no further. */
-  const consented = () => MODE === 'studio' || !!(consentBox && consentBox.checked);
+  /* Admin mode has no consent box and needs none: the customer consented when
+     they uploaded, and nothing here uploads anything. Without this the gates
+     would all be shut against a checkbox that is not on the page. */
+  const consented = () => MODE === 'studio' || ADMIN || !!(consentBox && consentBox.checked);
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
   /* ---------- undo: the design, and nothing else ----------
@@ -4360,7 +4390,17 @@ export function initProductBuilder() {
             : role === 'logo' ? '{{LOGO}}' : null;
       if (token) im.setAttribute('href', token);
     });
-    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    /* The FIT viewBox, never the one on screen.
+       The live <svg> carries whatever the view zoom last put there -- a zoomed,
+       panned rectangle -- and this used to clone that straight into the exported
+       document and take its width and height from it. So a customer who zoomed
+       in to check the spelling and then pressed Add to basket saved a scene that
+       WAS the zoomed crop: a smaller sheet, offset, with the edges of their
+       design outside it, and the renderer would rasterise exactly that.
+       The view is a magnifying glass. It has no business in the export. */
+    const fit = viewBoxNow();
+    c.setAttribute('viewBox', fit);
+    const vb = fit.split(' ').map(Number);
     c.setAttribute('width', Math.round(vb[2]));
     c.setAttribute('height', Math.round(vb[3]));
     return new XMLSerializer().serializeToString(c);
@@ -4885,6 +4925,10 @@ export function initProductBuilder() {
   /* Sticky result of the last save. refresh() runs right after a save finishes
      and would otherwise overwrite the outcome with the idle hint. */
   let studioMsg = null;
+  /* Admin mode's own action. Not Add to basket: there is no basket, the thing
+     was bought weeks ago, and the next step is a fresh proof. */
+  on('adminSave', 'click', () => { if (ADMIN) saveAdminEdit(); });
+
   on('addBasket', 'click', async () => {
     if (basketBusy) return;
     if (CUSTOMISE) return addCustomiseToBasket();
@@ -5645,6 +5689,202 @@ export function initProductBuilder() {
     });
   }
 
+
+  /* ---------- admin: a customer's paid build, reopened to be tidied ---------- */
+  /**
+   * Rebuild a paid personalisation in the builder so we can put it right.
+   *
+   * The same trick customise mode uses -- rebuild from the RECIPE on the
+   * template it was drawn on, so every control already works on it -- with one
+   * difference that is the whole reason this function exists rather than reusing
+   * fillLocked: nothing here is locked, and the paid work has to survive.
+   *
+   * WHAT MUST SURVIVE, and what would quietly destroy it:
+   *
+   *   the crop        applyStyled recentres it, on purpose, because a customer's
+   *                   framing was chosen against a photograph the model then
+   *                   reframed. Here the styled image IS what they framed, so
+   *                   the transform is restored from the recipe and applyStyled
+   *                   is never called.
+   *   the keys        recipe() re-emits styledKey, cutoutKey, rawKey and
+   *                   imageVariant from panel state. A panel filled without them
+   *                   would save a recipe saying this build has no styled
+   *                   artwork, and the renderer would have nothing to print.
+   *                   They are carried across from the recipe we loaded.
+   *   the variant     which image the customer settled on is a decision they
+   *                   made, not a consequence of which files exist. Taken from
+   *                   imageVariant, never inferred.
+   *
+   * Nothing in here uploads, styles or cuts out: the images come from
+   * /api/personalisation-photo, which serves blobs that already exist.
+   */
+  async function loadAdmin() {
+    const url = `/admin/api/personalisation-scene/${encodeURIComponent(ADMIN_OF)}`;
+    let data;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (e) {
+      console.warn(`[builder] admin: ${url} failed: ${e.message}`);
+      veil('error', 'This build could not be opened. It may have been re-rendered since — reload the page.');
+      return;
+    }
+    if (!data.editable) {
+      veil('error', data.whyNotEditable || 'This build cannot be edited.');
+      return;
+    }
+    adminScene = data;
+    /* The revision the save will be held to. Read here, sent back on save, and
+       the save refuses if the document moved -- the renderer patches these same
+       documents. */
+    adminRev = data.rev || null;
+    saveId = data.id;
+
+    const key = VARIANTS[data.template] ? data.template
+      : (TEMPLATES[data.template] ? data.template : null);
+    if (!key || !TEMPLATES[key]) {
+      console.warn(`[builder] admin: unknown template "${data.template}"`);
+      veil('error', `This build is a "${data.template}", which this editor does not know how to open.`);
+      return;
+    }
+
+    load(key);
+    applyRecipe(data.recipe || {});
+
+    /* Then the panels, which applyRecipe does not touch -- it restores text,
+       boxes, background and output and nothing else. This is the half that
+       would be silently lost by a recipe round trip. */
+    const shots = (data.recipe && data.recipe.panels) || [];
+    await Promise.all(shots.map((shot) => fillPaidPanel(shot, data.panels[shot.id])));
+
+    if (data.missingPanels && data.missingPanels.length) {
+      console.warn(`[builder] admin: no finished artwork for ${data.missingPanels.join(', ')}`);
+    }
+    resetView();
+    syncViewUI();
+    rail();
+    build();
+    refresh();
+    if (selected) syncPanel();
+    veil('gone');
+    console.log(`[builder] admin: opened ${data.id} (${data.template}, `
+      + `${Object.keys(data.panels || {}).length} panel(s), edit ${(data.editCount || 0) + 1})`);
+  }
+
+  /**
+   * One panel of a paid build, with everything that was bought carried across.
+   *
+   * The image is whichever one the recipe says was chosen; the other is loaded
+   * too when it exists, so the cut-out toggle works without a request and
+   * without inventing an answer the customer never gave.
+   */
+  function fillPaidPanel(shot, urls) {
+    return new Promise((resolve) => {
+      if (!shot || !shot.id) return resolve();
+      const p = T.panels.find((x) => x.id === shot.id);
+      if (!p) return resolve();
+      /* A panel the customer never filled stays a placeholder, exactly as it
+         was saved. Filling it here would invent artwork. */
+      if (shot.placeholder || !urls || !urls.styled) return resolve();
+
+      const tr = shot.transform || {};
+      const load1 = (src) => new Promise((ok) => {
+        if (!src) return ok(null);
+        const im = new Image();
+        im.onload = () => ok(im);
+        im.onerror = () => { console.warn(`[builder] admin: ${shot.id} image would not load (${src})`); ok(null); };
+        im.src = src;
+      });
+
+      const wantCutout = shot.imageVariant === 'cutout' && !!urls.cutout;
+      Promise.all([load1(urls.styled), load1(wantCutout ? urls.cutout : null)])
+        .then((pair) => {
+          const styledEl = pair[0], cutoutEl = pair[1];
+          if (!styledEl) {
+            adminError = 'Part of this build would not load — reload before editing it.';
+            return resolve();
+          }
+          const rb = shot.removeBackground || {};
+          state.set(shot.id, {
+            url: urls.styled, el: styledEl, name: shot.image || `panel ${shot.id}`, file: null,
+            natW: styledEl.naturalWidth, natH: styledEl.naturalHeight,
+            /* The customer's framing, restored rather than recomputed. */
+            zoom: Number.isFinite(tr.zoom) ? tr.zoom : 1,
+            ox: Number.isFinite(tr.offsetX) ? tr.offsetX : 0,
+            oy: Number.isFinite(tr.offsetY) ? tr.offsetY : 0,
+            cut: !!rb.on,
+            tol: Number.isFinite(rb.spread) ? rb.spread : 34,
+            feather: Number.isFinite(rb.soften) ? rb.soften : 2,
+            /* Already stored, already styled. Saying so is what keeps every gate
+               and counter in this file honest with no special case in each. */
+            uploadState: UPLOADED, uploadError: null, uploadPct: 100,
+            styleState: STYLE_DONE, styleError: null, styled: true,
+            serverPanel: shot.id,
+            /* The paid work, carried through untouched so recipe() re-emits it. */
+            key: shot.rawKey || null,
+            styledKey: shot.styledKey || null,
+            styledW: Array.isArray(shot.styledPx) ? shot.styledPx[0] : null,
+            styledH: Array.isArray(shot.styledPx) ? shot.styledPx[1] : null,
+            cutoutKey: shot.cutoutKey || null,
+            cutoutW: Array.isArray(shot.cutoutPx) ? shot.cutoutPx[0] : null,
+            cutoutH: Array.isArray(shot.cutoutPx) ? shot.cutoutPx[1] : null,
+            cutoutUrl: cutoutEl ? urls.cutout : null,
+            cutoutEl: cutoutEl || null,
+            /* The decision, from the record of it. */
+            variant: shot.imageVariant === 'cutout' ? 'cutout' : 'styled',
+            locked: false,
+          });
+          const n = nodes[shot.id];
+          const shown = (shot.imageVariant === 'cutout' && cutoutEl) ? urls.cutout : urls.styled;
+          if (n) {
+            if (n.img) { n.img.setAttribute('href', shown); n.img.setAttribute('opacity', 1); }
+            if (n.num) n.num.setAttribute('opacity', 0);
+            if (n.plate) n.plate.setAttribute('opacity', 0);
+            if (n.hit) n.hit.classList.add('filled');
+          }
+          applyPanelClip(shot.id);
+          layout(shot.id);
+          drawSlotFlag(shot.id);
+          resolve();
+        });
+    });
+  }
+
+  /**
+   * Send the edited design back, then let the render job redraw the proof.
+   *
+   * recipe() is the same function the customer's Add to basket uses, so what
+   * lands on the document is the same shape the renderer has always been given.
+   */
+  async function saveAdminEdit() {
+    const btn = $('adminSave');
+    const note = $('adminSaveNote');
+    const say = (msg, bad) => {
+      if (!note) return;
+      note.textContent = msg;
+      note.className = bad ? 'b-hint text-comic-red' : 'b-hint';
+    };
+    if (btn) btn.disabled = true;
+    say('Saving…');
+    try {
+      const res = await fetch('/admin/api/personalisation-edit-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: ADMIN_OF, rev: adminRev, recipe: recipe() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `Save failed (${res.status})`);
+      say(`Saved. Re-rendering${data.tokenRevoked ? ' — the old approve link has been revoked' : ''}.`);
+      /* Back to the build's page, which is where the proof and the Approve
+         button are: the reviewer's next step is to look at what came out. */
+      setTimeout(() => { location.href = `/admin/personalisation/${encodeURIComponent(ADMIN_OF)}`; }, 1200);
+    } catch (e) {
+      say(e.message, true);
+      if (btn) btn.disabled = false;
+    }
+  }
+
   /* ---------- ?probe ---------- */
   /* A readout of where a text field actually ENDED UP, for the case where a
      device disagrees with every other device and there is no debugger on it.
@@ -5708,7 +5948,7 @@ export function initProductBuilder() {
      known until the scene arrives -- so it loads nothing until then. Loading
      the default first, as this did, is what put a fully interactive blank
      cover on screen whenever a design failed to open. */
-  if (CUSTOMISE) loadCustomise(); else load(INITIAL);
+  if (ADMIN) loadAdmin(); else if (CUSTOMISE) loadCustomise(); else load(INITIAL);
   try { if (!localStorage.getItem('csc-guide-seen')) showGuide(); } catch (e) { showGuide(); }
 
   return { MODE };

@@ -250,6 +250,39 @@
   status = 404
   force = true
 
+# Reading and re-writing a customer's build, for the admin editor. Both are
+# somebody else's photographs and somebody else's paid order, so both live under
+# /admin/ where Basic Auth covers them -- the unguessable-id reasoning that lets
+# a customer's own browser read /api/personalisation-photo is not enough for a
+# route that hands over, or rewrites, an entire build.
+#
+# A splat because the id is in the path: /admin/api/personalisation-scene/<id>.
+[[redirects]]
+  from = "/admin/api/personalisation-scene/*"
+  to = "/.netlify/functions/personalisation-scene/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/admin/api/personalisation-edit-save"
+  to = "/.netlify/functions/personalisation-edit-save"
+  status = 200
+  force = true
+
+# And the public addresses closed, as above. /api/* maps to functions by name,
+# so without these the guard would be decoration.
+[[redirects]]
+  from = "/api/personalisation-scene/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/api/personalisation-edit-save"
+  to = "/404"
+  status = 404
+  force = true
+
 # The same size job as the studio renderer: a 16x24 in face with a 2.5 in
 # gallery wrap is a 21x29 in sheet, 6300x8700 px, measured at 20-26 s and a peak
 # around 900 MB. resvg and sharp both ship a native .node binary esbuild cannot

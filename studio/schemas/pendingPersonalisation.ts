@@ -219,6 +219,52 @@ export default defineType({
       description:
         'One-shot capability for the customer\'s Approve link. Cleared when used, so the link cannot be replayed.',
     }),
+    defineField({
+      name: 'proofNote',
+      title: 'Note Sent With The Proof',
+      type: 'text',
+      rows: 3,
+      readOnly: true,
+      description:
+        'What the reviewer wrote to the customer in the proof email, if anything. Kept so the '
+        + 'admin page can show what was actually sent rather than only that something was.',
+    }),
+
+    // ── set when we edit a customer's design on their behalf ──────────────
+    /* The design as the CUSTOMER left it, kept the first time we change it and
+       never touched again. Two separate reasons, and either alone would justify
+       it: somebody has to be able to see what was altered on their behalf, and
+       if an edit makes things worse there has to be something to go back to.
+       Written once, so the tenth edit still compares against what they made
+       rather than against our ninth attempt. */
+    defineField({
+      name: 'customerOriginal',
+      title: 'The Customer\'s Own Design',
+      type: 'object',
+      readOnly: true,
+      description:
+        'The recipe and scene exactly as the customer saved them, stored the FIRST time we edit '
+        + 'this build and never overwritten afterwards.',
+      fields: [
+        defineField({ name: 'recipe', title: 'Recipe (JSON)', type: 'text', rows: 4, readOnly: true }),
+        defineField({ name: 'sceneSvg', title: 'Scene SVG', type: 'text', rows: 4, readOnly: true }),
+        defineField({ name: 'savedAt', title: 'Kept At', type: 'datetime', readOnly: true }),
+      ],
+    }),
+    defineField({
+      name: 'editedAt',
+      title: 'Last Edited By Us',
+      type: 'datetime',
+      readOnly: true,
+      description: 'When we last changed this design on the customer\'s behalf.',
+    }),
+    defineField({
+      name: 'editCount',
+      title: 'Times Edited By Us',
+      type: 'number',
+      readOnly: true,
+      description: 'How many times this design has been saved from the admin editor.',
+    }),
 
     defineField({
       name: 'photoKeys',
