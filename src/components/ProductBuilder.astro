@@ -157,9 +157,25 @@ const builderData = JSON.stringify(resolvePaletteTokens({
 
   <div class="flex min-h-0 flex-1 flex-col lg:flex-row">
     <!-- stage -->
-    <div class="b-stage halftone-bg flex min-h-[420px] min-w-0 flex-1 items-center justify-center p-[30px]">
+    <div class="b-stage halftone-bg relative flex min-h-[420px] min-w-0 flex-1 items-center justify-center p-[30px]">
       <div class="b-board relative max-h-full max-w-full border-4 border-off-white bg-[#0B0B0B]" id="board">
         <svg id="svg"></svg>
+      </div>
+      {/*
+        A magnifying glass over the design, not a change to it. Nothing here
+        reaches the recipe, the proof or the print. Ctrl and the wheel zooms
+        about the cursor; when zoomed, dragging empty board pans, and so does a
+        two-finger drag. A two-finger PINCH still belongs to the photograph
+        under it -- that gesture was taken long before this existed.
+      */}
+      <div id="viewZoom" class="absolute bottom-3 right-3 flex items-center gap-1 border-[3px] border-black
+                                bg-panel-dark/95 px-2 py-1" style="box-shadow: 3px 3px 0 #000000;">
+        <button id="viewOut" class="b-btn b-btn-sm" aria-label="Zoom out" title="Zoom out">−</button>
+        <span id="viewPct" class="min-w-[3.2rem] text-center font-russo text-xs text-off-white"
+              aria-live="polite">100%</span>
+        <button id="viewIn" class="b-btn b-btn-sm" aria-label="Zoom in" title="Zoom in">+</button>
+        <button id="viewFit" class="b-btn b-btn-sm" aria-label="Fit the whole design"
+                title="Fit">Fit</button>
       </div>
     </div>
 
@@ -498,6 +514,10 @@ const builderData = JSON.stringify(resolvePaletteTokens({
     outline-offset: 5px;
   }
   .csc-builder svg { display: block; width: 100%; height: 100%; touch-action: none; }
+  /* The view controls sit over the stage and have to stay thumb-sized without
+     pushing the board around. */
+  .csc-builder .b-btn-sm { padding: 0.15rem 0.5rem; min-width: 2rem; font-size: 0.8rem; line-height: 1.4; }
+  .csc-builder #viewZoom { z-index: 5; }
 
   /* Tailwind's preflight reset for [hidden] wraps its selector in :where(), which
      contributes no specificity, so it scores (0,1,0) and loses to ANY single-class

@@ -461,8 +461,10 @@ export function initProductBuilder() {
     const ac = ACCENT[key] || '#EC008C';
     root.style.setProperty('--b-accent', ac);
     root.style.setProperty('--b-on-accent', onDark(ac));
+    /* A different template is a different sheet: the view starts at Fit. */
+    resetView(); syncViewUI();
     sizeBoard();                    // one place decides the board's shape
-    svg.setAttribute('viewBox', viewBoxNow());
+    svg.setAttribute('viewBox', viewBoxApplied());
     buildSizes(); build(); rail(); seedDemo(); refresh();
     if (T.panels.length === 1) select(T.panels[0].id);
   }
@@ -520,12 +522,114 @@ export function initProductBuilder() {
     const px = svg.getBoundingClientRect().width;
     return px > 0 ? w / px : 1;
   };
+
+  /* ---------- the VIEW: a magnifying glass over the design ----------
+
+     Not part of the design. Nothing here reaches the recipe, the proof or the
+     print -- it only decides which part of the same drawing fills the board,
+     the way leaning closer does.
+
+     viewBoxNow() stays the FIT: the whole sheet, wrap included. This composes
+     a zoom and a pan on top of it and hands the result to the viewBox, so
+     unitsPerPx() -- which reads the viewBox in force -- keeps every drag, every
+     handle and the pinch correct at any magnification with no arithmetic of
+     their own. That is the whole reason for doing it here rather than with a
+     CSS transform: a transform would leave getBoundingClientRect reporting the
+     transformed box while the viewBox stayed put, and all six pointer paths
+     would have to unpick the matrix.
+
+     It lives outside `nodes` on purpose. rebuildKeepingImages() throws every
+     node away on a format or size change, and a view kept on one of them would
+     go with it. */
+  const VIEW_MIN = 1, VIEW_MAX = 4, VIEW_STEP = 0.25;
+  const view = { zoom: VIEW_MIN, panX: 0, panY: 0 };
+  const zoomed = () => view.zoom > VIEW_MIN + 1e-6;
+
+  /** The fit viewBox as four numbers: what viewBoxNow() says, parsed. */
+  function fitBox() {
+    const { c, dx, dy } = geom();
+    return { x: -dx, y: -dy, w: c.width + 2 * dx, h: c.height + 2 * dy };
+  }
+
+  /**
+   * The view rect, clamped so the design can never be dragged off the board.
+   *
+   * The window is the fit divided by the zoom, and its centre may wander by at
+   * most half the slack in each direction -- so at 100% there is no slack and
+   * the pan is pinned to nothing, which is what Fit means.
+   */
+  function viewRect() {
+    const f = fitBox();
+    const w = f.w / view.zoom, h = f.h / view.zoom;
+    const slackX = (f.w - w) / 2, slackY = (f.h - h) / 2;
+    const panX = Math.max(-slackX, Math.min(slackX, view.panX));
+    const panY = Math.max(-slackY, Math.min(slackY, view.panY));
+    /* Written back so a clamped drag does not keep the overshoot and lurch
+       when the finger comes back. */
+    view.panX = panX; view.panY = panY;
+    return { x: f.x + slackX + panX, y: f.y + slackY + panY, w, h };
+  }
+
+  const viewBoxApplied = () => {
+    const r = viewRect();
+    return `${r.x} ${r.y} ${r.w} ${r.h}`;
+  };
+
+  /** Put the view on the board, and re-draw what is sized in screen pixels. */
+  function applyView() {
+    svg.setAttribute('viewBox', viewBoxApplied());
+    /* Both are drawn in canvas units but meant to be a fixed number of screen
+       pixels, so they are re-made whenever the magnification changes. */
+    if (T) { drawGuides(); drawFaceGuide(); }
+    if (selected) drawHandles();
+    syncViewUI();
+  }
+
+  /** Back to the whole sheet. */
+  function resetView() {
+    view.zoom = VIEW_MIN; view.panX = 0; view.panY = 0;
+  }
+
+  /**
+   * Zoom, holding one point of the DESIGN still under the pointer.
+   *
+   * @param {number} next   the magnification wanted
+   * @param {{x,y}=} about  a point in canvas units to keep put; the centre of
+   *                        the current view when not given
+   */
+  function setZoom(next, about) {
+    const z = Math.max(VIEW_MIN, Math.min(VIEW_MAX, Math.round(next * 100) / 100));
+    if (Math.abs(z - view.zoom) < 1e-6) return;
+    const before = viewRect();
+    const at = about || { x: before.x + before.w / 2, y: before.y + before.h / 2 };
+    /* Where that point sits in the window now, as a fraction, so it can be put
+       back in the same place afterwards. */
+    const fx = before.w ? (at.x - before.x) / before.w : 0.5;
+    const fy = before.h ? (at.y - before.y) / before.h : 0.5;
+    view.zoom = z;
+    const f = fitBox();
+    const w = f.w / z, h = f.h / z;
+    /* The window that puts `at` back at the same fraction, expressed as the
+       pan its centre needs. */
+    view.panX = (at.x - fx * w + w / 2) - (f.x + f.w / 2);
+    view.panY = (at.y - fy * h + h / 2) - (f.y + f.h / 2);
+    applyView();
+  }
+
+  /** Move the view by a distance in canvas units. */
+  function panBy(dx, dy) {
+    if (!zoomed()) return;
+    view.panX += dx; view.panY += dy;
+    applyView();
+  }
   function drawGuides() {
     ['trimGuide', 'trimUnder'].forEach((k) => { if (nodes[k]) { nodes[k].remove(); nodes[k] = null; } });
     if (!T.size || !wrapIn()) return;
     // the face is the artwork plus its padding; everything beyond that wraps
     const { c, padX, padY } = geom();
-    const wdt = Math.max(6, c.width / 230);
+    /* Divided by the magnification so the line stays the same thickness on
+       screen: at Fit this is exactly what it has always been. */
+    const wdt = Math.max(6, c.width / 230) / view.zoom;
     const box = { x: -padX, y: -padY, width: c.width + 2 * padX, height: c.height + 2 * padY };
     // a dark under-stroke so the white line reads on pale artwork too
     const under = mk('rect', {
@@ -561,14 +665,14 @@ export function initProductBuilder() {
 
     const g = geom();
     const f = faceBox(g.c, g);
-    const wdt = Math.max(6, g.c.width / 260);
+    const wdt = Math.max(6, g.c.width / 260) / view.zoom;
     const line = (x1, y1, x2, y2, edge) => mk('line', {
       x1, y1, x2, y2, 'data-role': 'guide', 'pointer-events': 'none',
       stroke: cutoutClip[edge] === CLIP_TO_FACE ? '#00E5FF' : 'rgba(255,255,255,.28)',
       'stroke-width': cutoutClip[edge] === CLIP_TO_FACE ? wdt : wdt * 0.6,
       ...(cutoutClip[edge] === CLIP_TO_FACE
         ? {}
-        : { 'stroke-dasharray': `${g.c.width / 60} ${g.c.width / 60}` }),
+        : { 'stroke-dasharray': `${g.c.width / 60 / view.zoom} ${g.c.width / 60 / view.zoom}` }),
     });
     const els = [
       line(f.left, f.top, f.right, f.top, 'top'),
@@ -655,8 +759,13 @@ export function initProductBuilder() {
   /* Rebuild the scene at the current size/format, putting the customer's images
      back where they were. */
   function rebuildKeepingImages() {
+    /* A different sheet is a different thing to be looking at, so the
+       magnifying glass comes off. Also the only honest answer: the pan is
+       measured against a fit box that has just changed shape. syncViewUI here
+       and not applyView: the viewBox is set below, once, after sizeBoard. */
+    resetView(); syncViewUI();
     sizeBoard();
-    svg.setAttribute('viewBox', viewBoxNow());
+    svg.setAttribute('viewBox', viewBoxApplied());
     const keep = new Map(state); state = new Map();
     build(); rail();
     keep.forEach((v, k) => {
@@ -770,7 +879,9 @@ export function initProductBuilder() {
 
     T.boxes.forEach((b) => {
       // the path data is in reference units, so it must be scaled as well as placed
-      const g = mk('g', { transform: boxTransform(b) });
+      /* data-role so the view pan can tell a box from the scenery around
+         it and leave its drag alone. */
+      const g = mk('g', { transform: boxTransform(b), 'data-role': 'box' });
       const sh = mk('path', { d: b.shadow, fill: b.shadowColour });
       g.appendChild(sh);
       const fills = (b.fills || [{ d: b.fill, colour: b.fillColour }]).map((f) => {
@@ -2947,6 +3058,93 @@ export function initProductBuilder() {
      they stay in the browser for the length of the session and go no further. */
   const consented = () => MODE === 'studio' || !!(consentBox && consentBox.checked);
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+
+  /* ---------- working the view ---------- */
+
+  /** The zoom controls, and whether each can do anything. */
+  function syncViewUI() {
+    const pct = $('viewPct'); if (pct) pct.textContent = `${Math.round(view.zoom * 100)}%`;
+    const out = $('viewOut'); if (out) out.disabled = view.zoom <= VIEW_MIN + 1e-6;
+    const inn = $('viewIn'); if (inn) inn.disabled = view.zoom >= VIEW_MAX - 1e-6;
+    const fit = $('viewFit'); if (fit) fit.disabled = !zoomed();
+    /* Something to hang a cursor off, and what the pan handler below asks. */
+    if (board) board.classList.toggle('view-zoomed', zoomed());
+  }
+
+  /** A pointer event in canvas units, through the viewBox in force. */
+  function viewPoint(e) {
+    const b = svg.getBoundingClientRect();
+    const k = unitsPerPx();
+    const [vx, vy] = viewBoxNums();
+    return { x: vx + (e.clientX - b.left) * k, y: vy + (e.clientY - b.top) * k };
+  }
+
+  on('viewIn', 'click', () => setZoom(view.zoom + VIEW_STEP));
+  on('viewOut', 'click', () => setZoom(view.zoom - VIEW_STEP));
+  on('viewFit', 'click', () => { resetView(); applyView(); });
+
+  /* Ctrl and the wheel, about the cursor -- the convention every drawing
+     program uses, and the one gesture a trackpad pinch already sends. A PLAIN
+     wheel is left alone: the board is in the middle of a page people scroll. */
+  svg.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const at = viewPoint(e);
+    /* deltaY is per-line on some mice and per-pixel on others, so only its
+       direction is trusted. */
+    setZoom(view.zoom + (e.deltaY < 0 ? VIEW_STEP : -VIEW_STEP), at);
+  }, { passive: false });
+
+  /**
+   * Is this pointer on something that already has a use for it?
+   *
+   * A photograph, a text field, a box or a resize handle each own their drag.
+   * The view may only pan what is left -- the burst, the border, the paper
+   * around the design -- so a zoomed board can be moved without taking a
+   * gesture away from anything.
+   */
+  const ownsPointer = (target) => !!(target && target.closest
+    && target.closest('.hit, text, [data-role="handles"], [data-role="box"]'));
+
+  /* Panning the view. One finger on empty board when zoomed, or two fingers
+     anywhere that is not a photograph -- a two-finger gesture ON a photograph
+     is its pinch, and that is older than this. */
+  {
+    const down = new Map();
+    let pan = null;
+
+    const mid = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+
+    svg.addEventListener('pointerdown', (e) => {
+      down.set(e.pointerId, e);
+      const two = down.size === 2;
+      if (!two && (!zoomed() || ownsPointer(e.target))) return;
+      if (two && ownsPointer(e.target)) return;      // the photo's pinch
+      if (!zoomed()) return;
+      const p = two ? mid(...down.values()) : { x: e.clientX, y: e.clientY };
+      pan = { px: p.x, py: p.y, ox: view.panX, oy: view.panY, k: unitsPerPx(), two };
+      board.classList.add('view-panning');
+    });
+
+    svg.addEventListener('pointermove', (e) => {
+      if (down.has(e.pointerId)) down.set(e.pointerId, e);
+      if (!pan) return;
+      const p = pan.two && down.size === 2 ? mid(...down.values()) : { x: e.clientX, y: e.clientY };
+      /* MINUS: dragging right should bring what is to the left into view, the
+         way a hand on paper moves the paper rather than the window. */
+      view.panX = pan.ox - (p.x - pan.px) * pan.k;
+      view.panY = pan.oy - (p.y - pan.py) * pan.k;
+      applyView();
+    });
+
+    const lift = (e) => {
+      down.delete(e.pointerId);
+      if (pan && down.size < (pan.two ? 2 : 1)) { pan = null; board.classList.remove('view-panning'); }
+    };
+    svg.addEventListener('pointerup', lift);
+    svg.addEventListener('pointercancel', lift);
+  }
+
   if (consentBox) consentBox.addEventListener('change', () => {
     if (consentBox.checked) consentAt = consentAt || new Date().toISOString();
     else consentAt = null;
@@ -4960,7 +5158,7 @@ export function initProductBuilder() {
       if (savedClip) cutoutClip = savedClip;
       buildSizes();
       sizeBoard();
-      svg.setAttribute('viewBox', viewBoxNow());
+      svg.setAttribute('viewBox', viewBoxApplied());
     }
 
     for (const t of r.text || []) {
