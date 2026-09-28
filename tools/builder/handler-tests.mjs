@@ -2025,6 +2025,41 @@ for (const status of ['paid', 'rendered', 'in_production']) {
     '  rather than the dispatch note');
 }
 
+/* ---- the strip says the same thing, and no longer claims we arrange it ----
+
+   isStrip is only ever set in the legacyPersonalised branch -- the deleted
+   five-step /api/personalise form -- so this is the one shape that reaches it,
+   and a strip bought through the builder today gets the general personalised
+   line instead. Driven anyway: the copy is still live code, and it was the copy
+   that was wrong. */
+{
+  resetAll();
+  const session = paidSession({ id: 'cs_test_legacy_strip' });
+  stripeStub.sessions.push({ ...session, line_items: [] });
+  await postWebhook(stripeEvent('checkout.session.completed', {
+    ...session,
+    metadata: {
+      isPersonalised: 'true',
+      style: 'Comic Book Strip',
+      format: 'poster',
+      size: 'large',
+      basePrice: '59.99',
+      artFee: '10',
+    },
+  }));
+
+  const html = (resendStub.sent.find((m) => (m.to || []).includes('buyer@test.local')) || {}).html || '';
+  ok(/Your personalised comic strip order has been received!/.test(html),
+    'a strip order is still named as a strip');
+  ok(/check your design over and email you a proof to approve/i.test(html),
+    '  and gets the same proof wording as a cover');
+  ok(!/arrange your 12 photos/i.test(html),
+    '  it no longer says WE arrange the photos — the customer does');
+  ok(!/strip panels/i.test(html), '  and does not mention arranging the panels');
+  ok(/once you.{0,3}ve approved your proof/i.test(html),
+    '  with the 7-10 days starting at approval');
+}
+
 /* ---- a plain stock order keeps its own wording ---- */
 {
   resetAll();

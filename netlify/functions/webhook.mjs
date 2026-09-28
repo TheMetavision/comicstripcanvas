@@ -218,8 +218,13 @@ async function fulfilOrder(session) {
          than recomputed from lineItems later so the email and the console
          warning cannot disagree about which lines are affected. */
       const missingPrint = [];
-      // Track whether this is specifically a Comic Book Strip order, so the
-      // email copy can be tailored (no Name/Title or Caption references).
+      /* Whether this is specifically a Comic Book Strip order, which now only
+         changes the product's name in the confirmation email.
+         Set in the legacyPersonalised branch below and nowhere else, so it is
+         false for everything the current site can sell: a builder line carries
+         personalisationId on its own line item and never sets this session
+         metadata. A strip bought today reads "Your personalised order", not
+         "Your personalised comic strip order". */
       let isStrip = false;
 
       if (legacyPersonalised) {
@@ -666,9 +671,20 @@ async function fulfilOrder(session) {
          approval. */
       const customerIntroText = !isPersonalised
         ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch, plus 1-2 working days for delivery.'
-        : isStrip
-        ? 'Your personalised comic strip order has been received! We\'ll arrange your 12 photos across the strip panels and email you a proof to approve — <strong>nothing is printed until you\'re happy with it</strong>. Once you\'ve approved your proof, please allow <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong> for printing and dispatch, plus 1-2 working days for delivery.'
-        : 'Your personalised order has been received! We\'ll check your design over and email you a proof to approve — <strong>nothing is printed until you\'re happy with it</strong>. Once you\'ve approved your proof, please allow <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong> for printing and dispatch, plus 1-2 working days for delivery.';
+        /* One sentence for every personalised order, whatever the template. The
+           strip used to get its own copy saying we would arrange the twelve
+           photographs across the panels, which was true of the old five-step
+           form and has not been true since the builder replaced it -- the
+           customer arranges their own photographs now, and the only thing left
+           to say about a strip is that it is a strip. So the name varies and
+           nothing else does, rather than two near-identical paragraphs drifting
+           apart. */
+        : `Your personalised ${isStrip ? 'comic strip ' : ''}order has been received!`
+          + ' We\'ll check your design over and email you a proof to approve —'
+          + ' <strong>nothing is printed until you\'re happy with it</strong>.'
+          + ' Once you\'ve approved your proof, please allow'
+          + ` <strong style="color: ${BRAND.cyan};">7-10 working days</strong> for printing`
+          + ' and dispatch, plus 1-2 working days for delivery.';
 
       /* The closing line names the next email that will arrive. For a
          personalised order that is the proof, not the dispatch note. */
