@@ -1,10 +1,10 @@
 /**
  * Put a selected panel's outline back to black in the scenes that stored it lit.
  *
- *   node tools/strip-selection-outline.mjs                     read, decide, print, do nothing
- *   node tools/strip-selection-outline.mjs --apply             write the scenes
- *   node tools/strip-selection-outline.mjs --apply --render     ...and re-render the masters
- *   node tools/strip-selection-outline.mjs --apply --pending    ...and fix personalisation records
+ *   node tools/strip-selection-outline.mjs                          read, print, do nothing
+ *   node tools/strip-selection-outline.mjs --apply                  write the scenes
+ *   node tools/strip-selection-outline.mjs --apply --render          ...and re-render the masters
+ *   node tools/strip-selection-outline.mjs --apply --include-ordered ...and records that were bought
  *
  * WHY
  * ---
@@ -36,7 +36,16 @@
  * A personalisation belonging to a real order is the record of what somebody
  * bought. Re-writing one silently edits that record, so an ordered record needs
  * --include-ordered as well, and says so rather than skipping quietly.
+ *
+ * That is the ONLY gate on top of --apply. There was a second one, --pending,
+ * and it was a mistake: no studio scene has ever carried this fault, so gating
+ * the personalisation records too made --apply a no-op in the only case that
+ * exists, which is a safety flag that protects nothing and hides the work.
+ *
+ * The previous value of every field it patches is written to print-out/_review
+ * first, because a Sanity patch is not otherwise reversible from here.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -57,7 +66,6 @@ const SANITY = 'https://lwbwahym.api.sanity.io';
 const has = (f) => process.argv.includes(f);
 const DRY = has('--dry-run') || !has('--apply');
 const RENDER = has('--render');
-const PENDING = has('--pending');
 const ORDERED = has('--include-ordered');
 const say = console.log.bind(console);
 const rev = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -117,11 +125,19 @@ async function sanityQuery(query, token) {
   return json.result;
 }
 
-async function sanityPatch(id, set, token) {
+/**
+ * One patch, refused if the document moved under us.
+ *
+ * ifRevisionID rather than a bare patch: the read and the write are seconds
+ * apart, and the renderer patches these same documents. Without it a
+ * concurrent render's result would be silently overwritten with a scene read
+ * before it ran.
+ */
+async function sanityPatch(id, set, token, ifRevisionID) {
   const res = await fetch(SANITY + '/v2021-10-21/data/mutate/production?returnIds=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ mutations: [{ patch: { id, set } }] }),
+    body: JSON.stringify({ mutations: [{ patch: { id, ifRevisionID, set } }] }),
   });
   const json = await res.json();
   if (json.error) throw new Error(JSON.stringify(json.error));
@@ -214,7 +230,7 @@ if (!sanityToken) {
   say('  no SANITY_WRITE_TOKEN — not read.\n');
 } else {
   const rows = await sanityQuery('*[_type=="pendingPersonalisation"]'
-    + '{_id,orderNumber,orderId,status,templateId,printSize,proofUrl,recipe,sceneSvg}', sanityToken);
+    + '{_id,_rev,orderNumber,orderId,status,templateId,printSize,proofUrl,recipe,sceneSvg}', sanityToken);
   let hits = 0;
   for (const r of rows) {
     const lit = sceneFieldsOf(r).flatMap((f) => litOutlines(f[1]));
@@ -235,17 +251,23 @@ if (!sanityToken) {
         + ' bought; pass --include-ordered to rewrite it deliberately.\n');
       continue;
     }
-    if (DRY || !PENDING) {
-      say('    would patch' + (DRY ? '' : ' (pass --pending to include these)')
+    if (DRY) {
+      say('    would patch'
         + (r.proofUrl ? ', then re-render the proof.' : '; no proof to re-render.') + '\n');
       continue;
     }
-    await sanityPatch(r._id, set, sanityToken);
+    /* Reversibility, before the write rather than after it. */
+    const backup = path.join(REPO, 'tools/builder/print-out/_review/selection-outline-backup');
+    fs.mkdirSync(backup, { recursive: true });
+    const kept = path.join(backup, r._id + '.' + r._rev + '.json');
+    fs.writeFileSync(kept, JSON.stringify({ _id: r._id, _rev: r._rev, was: { sceneSvg: r.sceneSvg, recipe: r.recipe } }, null, 1), 'utf8');
+    say('    previous value kept at ' + path.relative(REPO, kept));
+    await sanityPatch(r._id, set, sanityToken, r._rev);
     say('    patched.\n');
   }
   say('  ' + rows.length + ' records read, ' + hits + ' carrying a lit outline.\n');
 }
 
-if (DRY) say('Nothing was written. Re-run with --apply (and --render / --pending) to carry it out.');
+if (DRY) say('Nothing was written. Re-run with --apply (and --render) to carry it out.');
 
 }
