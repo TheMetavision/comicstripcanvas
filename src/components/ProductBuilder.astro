@@ -170,12 +170,23 @@ const builderData = JSON.stringify(resolvePaletteTokens({
       */}
       <div id="viewZoom" class="absolute bottom-3 right-3 flex items-center gap-1 border-[3px] border-black
                                 bg-panel-dark/95 px-2 py-1" style="box-shadow: 3px 3px 0 #000000;">
-        <button id="viewOut" class="b-btn b-btn-sm" aria-label="Zoom out" title="Zoom out">−</button>
+        <button id="viewOut" data-no-undo class="b-btn b-btn-sm" aria-label="Zoom out" title="Zoom out">−</button>
         <span id="viewPct" class="min-w-[3.2rem] text-center font-russo text-xs text-off-white"
               aria-live="polite">100%</span>
-        <button id="viewIn" class="b-btn b-btn-sm" aria-label="Zoom in" title="Zoom in">+</button>
-        <button id="viewFit" class="b-btn b-btn-sm" aria-label="Fit the whole design"
+        <button id="viewIn" data-no-undo class="b-btn b-btn-sm" aria-label="Zoom in" title="Zoom in">+</button>
+        <button id="viewFit" data-no-undo class="b-btn b-btn-sm" aria-label="Fit the whole design"
                 title="Fit">Fit</button>
+        <span class="mx-1 h-4 w-px bg-gray-600" aria-hidden="true"></span>
+        {/*
+          Undo puts the DESIGN back, never the work that was paid for: a photo
+          that has been uploaded, styled or cut out keeps all of that through
+          any number of undos. The view's zoom is not undoable -- it is a
+          magnifying glass, not a decision.
+        */}
+        <button id="undoBtn" data-no-undo class="b-btn b-btn-sm" aria-label="Undo" title="Undo (Ctrl+Z)"
+                disabled>↶</button>
+        <button id="redoBtn" data-no-undo class="b-btn b-btn-sm" aria-label="Redo" title="Redo (Ctrl+Y)"
+                disabled>↷</button>
       </div>
     </div>
 

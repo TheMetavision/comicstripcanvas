@@ -2730,6 +2730,10 @@ export function initProductBuilder() {
       pendingConsent = pendingConsent.filter((w) => w.id !== id).concat([{ id, file }]);
       return;
     }
+    /* The design as it was before this photograph existed. Held here because
+       the slot is filled in an onload, long after the click that chose it --
+       too late for the press to still be holding a snapshot. */
+    const beforePhoto = snapshot();
     const url = URL.createObjectURL(file), probe = new Image();
     probe.onload = () => {
       if (MODE === 'customer' && tooSmall(probe.naturalWidth, probe.naturalHeight)) {
@@ -2771,6 +2775,9 @@ export function initProductBuilder() {
       if (n.num) n.num.setAttribute('opacity', 0); n.hit.classList.add('filled');
       if (n.plate) n.plate.setAttribute('opacity', 0);
       layout(id); select(id); refresh(); palette(probe);
+      /* One step for "a photograph went in", taken against how the design
+         looked before it did. */
+      commit(`photo:${id}`, beforePhoto);
       /* Both modes upload as photos are dropped -- studio mode through the
          chunked endpoint, because its artwork is far too big for one request
          and waiting until Save as product is what produced a 413 with no
@@ -3058,6 +3065,327 @@ export function initProductBuilder() {
      they stay in the browser for the length of the session and go no further. */
   const consented = () => MODE === 'studio' || !!(consentBox && consentBox.checked);
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+
+  /* ---------- undo: the design, and nothing else ----------
+
+     A step is a snapshot of the DESIGN SLICE -- the numbers and words a
+     customer chose -- and nothing that was bought. It never touches key,
+     styledKey, cutoutKey, cutoutUrl, cutoutEl, the upload or style fields,
+     serverPanel, file, el or url, so undoing and redoing cannot re-trigger a
+     cut-out, a Gemini call or an upload. Those live on the same state objects
+     and are simply left alone.
+
+     Not a recipe replay. recipe() is a complete description and applyRecipe()
+     is not its inverse -- it restores text, boxes, background and output and
+     never touches a panel -- so a round trip through it would quietly lose
+     every crop. Assigning the fields back and calling the redraw the builder
+     already uses is both smaller and honest about what it restores.
+
+     The view is deliberately absent. Zoom and pan are a magnifying glass, not
+     the design, and undoing a zoom is not what anybody means by undo. */
+
+  const UNDO_LIMIT = 50;
+  const undoStack = [], redoStack = [];
+  /* A cleared photo keeps its state object here, so undo can put BACK THE SAME
+     ONE -- with its upload keys, its styled copy and its cut-out intact. A
+     fresh object would mean a fresh upload of a photograph the server already
+     has. */
+  const clearedPanels = new Map();
+  let restoring = false;            // no snapshots while we are putting one back
+  let typingTimer = null, typingLabel = null;
+
+  const num = (v, or = 0) => (Number.isFinite(v) ? v : or);
+
+  /** Everything a design is, as plain data. */
+  function snapshot() {
+    if (!T) return null;
+    return {
+      template: TK,
+      /* Which slot is highlighted. A screen affordance, and in the snapshot
+         anyway for two reasons: undo should put the customer back where they
+         were, and the selected panel's outline is drawn in the accent colour
+         INSIDE the exported scene -- so leaving it out would make an undone
+         design differ from the original by one stroke. */
+      selected,
+      fmt,
+      sizeKey: T.size ? T.size.key : null,
+      cutoutClip: { ...cutoutClip },
+      bg,
+      artColours: Array.isArray(artColours) ? artColours.slice() : null,
+      logo: T.logo ? {
+        href: T.logo.href || null, custom: T.logo.custom || null,
+        fillPlate: !!T.logo.fillPlate,
+      } : null,
+      text: (T.text || []).map((f) => ({
+        id: f.id, value: f.value,
+        colours: Array.isArray(f.colours) ? f.colours.slice() : null,
+        stroke: f.stroke || null,
+        strokeScale: num(f.strokeScale, 1), sizeScale: num(f.sizeScale, 1),
+        rot: num(f.rot, 0),
+        pos: f.pos ? { x: f.pos.x, y: f.pos.y } : null,
+        linked: f.linked !== false,
+      })),
+      boxes: (T.boxes || []).map((b) => ({
+        id: b.id, dx: num(b.dx), dy: num(b.dy),
+        fillColour: b.fillColour || null, shadowColour: b.shadowColour || null,
+      })),
+      /* Panels: the crop and the choice, never the files behind them. A panel
+         that has been cleared is recorded as absent, and its object waits in
+         clearedPanels for an undo to ask for it. */
+      panels: (T.panels || []).map((p) => {
+        const s = state.get(p.id);
+        if (!s) return { id: p.id, empty: true };
+        return {
+          id: p.id, empty: false,
+          zoom: num(s.zoom, 1), ox: num(s.ox), oy: num(s.oy),
+          cut: !!s.cut, tol: num(s.tol, 34), feather: num(s.feather, 2),
+          variant: s.variant || null,
+        };
+      }),
+    };
+  }
+
+  /** Put one back. Only the fields above are written. */
+  function restore(snap) {
+    if (!snap) return;
+    restoring = true;
+    try {
+      const sheetMoved = snap.template !== TK
+        || snap.fmt !== fmt
+        || (T.size ? T.size.key : null) !== snap.sizeKey;
+
+      if (snap.template !== TK) load(snap.template);
+
+      fmt = snap.fmt;
+      const fs = $('fmtSel'); if (fs) fs.value = fmt;
+      if (snap.sizeKey && T.sizes) {
+        const i = T.sizes.findIndex((z) => z.key === snap.sizeKey);
+        if (i >= 0) { T.size = T.sizes[i]; const ss = $('sizeSel'); if (ss) ss.value = String(i); }
+      }
+      cutoutClip = normaliseCutoutClip(snap.cutoutClip) || cutoutClip;
+      if (snap.artColours) artColours = snap.artColours.slice();
+      if (snap.logo && T.logo) {
+        if (snap.logo.href) T.logo.href = snap.logo.href;
+        T.logo.custom = snap.logo.custom;
+        T.logo.fillPlate = snap.logo.fillPlate;
+      }
+
+      for (const t of snap.text) {
+        const f = (T.text || []).find((x) => x.id === t.id); if (!f) continue;
+        f.value = t.value;
+        if (t.colours) f.colours = t.colours.slice();
+        f.stroke = t.stroke; f.strokeScale = t.strokeScale; f.sizeScale = t.sizeScale;
+        f.rot = t.rot; f.linked = t.linked;
+        if (t.pos) f.pos = { x: t.pos.x, y: t.pos.y };
+      }
+      for (const b of snap.boxes) {
+        const box = (T.boxes || []).find((x) => x.id === b.id); if (!box) continue;
+        box.dx = b.dx; box.dy = b.dy;
+        if (b.fillColour) box.fillColour = b.fillColour;
+        if (b.shadowColour) box.shadowColour = b.shadowColour;
+      }
+
+      /* Panels. An entry that was cleared comes back from the side table --
+         the SAME object, so every key the server knows comes with it. */
+      for (const p of snap.panels) {
+        if (p.empty) {
+          const live = state.get(p.id);
+          if (live) { clearedPanels.set(p.id, live); state.delete(p.id); }
+          continue;
+        }
+        let s = state.get(p.id);
+        if (!s && clearedPanels.has(p.id)) { s = clearedPanels.get(p.id); state.set(p.id, s); }
+        if (!s) continue;
+        s.zoom = p.zoom; s.ox = p.ox; s.oy = p.oy;
+        s.cut = p.cut; s.tol = p.tol; s.feather = p.feather;
+        if (p.variant) s.variant = p.variant;
+      }
+
+      /* The redraw the builder already has. A sheet that changed shape goes
+         the whole way round, because the panels have to be re-fitted to it. */
+      if (sheetMoved) {
+        rebuildKeepingImages();
+      } else {
+        build(); rail();
+        for (const p of (T.panels || [])) {
+          const s = state.get(p.id), n = nodes[p.id];
+          if (!s || !n) continue;
+          n.img.setAttribute('href', srcFor(s));
+          n.img.setAttribute('opacity', s.uploadState && s.uploadState !== UPLOADED ? 0.45 : 1);
+          if (n.num) n.num.setAttribute('opacity', 0);
+          if (n.plate) n.plate.setAttribute('opacity', 0);
+          n.hit.classList.add('filled');
+          applyPanelClip(p.id); layout(p.id); drawSlotFlag(p.id);
+        }
+        applyTint(); layoutAllText(); placeLogo();
+        drawGuides(); drawFaceGuide();
+        nodes.handles = null; if (selected) drawHandles();
+      }
+      if (snap.bg) setBg(snap.bg);
+      /* Unconditionally: build() has just made fresh nodes, all of them
+         outlined in black, and `selected` still names the old one -- so a
+         guard on "has it changed" would leave nothing highlighted. */
+      if (snap.selected && nodes[snap.selected]) select(snap.selected);
+      refresh(); syncPanel(); syncUndoUI();
+    } finally { restoring = false; }
+  }
+
+  /** Are the two designs the same? Cheap, and only used to drop empty steps. */
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  /**
+   * Remember where we were, BEFORE the change that is about to happen.
+   *
+   * Called at the moment an action commits. A drag calls it once, on
+   * pointerup, with the position the finger started from -- which is why the
+   * snapshot is taken at the start of the gesture and only PUSHED at the end.
+   */
+  function commit(label, before) {
+    if (restoring || !T) return;
+    const prev = before || snapshot();
+    const now = snapshot();
+    if (!prev || !now || same(prev, now)) return false;
+    undoStack.push({ label, snap: prev });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack.length = 0;          // a new move ends the future that was there
+    syncUndoUI();
+    return true;
+  }
+
+  /** A gesture: take the before now, push it when the hand comes off. */
+  const beginStep = () => snapshot();
+  const endStep = (label, before) => commit(label, before);
+
+  /* The design as it was when this burst of typing began. */
+  const typingBefores = new Map();
+  function typingBefore(id) {
+    if (!typingBefores.has(id)) typingBefores.set(id, snapshot());
+    return typingBefores.get(id);
+  }
+
+  /** Typing: one step per burst, not one per keystroke. */
+  function commitTyping(label, before) {
+    if (restoring) return;
+    if (typingTimer) clearTimeout(typingTimer);
+    if (!typingLabel) typingLabel = { label, before };
+    typingTimer = setTimeout(() => {
+      const held = typingLabel; typingLabel = null; typingTimer = null;
+      typingBefores.clear();
+      if (held) commit(held.label, held.before);
+    }, 400);
+  }
+  /** Anything else committing must not leave a half-finished word behind. */
+  function flushTyping() {
+    if (!typingTimer) return;
+    clearTimeout(typingTimer); typingTimer = null;
+    const held = typingLabel; typingLabel = null;
+    typingBefores.clear();
+    if (held) commit(held.label, held.before);
+  }
+
+  function undo() {
+    flushTyping();
+    if (!undoStack.length) return;
+    const step = undoStack.pop();
+    redoStack.push({ label: step.label, snap: snapshot() });
+    restore(step.snap);
+    syncUndoUI();
+  }
+  function redo() {
+    flushTyping();
+    if (!redoStack.length) return;
+    const step = redoStack.pop();
+    undoStack.push({ label: step.label, snap: snapshot() });
+    restore(step.snap);
+    syncUndoUI();
+  }
+
+  function syncUndoUI() {
+    const u = $('undoBtn'); if (u) u.disabled = !undoStack.length;
+    const r = $('redoBtn'); if (r) r.disabled = !redoStack.length;
+  }
+
+
+  /* ---------- working undo ---------- */
+
+  /* ---------- when a step is taken ----------
+
+     Rather than a commit() at the end of nineteen handlers -- which is
+     nineteen chances to forget one, and the forgotten one is always the one
+     somebody uses -- the design is photographed BEFORE an interaction and
+     compared after it. commit() drops a step whose before and after are the
+     same, so being generous here costs nothing: a click that changes nothing
+     records nothing.
+
+     The timing is what makes it one step rather than forty. A slider is armed
+     on pointerdown and fired on pointerup, so the hundred input events in
+     between are a single move. A button arms and fires on the same press. And
+     the photograph is held until a commit succeeds or six hundred milliseconds
+     pass with nothing happening, because a <select> does not always send a
+     pointerup this element can see. */
+  let pendingBefore = null, pendingClear = null;
+  const holdBefore = () => {
+    clearTimeout(pendingClear);
+    pendingClear = setTimeout(() => { pendingBefore = null; }, 600);
+  };
+  /* The view controls and undo itself: pressing Undo must not record pressing
+     Undo, which would bury the redo it just created. */
+  const noStep = (e) => !!(e.target && e.target.closest && e.target.closest('[data-no-undo]'));
+
+  const armStep = (e) => {
+    if (restoring || noStep(e)) return;
+    if (!pendingBefore) pendingBefore = snapshot();
+    holdBefore();
+  };
+  let stepScheduled = null;
+  const fireStep = (label) => {
+    if (restoring || !pendingBefore) return;
+    /* A slider sends pointerup AND change for one gesture, and a button sends
+       pointerup AND click. Both would otherwise book the same move twice --
+       once each, identical, so an undo would appear to do nothing. One per
+       photograph taken. */
+    if (stepScheduled === pendingBefore) return;
+    const before = pendingBefore;
+    stepScheduled = before;
+    /* Deferred, so the handler that is about to run has run. */
+    setTimeout(() => {
+      stepScheduled = null;
+      if (commit(label, before) && pendingBefore === before) pendingBefore = null;
+    }, 0);
+    holdBefore();
+  };
+
+  root.addEventListener('pointerdown', armStep, true);
+  root.addEventListener('keydown', (e) => { if (!typingInto(e.target)) armStep(e); }, true);
+  root.addEventListener('pointerup', (e) => { if (!noStep(e)) fireStep('drag'); }, true);
+  root.addEventListener('click', (e) => { if (!noStep(e)) fireStep('press'); }, true);
+  root.addEventListener('change', (e) => {
+    if (noStep(e)) return;
+    /* A text field commits on its own timer; letting this fire as well would
+       cut a sentence into two steps at the blur. */
+    if (typingInto(e.target) && e.target.type !== 'checkbox' && e.target.type !== 'range'
+      && e.target.type !== 'color') return;
+    armStep(e); fireStep('change');
+  }, true);
+
+  on('undoBtn', 'click', () => undo());
+  on('redoBtn', 'click', () => redo());
+
+  /** Is the caret in something the browser should undo for itself? */
+  const typingInto = (el) => !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+    || el.isContentEditable));
+
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = (e.key || '').toLowerCase();
+    if (key !== 'z' && key !== 'y') return;
+    /* A text field has its own undo, and taking it would be worse than not
+       offering one: somebody correcting a typo would lose the whole caption. */
+    if (typingInto(e.target)) return;
+    e.preventDefault();
+    if (key === 'y' || (key === 'z' && e.shiftKey)) redo(); else undo();
+  });
+
 
   /* ---------- working the view ---------- */
 
@@ -3525,6 +3853,10 @@ export function initProductBuilder() {
         const rows = explicitLines(inp.value, MAX_TEXT_LINES);
         if (inp.rows !== rows) inp.rows = rows;
         layoutText(f);
+        /* One step per burst of typing. The snapshot is taken at the FIRST
+           keystroke of the burst and pushed when the hands stop, so undo goes
+           back to before the word rather than before the letter. */
+        commitTyping(`text:${f.id}`, typingBefore(f.id));
       });
       row.appendChild(inp);
       if (f.boxRef) {
@@ -3682,6 +4014,11 @@ export function initProductBuilder() {
     s.tol = +$('tol').value; s.feather = +$('feather').value; if (s.cut) applyCut(selected);
   }));
   $('clear').addEventListener('click', () => {
+    /* Kept, not dropped. The object carries the upload key, the styled copy
+       and the cut-out -- all of it paid for -- so undo hands back this very
+       one rather than a fresh slot that would upload the photograph again. */
+    const held = state.get(selected);
+    if (held) clearedPanels.set(selected, held);
     state.delete(selected); const n = nodes[selected];
     n.img.setAttribute('opacity', 0); n.img.removeAttribute('href');
     if (n.num) n.num.setAttribute('opacity', 1);
