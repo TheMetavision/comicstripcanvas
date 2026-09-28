@@ -729,7 +729,12 @@ export function initProductBuilder() {
     // Size the board explicitly. Setting a width and a max-height together let the
     // browser clamp one without the other, which left the svg letterboxed inside.
     const stage = board.parentNode;
-    const sw2 = (stage.clientWidth || 1000) - 52, sh = (stage.clientHeight || 700) - 52;
+    /* The view controls sit UNDER the board now, in the same column, so the
+       height they take is height the board cannot have. Measured rather than
+       assumed, with a fallback for a headless run where nothing has a size. */
+    const bar = $('viewZoom');
+    const barH = bar ? (bar.offsetHeight || 34) + 8 : 0;
+    const sw2 = (stage.clientWidth || 1000) - 52, sh = (stage.clientHeight || 700) - 52 - barH;
     const k = Math.min(sw2 / extW, sh / extH) * rel;
     board.style.aspectRatio = 'auto';
     board.style.maxWidth = 'none'; board.style.maxHeight = 'none';
@@ -3149,6 +3154,12 @@ export function initProductBuilder() {
   function restore(snap) {
     if (!snap) return;
     restoring = true;
+    /* Where the caret was. A restore rebuilds the rail, so the field being
+       typed into is replaced by a new element -- and somebody who presses
+       Undo mid-sentence should not also lose their place in it. */
+    const focused = document.activeElement;
+    const caret = focused && focused.id && /^tx-/.test(focused.id)
+      ? { id: focused.id, at: focused.selectionStart } : null;
     try {
       const sheetMoved = snap.template !== TK
         || snap.fmt !== fmt
@@ -3227,6 +3238,16 @@ export function initProductBuilder() {
          guard on "has it changed" would leave nothing highlighted. */
       if (snap.selected && nodes[snap.selected]) select(snap.selected);
       refresh(); syncPanel(); syncUndoUI();
+      if (caret) {
+        const again = $(caret.id) || document.getElementById(caret.id);
+        if (again) {
+          try {
+            again.focus();
+            const at = Math.min(caret.at ?? again.value.length, again.value.length);
+            again.setSelectionRange(at, at);
+          } catch (e) { /* not focusable here */ }
+        }
+      }
     } finally { restoring = false; }
   }
 
@@ -3256,12 +3277,18 @@ export function initProductBuilder() {
   const beginStep = () => snapshot();
   const endStep = (label, before) => commit(label, before);
 
-  /* The design as it was when this burst of typing began. */
-  const typingBefores = new Map();
-  function typingBefore(id) {
-    if (!typingBefores.has(id)) typingBefores.set(id, snapshot());
-    return typingBefores.get(id);
-  }
+  /* The design as it was when this burst of typing began.
+ 
+     Taken on KEYDOWN, before the character lands. Taking it on `input` -- the
+     obvious place, since that is where the value is read -- is one keystroke
+     too late: the first letter of the burst is already in the field, so undo
+     went back to "ABCDE" + one letter instead of to "ABCDE", and the earliest
+     burst could never be undone at all. Typing ABCDE, XY and two backspaces
+     gave three steps that landed on ...ABCDEX, ...ABCDEX and ...EDITIONA
+     rather than the three the customer made. */
+  let typingBaseline = null;
+  const armTyping = () => { if (!restoring && !typingBaseline) typingBaseline = snapshot(); };
+  const typingBefore = () => typingBaseline || snapshot();
 
   /** Typing: one step per burst, not one per keystroke. */
   function commitTyping(label, before) {
@@ -3270,7 +3297,7 @@ export function initProductBuilder() {
     if (!typingLabel) typingLabel = { label, before };
     typingTimer = setTimeout(() => {
       const held = typingLabel; typingLabel = null; typingTimer = null;
-      typingBefores.clear();
+      typingBaseline = null;
       if (held) commit(held.label, held.before);
     }, 400);
   }
@@ -3279,7 +3306,7 @@ export function initProductBuilder() {
     if (!typingTimer) return;
     clearTimeout(typingTimer); typingTimer = null;
     const held = typingLabel; typingLabel = null;
-    typingBefores.clear();
+    typingBaseline = null;
     if (held) commit(held.label, held.before);
   }
 
@@ -3356,7 +3383,10 @@ export function initProductBuilder() {
   };
 
   root.addEventListener('pointerdown', armStep, true);
-  root.addEventListener('keydown', (e) => { if (!typingInto(e.target)) armStep(e); }, true);
+  root.addEventListener('keydown', (e) => {
+    /* In a text field this is the only moment BEFORE the character exists. */
+    if (typingInto(e.target)) armTyping(); else armStep(e);
+  }, true);
   root.addEventListener('pointerup', (e) => { if (!noStep(e)) fireStep('drag'); }, true);
   root.addEventListener('click', (e) => { if (!noStep(e)) fireStep('press'); }, true);
   root.addEventListener('change', (e) => {
@@ -3834,6 +3864,9 @@ export function initProductBuilder() {
       const inp = document.createElement('textarea');
       inp.value = f.value;
       inp.className = 'b-text';
+      /* Named, so an undo that rebuilds the rail can put the caret back in the
+         same field rather than dropping it on the floor mid-sentence. */
+      inp.id = `tx-${f.id}`;
       inp.rows = explicitLines(f.value, MAX_TEXT_LINES);
       inp.style.resize = 'none';
       inp.style.overflow = 'hidden';
@@ -3856,7 +3889,7 @@ export function initProductBuilder() {
         /* One step per burst of typing. The snapshot is taken at the FIRST
            keystroke of the burst and pushed when the hands stop, so undo goes
            back to before the word rather than before the letter. */
-        commitTyping(`text:${f.id}`, typingBefore(f.id));
+        commitTyping(`text:${f.id}`, typingBefore());
       });
       row.appendChild(inp);
       if (f.boxRef) {

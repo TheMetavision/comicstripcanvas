@@ -394,5 +394,128 @@ for (const [slug, label] of [
   } finally { b.close(); }
 }
 
+
+/* ══════════════════════════════════ 8. typing, as a keyboard sends it */
+
+say('\n8. TYPING LIKE A PERSON\n');
+{
+  const b = await open('personalised-book-covers', 'typing');
+  try {
+    const field = () => b.root.querySelector('textarea, input[type="text"]');
+    const typeChar = async (ch, ms = 110) => {
+      const el = field();
+      b.fireOn(el, 'keydown', { key: ch });
+      el.value += ch;
+      b.fireOn(el, 'input');
+      b.fireOn(el, 'keyup', { key: ch });
+      await tick(ms);
+    };
+    const backspace = async (ms = 110) => {
+      const el = field();
+      b.fireOn(el, 'keydown', { key: 'Backspace' });
+      el.value = el.value.slice(0, -1);
+      b.fireOn(el, 'input');
+      b.fireOn(el, 'keyup', { key: 'Backspace' });
+      await tick(ms);
+    };
+
+    const start = field().value;
+    for (const ch of 'ABCDE') await typeChar(ch);
+    await tick(600);
+    const afterOne = field().value;
+    for (const ch of 'XY') await typeChar(ch, 130);
+    await tick(600);
+    const afterTwo = field().value;
+    await backspace(); await backspace();
+    await tick(600);
+    const afterThree = field().value;
+
+    ok(afterOne === start + 'ABCDE', 'the letters arrived', JSON.stringify(afterOne.slice(-8)));
+
+    /* Three bursts separated by pauses longer than the 400ms timer: three
+       steps, each landing on the text as it was before that burst began. */
+    b.click(b.$('undoBtn')); await tick(120);
+    ok(field().value === afterTwo, 'undo 1 goes back to before the deletions',
+      JSON.stringify(field().value.slice(-10)));
+    b.click(b.$('undoBtn')); await tick(120);
+    ok(field().value === afterOne, 'undo 2 goes back to before the second burst',
+      JSON.stringify(field().value.slice(-10)));
+    b.click(b.$('undoBtn')); await tick(120);
+    ok(field().value === start, 'undo 3 goes back to before the first — all the way home',
+      JSON.stringify(field().value.slice(-10)));
+
+    /* And forward again. */
+    b.click(b.$('redoBtn')); await tick(120);
+    ok(field().value === afterOne, 'redo 1 walks forward');
+    b.click(b.$('redoBtn')); await tick(120);
+    ok(field().value === afterTwo, 'redo 2');
+    b.click(b.$('redoBtn')); await tick(120);
+    ok(field().value === afterThree, 'redo 3 arrives where the typing left off');
+
+    /* The button works with the caret still in the field, and gives it back. */
+    const el = field();
+    Object.defineProperty(b.doc, 'activeElement', { value: el, configurable: true });
+    b.fireOn(el, 'keydown', { key: 'Z' });
+    el.value += 'Z';
+    b.fireOn(el, 'input');
+    await tick(80);                                   // still inside the burst
+    b.click(b.$('undoBtn')); await tick(150);
+    ok(field().value === afterThree,
+      'pressing Undo mid-burst commits it first, then undoes it', JSON.stringify(field().value.slice(-10)));
+  } finally { b.close(); }
+}
+
+/* ══════════════ 9. typing among other edits, undone one at a time */
+
+say('\n9. TYPING AMONG OTHER EDITS\n');
+{
+  const b = await open('personalised-book-covers', 'mixed');
+  try {
+    await addPhoto(b);
+    await tick(80);
+    while (b.canUndo()) { b.click(b.$('undoBtn')); await tick(20); }
+
+    const marks = [await b.recipeOf()];
+    const field = () => b.root.querySelector('textarea, input[type="text"]');
+
+    /* Four different kinds of edit, in order. */
+    for (const ch of 'HI') {
+      const el = field();
+      b.fireOn(el, 'keydown', { key: ch });
+      el.value += ch; b.fireOn(el, 'input'); b.fireOn(el, 'keyup', { key: ch });
+      await tick(120);
+    }
+    await tick(600);
+    marks.push(await b.recipeOf());
+
+    await b.drag(b.svg.querySelector('.hit'), { x: 300, y: 300 }, 60, 40);
+    marks.push(await b.recipeOf());
+
+    await b.setControl(b.$('zoom'), '1.7');
+    marks.push(await b.recipeOf());
+
+    await b.press(b.$('reset'));
+    marks.push(await b.recipeOf());
+
+    const steps = marks.length - 1;
+    say(`  ${steps} edits made`);
+    let back = 0;
+    for (let i = marks.length - 2; i >= 0; i--) {
+      if (!b.canUndo()) break;
+      b.click(b.$('undoBtn')); await tick(120);
+      back++;
+      ok((await b.recipeOf()) === marks[i],
+        `undo ${back} lands exactly on the design before edit ${i + 1}`);
+    }
+    ok(back === steps, 'every edit was undoable, one at a time', `${back} of ${steps}`);
+    ok(!b.canUndo(), 'and the history is empty at the start');
+
+    for (let i = 1; i < marks.length; i++) {
+      b.click(b.$('redoBtn')); await tick(120);
+      ok((await b.recipeOf()) === marks[i], `redo ${i} walks forward to edit ${i}`);
+    }
+  } finally { b.close(); }
+}
+
 say(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
