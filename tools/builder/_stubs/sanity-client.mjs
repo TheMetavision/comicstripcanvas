@@ -94,11 +94,21 @@ function patchBuilder(id) {
     },
     unset(paths) { ops.unset.push(...paths); return api; },
     append(path, items) { ops.appends.push([path, items]); return api; },
-    ifRevisionId() { return api; },
+    /* Honoured, not swallowed. This used to return `api` and forget the
+       revision, which meant any handler relying on optimistic concurrency was
+       tested against a stub that could not refuse anything -- the assertion
+       would pass whether the guard was there or not. Mirrors the ifRevisionID
+       option on client.patch() below; the real client offers both spellings. */
+    ifRevisionId(rev) { ops.ifRevisionId = rev; return api; },
     async commit() {
       if (failures.patch) throw new Error('stub: patch refused');
       const doc = docs.get(id);
       if (!doc) throw new Error(`stub: no document ${id} to patch`);
+      if (ops.ifRevisionId && doc._rev !== ops.ifRevisionId) {
+        const err = new Error('stub: revision mismatch');
+        err.statusCode = 409;
+        throw err;
+      }
       applyPatch(doc, ops);
       doc._rev = `rev-${Math.random().toString(16).slice(2, 8)}`;
       return clone(doc);

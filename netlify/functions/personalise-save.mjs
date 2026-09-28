@@ -84,6 +84,51 @@ const isPanelId = (s) => typeof s === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(s
 
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
 
+/**
+ * The only status in which a build may still be written to.
+ *
+ * Everything past `draft` means somebody has paid: the webhook stamps `paid`,
+ * the renderer moves through `preparing` and `rendered`, a reviewer `approved`,
+ * the customer `in_production`, and `on_hold` is a build a reviewer has stopped
+ * to look at. `awaiting_payment` counts as locked too -- the fee was read off
+ * the product when the Stripe session was made, and a design that changes
+ * between the session and the payment is one nobody agreed a price for.
+ *
+ * This endpoint is public. It has to be: the photographs come from a browser
+ * with no account behind it, and the id is the only thing identifying a build.
+ * That is fine while the only thing anyone can do with an id is finish a design
+ * they are already making -- and it stops being fine the moment the design has
+ * been bought, because from then on the document is the record of what was
+ * sold, what was rendered, and what a reviewer approved. Anyone holding the id
+ * of a paid build could otherwise rewrite its wording or swap a photograph
+ * after approval, and the print file is rebuilt from the scene, so the change
+ * would reach the press without appearing on any proof anybody had seen.
+ *
+ * An absent status is refused with the rest. Only three documents have ever
+ * lacked one -- May and June 2026, no photographs, no scene -- and none of them
+ * can be addressed here anyway: their ids predate the pp-<32 hex> shape isId()
+ * requires. So there is nothing to be gained by guessing on a missing field.
+ */
+const WRITABLE_STATUS = 'draft';
+
+/**
+ * Refuse a write to a build that is no longer the customer's to change.
+ *
+ * 409 rather than 403: nothing is wrong with the request or the caller, the
+ * document is simply past the point where this is allowed. The message says
+ * what to do instead, because replying to the order email is genuinely the
+ * route -- there is no self-service way to change a paid build.
+ */
+function locked(id, status, what) {
+  console.warn(`personalise-save: refused ${what} on ${id} — status is ${JSON.stringify(status ?? null)}`);
+  return json({
+    error: 'This design has already been paid for, so it cannot be changed here. '
+      + 'Reply to your order email and we will sort out any changes before anything is printed.',
+    locked: true,
+    status: status ?? null,
+  }, 409);
+}
+
 export default async (req, context) => {
   if (req.method !== 'POST') {
     return json({ error: 'Method not allowed' }, 405);
@@ -224,9 +269,19 @@ async function savePhoto(form, file, req, context) {
   // rather than accumulating.
   const key = `personalisation/${id}/${panelId}.${EXT[type]}`;
 
+  /* Hoisted, because the revision read here is the one the patch below locks
+     against. */
+  let existing = null;
   if (!creating) {
-    const existing = await sanity.fetch('*[_id == $id][0]{ photoKeys }', { id });
+    existing = await sanity.fetch('*[_id == $id][0]{ _rev, status, photoKeys }', { id });
     if (!existing) return json({ error: 'Unknown personalisation' }, 404);
+    /* BEFORE the blob is written, not after. The key is deterministic per
+       panel, so a photo stored and then refused would already have overwritten
+       the paid build's own photograph -- the refusal has to come first to mean
+       anything. */
+    if (existing.status !== WRITABLE_STATUS) {
+      return locked(id, existing.status, `a photo for ${panelId}`);
+    }
     const keys = existing.photoKeys || [];
     if (!keys.includes(key) && keys.length >= MAX_PHOTOS) {
       return json({ error: `No more than ${MAX_PHOTOS} photos` }, 400);
@@ -301,9 +356,15 @@ async function savePhoto(form, file, req, context) {
 
          unset-then-insert in each keeps it idempotent when a panel is
          re-uploaded. */
+      /* ifRevisionId on the FIRST patch only. The transaction is atomic, so a
+         failed precondition there takes the whole thing down and neither patch
+         applies -- which is the guarantee wanted. Putting it on both would
+         conflict with itself: the second patch would be checked against a
+         revision the first one had just moved on from. */
       await sanity
         .transaction()
         .patch(id, (p) => p
+          .ifRevisionId(existing._rev)
           .setIfMissing({ photoKeys: [], styleCalls: 0 })
           /* setIfMissing, not set: the recipe is the authority on the template
              and finalise() may already have written it. */
@@ -531,8 +592,16 @@ async function saveThumb(form, file) {
     return json({ error: 'Thumbnail is too large' }, 413);
   }
 
-  const existing = await sanity.fetch('*[_id == $id][0]{ _id }', { id });
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id, status }', { id });
   if (!existing) return json({ error: 'Unknown personalisation' }, 404);
+  /* No design data in a thumbnail, and no patch here at all -- but the key is
+     fixed, so this would still replace the picture the Studio and the
+     personalisation queue show for a paid build with whatever was posted.
+     Locked with the rest; the builder only ever sends this moments after Add to
+     basket, while the build is still a draft. */
+  if (existing.status !== WRITABLE_STATUS) {
+    return locked(id, existing.status, 'a basket thumbnail');
+  }
 
   const key = `personalisation/${id}/thumb.jpg`;
   await getStore(STORE).set(key, buf, {
@@ -676,7 +745,11 @@ async function saveCustomise(form) {
     return json({ error: 'The artwork cannot be moved or resized on this design' }, 422);
   }
 
-  /* ---- write it ---- */
+  /* ---- write it ----
+     No status check on this path, and deliberately: the id is minted here and
+     the write is a create, so there is no existing document to protect. A
+     create against an id that somehow already existed fails rather than
+     overwriting. Nothing off the wire reaches this id. */
   const id = newId();
   const out = recipe.output || {};
   try {
@@ -742,8 +815,15 @@ async function finalise(form) {
     return json({ error: 'Recipe is missing its template' }, 400);
   }
 
-  const existing = await sanity.fetch('*[_id == $id][0]{ _id, photoKeys, photos }', { id });
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id, _rev, status, photoKeys, photos }', { id });
   if (!existing) return json({ error: 'Unknown personalisation' }, 404);
+  /* The whole design in one patch -- recipe, scene, wording, the panel
+     arrangement -- so this is the write that mattered: without this check a
+     paid build could be given different artwork through a public endpoint, and
+     the print file is keyed on the scene, so the press would get it. */
+  if (existing.status !== WRITABLE_STATUS) {
+    return locked(id, existing.status, 'a finalise');
+  }
   if (!(existing.photoKeys || []).length) {
     return json({ error: 'No photos have been uploaded yet' }, 400);
   }
@@ -788,7 +868,7 @@ async function finalise(form) {
   // omit rather than send null -- an absent field reads better in the Studio
   if (dpis.length) set.minEffectiveDpi = Math.min(...dpis);
 
-  await sanity.patch(id).set(set).commit();
+  await sanity.patch(id).ifRevisionId(existing._rev).set(set).commit();
   return json({ id });
 }
 

@@ -1808,6 +1808,236 @@ say('\n22. THE ORPHAN SWEEP AT ONE DAY\n');
     r.orphaned[0]?.age);
 }
 
+/* ═══════════════ 23. A BUILD THAT HAS BEEN PAID FOR IS CLOSED */
+
+say('\n23. ONCE IT IS PAID FOR, THE DESIGN IS FIXED\n');
+
+/** The finalise call, exactly as Add to basket sends it. */
+const finaliseRequest = (id, recipe, notes = '') => {
+  const form = new FormData();
+  form.set('id', id);
+  form.set('recipe', JSON.stringify(recipe));
+  if (notes) form.set('notes', notes);
+  return new Request('https://test.local/api/personalise-save', { method: 'POST', body: form });
+};
+const RECIPE = {
+  template: 'cover',
+  svg: '<svg viewBox="0 0 100 100"><text>THE ORIGINAL</text></svg>',
+  output: { format: 'standard', faceInches: [16, 24] },
+  panels: [{ id: 'art', effectiveDpi: 180 }],
+  text: [{ id: 'title', value: 'THE ORIGINAL' }],
+};
+const REWRITE = {
+  ...RECIPE,
+  svg: '<svg viewBox="0 0 100 100"><text>REWRITTEN AFTER PAYMENT</text></svg>',
+  text: [{ id: 'title', value: 'REWRITTEN AFTER PAYMENT' }],
+};
+const finalise = async (id, recipe = RECIPE) => {
+  const res = await personaliseSave(finaliseRequest(id, recipe), { ip: '203.0.113.7' });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+};
+
+/* A draft, the way the upload path leaves one. */
+async function seedDraft(status = 'draft', id = `pp-${'a'.repeat(32)}`) {
+  const rawKey = `personalisation/${id}/art.jpg`;
+  sanityStub.docs.set(id, {
+    _id: id, _type: 'pendingPersonalisation', _rev: 'rev-seed',
+    ...(status === null ? {} : { status }),
+    templateId: 'cover', styleSize: '4K', styleCalls: 0,
+    guardKey: 'vtesthash00000001', origin: 'customer',
+    photoKeys: [rawKey],
+    photos: [{ _type: 'styledPhoto', panel: 'art', rawKey, styleStatus: 'done' }],
+    recipe: JSON.stringify({ template: 'cover', text: [{ id: 'title', value: 'THE ORIGINAL' }] }),
+    sceneSvg: RECIPE.svg,
+  });
+  await blobStub.getStore('personalisation').set(rawKey, Buffer.from(JPEG).buffer);
+  return { id, rawKey };
+}
+
+/* ---- a draft is still the customer's to change ---- */
+{
+  resetAll();
+  const { id } = await seedDraft('draft');
+  const r = await finalise(id, REWRITE);
+  ok(r.status === 200, 'a DRAFT accepts finalise', `${r.status} ${JSON.stringify(r.body)}`);
+  const doc = sanityStub.docs.get(id);
+  ok(doc.sceneSvg === REWRITE.svg, 'and the new scene is stored');
+  ok(doc.printSize === '16 × 24 in', 'with the print size off the recipe', doc.printSize);
+  ok(doc.minEffectiveDpi === 180, 'and the worst dpi', String(doc.minEffectiveDpi));
+  ok(doc.status === 'draft', 'the status is left alone', doc.status);
+}
+
+/* ---- every other status refuses, and changes nothing ---- */
+const LOCKED_STATUSES = [
+  'awaiting_payment', 'paid', 'preparing', 'rendered',
+  'approved', 'in_production', 'dispatched', 'on_hold',
+];
+
+for (const status of LOCKED_STATUSES) {
+  resetAll();
+  const { id } = await seedDraft(status);
+  const before = JSON.stringify(sanityStub.docs.get(id));
+
+  const r = await finalise(id, REWRITE);
+  const after = sanityStub.docs.get(id);
+  ok(r.status === 409, `finalise on "${status}" is refused with 409`, String(r.status));
+  ok(r.body.locked === true && r.body.status === status,
+    `  and says which status refused it`, JSON.stringify(r.body.status));
+  ok(/already been paid for/i.test(r.body.error || ''),
+    '  with a message that says what to do instead');
+  ok(JSON.stringify(after) === before, `  and "${status}" is byte-identical afterwards`);
+  ok(after.sceneSvg === RECIPE.svg, '  the original scene survives');
+}
+
+/* ---- a status nobody set is refused too ---- */
+{
+  resetAll();
+  const { id } = await seedDraft(null);
+  const before = JSON.stringify(sanityStub.docs.get(id));
+  const r = await finalise(id, REWRITE);
+  ok(r.status === 409, 'a document with NO status is refused as well', String(r.status));
+  ok(r.body.status === null, '  and reports the absence rather than inventing one',
+    JSON.stringify(r.body.status));
+  ok(JSON.stringify(sanityStub.docs.get(id)) === before, '  unchanged');
+}
+
+/* ---- a photo cannot be swapped in either, and the blob is not touched ---- */
+for (const status of ['paid', 'rendered', 'in_production']) {
+  resetAll();
+  const { id, rawKey } = await seedDraft(status);
+  const wasBytes = Buffer.from(blobStub.dump('personalisation')[rawKey] || []).length;
+  const before = JSON.stringify(sanityStub.docs.get(id));
+  /* resetAll does not clear this -- the upload() helper does, and this test
+     calls the handler directly -- so without it the assertion below would be
+     reading a styling trigger from an earlier section. */
+  triggers = [];
+
+  const [req, ctx] = uploadRequest({ id, panelId: 'art', templateId: 'cover' });
+  const res = await personaliseSave(req, ctx);
+  const body = await res.json().catch(() => ({}));
+
+  ok(res.status === 409, `a photo posted to "${status}" is refused`, String(res.status));
+  ok(body.locked === true, '  as locked');
+  ok(JSON.stringify(sanityStub.docs.get(id)) === before, '  the document is unchanged');
+  /* The point of refusing before the store write: the key is deterministic per
+     panel, so a refusal that came after it would already have replaced the
+     photograph that was actually bought. */
+  const nowBytes = Buffer.from(blobStub.dump('personalisation')[rawKey] || []).length;
+  ok(nowBytes === wasBytes, '  and the paid photograph was NOT overwritten',
+    `${wasBytes} -> ${nowBytes} bytes`);
+  ok(triggers.length === 0, '  no styling was triggered', String(triggers.length));
+}
+
+/* ---- nor a basket thumbnail ---- */
+{
+  resetAll();
+  const { id } = await seedDraft('approved');
+  const form = new FormData();
+  form.set('id', id);
+  form.set('thumb', new Blob([JPEG], { type: 'image/jpeg' }), 'thumb.jpg');
+  const res = await personaliseSave(
+    new Request('https://test.local/api/personalise-save', { method: 'POST', body: form }), {});
+  ok(res.status === 409, 'a thumbnail for an approved build is refused', String(res.status));
+  ok(!blobStub.dump('personalisation')[`personalisation/${id}/thumb.jpg`],
+    '  and nothing was written to the thumbnail key');
+}
+
+/* ---- the revision lock, which is the other half ----
+
+   The status check stops a build being edited after payment. This stops one
+   being edited DURING the moment payment lands: finalise reads the document,
+   then writes it, and the webhook patches the same document in between. Without
+   a precondition the write would put back a status read before the webhook ran.
+
+   Driven through the same stubbed client the handler uses, so the assertion is
+   about the mechanism the handler relies on rather than a re-implementation of
+   it. The stub honours ifRevisionId -- it used to ignore it, which is why this
+   is worth asserting at all. */
+{
+  resetAll();
+  const { id } = await seedDraft('draft');
+  const client = sanityStub.createClient();
+  const stale = sanityStub.docs.get(id)._rev;
+
+  /* Something else writes first. */
+  await client.patch(id).set({ status: 'paid' }).commit();
+  const moved = sanityStub.docs.get(id)._rev;
+  ok(moved !== stale, 'a concurrent write moves the revision on', `${stale} -> ${moved}`);
+
+  let conflict = null;
+  try {
+    await client.patch(id).ifRevisionId(stale).set({ sceneSvg: 'clobbered' }).commit();
+  } catch (e) { conflict = e; }
+  ok(conflict && conflict.statusCode === 409,
+    'and a patch holding the old revision is refused', conflict ? conflict.message : 'it was ALLOWED');
+  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg, '  the scene was not clobbered');
+  ok(sanityStub.docs.get(id).status === 'paid', '  and the newer status stands', sanityStub.docs.get(id).status);
+
+  /* And the same patch with the CURRENT revision goes through, so the guard is
+     a precondition rather than a blanket refusal. */
+  let allowed = true;
+  try {
+    await client.patch(id).ifRevisionId(sanityStub.docs.get(id)._rev).set({ customerNotes: 'ok' }).commit();
+  } catch { allowed = false; }
+  ok(allowed, 'while the same patch with the current revision is applied');
+}
+
+/* ---- and the whole customer journey still runs: build, finalise, pay ---- */
+{
+  resetAll();
+  const up = await upload({ panelId: 'art', templateId: 'cover' });
+  ok(up.status === 200, 'build: the first photo creates the document', String(up.status));
+  const id = up.body.id;
+  ok(sanityStub.docs.get(id).status === 'draft', '  as a draft',
+    sanityStub.docs.get(id).status);
+
+  const fin = await finalise(id, RECIPE);
+  ok(fin.status === 200, 'finalise: the brief is accepted', `${fin.status} ${JSON.stringify(fin.body)}`);
+  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg, '  and the scene is stored');
+
+  const session = seedPaidSessionWithBuild(id, 'cs_test_lock_flow');
+  const r = await postWebhook(stripeEvent('checkout.session.completed', session));
+  ok(r.status === 200, 'pay: the webhook accepts the session', `${r.status} ${r.text}`);
+  const paid = sanityStub.docs.get(id);
+  ok(paid.status === 'paid', '  and the build is marked paid', paid.status);
+  ok(!!paid.orderNumber, '  with its order number', paid.orderNumber);
+  ok(renders.length === 1, '  and its render was asked for', String(renders.length));
+
+  /* From here the door is shut -- which is the whole point. */
+  const after = await finalise(id, REWRITE);
+  ok(after.status === 409, 'and now the same finalise is refused', String(after.status));
+  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg,
+    '  the design that was paid for is what remains');
+
+  /* ---- and the email the customer just got describes THIS flow ---- */
+  const mail = resendStub.sent.find((m) => (m.to || []).includes('buyer@test.local'));
+  ok(!!mail, 'the customer was emailed a confirmation');
+  const html = mail?.html || '';
+  ok(/proof to approve/i.test(html), '  which promises a proof to approve');
+  ok(/nothing is printed until you/i.test(html), '  and says nothing prints before they approve');
+  ok(/once you.{0,3}ve approved your proof/i.test(html),
+    '  and starts the 7-10 days at approval, not at payment');
+  ok(!/our artists will create your custom artwork/i.test(html),
+    '  and no longer claims the artwork goes straight to print');
+  ok(/your proof will be with you shortly/i.test(html),
+    '  the closing line names the proof as the next email');
+  ok(!/We'll send you another email when your order has been dispatched\./i.test(html),
+    '  rather than the dispatch note');
+}
+
+/* ---- a plain stock order keeps its own wording ---- */
+{
+  resetAll();
+  const session = seedPaidSessionWithBuild(null, 'cs_test_stock_copy');
+  await postWebhook(stripeEvent('checkout.session.completed', session));
+  const mail = resendStub.sent.find((m) => (m.to || []).includes('buyer@test.local'));
+  const html = mail?.html || '';
+  ok(/3-6 working days/.test(html), 'a stock order still quotes 3-6 working days');
+  ok(!/proof/i.test(html), '  and says nothing about a proof — there is not one');
+  ok(/another email when your order has been dispatched/i.test(html),
+    '  with dispatch as the next email');
+}
+
 globalThis.fetch = realFetch;
 say(`\n${pass} passed, ${fail} failed.`);
 process.exitCode = fail ? 1 : 0;

@@ -653,13 +653,28 @@ async function fulfilOrder(session) {
       };
 
       // ── Send customer confirmation email ──────────────────────
-      // Personalised orders get a Strip-aware intro line — strips don't mention
-      // Name/Title or Caption because those fields aren't collected for strips.
+      /* Personalised orders get a Strip-aware intro line — strips don't mention
+         Name/Title or Caption because those fields aren't collected for strips.
+
+         Both personalised lines used to say the artists would create the
+         artwork and then print and dispatch it, which skipped the step the
+         customer has to take part in: every personalised build is rendered, a
+         reviewer sends a proof, and NOTHING is printed until the customer
+         clicks approve. A customer told to expect a print in 7-10 days is not
+         watching for a proof email, and the order sits in `rendered` waiting
+         for them. The timescale now starts where it really starts — at
+         approval. */
       const customerIntroText = !isPersonalised
         ? 'Your order has been received and is being prepared. All our products are made to order, so please allow <strong>3-6 working days</strong> for dispatch, plus 1-2 working days for delivery.'
         : isStrip
-        ? 'Your personalised comic strip order has been received! Our artists will arrange your 12 photos across the strip panels, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>, plus 1-2 working days for delivery.'
-        : 'Your personalised order has been received! Our artists will create your custom artwork, then print and dispatch your order within <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong>, plus 1-2 working days for delivery.';
+        ? 'Your personalised comic strip order has been received! We\'ll arrange your 12 photos across the strip panels and email you a proof to approve — <strong>nothing is printed until you\'re happy with it</strong>. Once you\'ve approved your proof, please allow <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong> for printing and dispatch, plus 1-2 working days for delivery.'
+        : 'Your personalised order has been received! We\'ll check your design over and email you a proof to approve — <strong>nothing is printed until you\'re happy with it</strong>. Once you\'ve approved your proof, please allow <strong style="color: ' + BRAND.cyan + ';">7-10 working days</strong> for printing and dispatch, plus 1-2 working days for delivery.';
+
+      /* The closing line names the next email that will arrive. For a
+         personalised order that is the proof, not the dispatch note. */
+      const nextEmailText = isPersonalised
+        ? 'Keep an eye on your inbox — your proof will be with you shortly, and we\'ll email again once your order has been dispatched. If you have any questions, or you\'d like something changed, just reply to this email.'
+        : 'We\'ll send you another email when your order has been dispatched. If you have any questions, just reply to this email.';
 
       if (emailLooksValid) {
       try {
@@ -687,7 +702,7 @@ async function fulfilOrder(session) {
                 ${shippingBlock}
 
                 <p style="color: #888; line-height: 1.6; margin: 24px 0 0; font-size: 13px;">
-                  We'll send you another email when your order has been dispatched. If you have any questions, just reply to this email.
+                  ${nextEmailText}
                 </p>
                 
                 <p style="color: #aaa; margin-top: 24px; font-size: 12px;">
