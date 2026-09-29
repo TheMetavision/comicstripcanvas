@@ -410,6 +410,29 @@ say('\n8. NO PAGE OVERSTATES WHAT APPROVAL COSTS YOU\n');
     'the terms qualify it the same way');
   ok(/faulty, damaged or not as approved/i.test(terms),
     '  and name the route that stays open');
+
+  /* THE TERMS SAY IT TWICE, in two sections, and both have to carry the
+     carve-out. The personalised section was fixed with the returns policy; the
+     AI-interpretation paragraph further down still said approval made the order
+     "final" full stop, which is the same overstatement in shorter words and
+     sits immediately before the sentence explaining that an interpretation
+     differing from the photograph is not a fault. Exactly the place a customer
+     is deciding whether they have any comeback at all. */
+  ok(!/the order is final\./i.test(terms),
+    'and no section of the terms leaves "the order is final" standing alone');
+  const approvals = terms.match(/cannot be cancelled for a change of mind/gi) || [];
+  ok(approvals.length === 2,
+    '  both places that say it are qualified, not just the first',
+    `${approvals.length} occurrence(s)`);
+  ok(/your rights for faulty items are unaffected/i.test(terms),
+    '  the AI paragraph carries the same carve-out as the refund policy');
+
+  /* Folding that carve-out in left the closing sentence saying "faulty" twice.
+     What it uniquely covered -- statutory rights, and damaged goods -- had to
+     survive the fold rather than be tidied away with the duplication. */
+  ok(/Nothing here affects your statutory rights/i.test(terms),
+    '  statutory rights survive the rewrite');
+  ok(/damaged goods/i.test(terms), '  and so does our position on damaged goods');
 }
 
 say(`\n${pass} passed, ${fail} failed.`);
