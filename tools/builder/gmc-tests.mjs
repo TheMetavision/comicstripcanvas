@@ -258,40 +258,49 @@ say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
     'and the Stripe line says so in the same words as the site');
   ok(!/orders over £50/.test(checkout), '  with nothing left saying "over £50"');
 
-  /* Every page a customer reads, against both faults. */
-  const pages = [
-    'index.html', 'services/index.html', 'store/index.html',
-    'store/personalised/index.html', 'store/comic-book-icons/index.html',
-    'store/comic-book-strips/index.html', 'store/comic-book-covers/index.html',
-    'shipping-policy/index.html', 'terms-and-conditions/index.html',
-    'refund-policy/index.html', 'order-confirmation/index.html',
-  ];
+  /* EVERY built page, walked, rather than a list somebody remembered to write.
+     The list version missed /personalise/ and all five blog posts -- both of
+     which carry this copy, and neither of which I thought of. A hand-written
+     list of pages to check is a list of pages somebody has to keep correct
+     forever, and the one that matters is always the one not on it. */
+  const allPages = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name === 'index.html') allPages.push(path.relative(DIST, full).split(path.sep).join('/'));
+    }
+  })(DIST);
+
   const withMainland = [];
   const withOver = [];
-  const absent = [];
-  for (const rel of pages) {
-    /* order-confirmation is server-rendered and has no HTML in dist. Skipped
-       rather than crashed on, and NAMED, so a page quietly dropping out of the
-       build cannot make this section pass by checking nothing. */
-    if (!fs.existsSync(path.join(DIST, rel))) { absent.push(rel); continue; }
+  for (const rel of allPages) {
     const raw = read(rel);
     if (/mainland/i.test(raw)) withMainland.push(rel);
-    /* The phrase, not the number: "under GBP 50" and "GBP 50 and over" are both
-       fine and both contain the amount. */
+    /* The phrase, not the number: "under £50" and "£50 and over" are both fine
+       and both contain the amount. */
     if (/(over|above)\s*£50\b/i.test(text(raw))) withOver.push(rel);
   }
-  say(`  (${pages.length - absent.length} pages read${absent.length ? `, ${absent.length} server-rendered and skipped: ${absent.join(', ')}` : ''})`);
-  ok(pages.length - absent.length >= 10, 'most of the pages that price delivery are in dist',
-    `${pages.length - absent.length}/${pages.length}`);
+  say(`  (${allPages.length} built pages walked)`);
+  ok(allPages.length > 200, 'the whole build is being read, not a sample',
+    `${allPages.length} pages`);
 
   /* NOT ALL OF THIS COPY IS IN THIS REPOSITORY.
-     /services/ renders its FAQ from Sanity, and two faq documents still carry
-     the old wording -- so does every blog post. Those are content writes to the
-     live dataset, which is somebody's decision and not this branch's.
-     They are named rather than skipped: an exception list that has to be
-     correct is a gap somebody can act on, where a quiet filter is a gap nobody
-     ever sees again. Clear the two faq documents and this list goes with it. */
-  const FROM_SANITY = ['services/index.html'];
+     /services/ and /personalise/ render the same two faq documents, and the
+     five blog posts are Sanity documents too. Those are writes to the live
+     dataset, which is somebody's decision and not this branch's.
+     Named rather than filtered out: an exception list that has to be correct is
+     a gap somebody can act on, where a quiet skip is a gap nobody sees again.
+     update-shipping-wording.mjs covers all seven. */
+  const FROM_SANITY = [
+    'services/index.html',
+    'personalise/index.html',
+    'blog/canvas-vs-poster-prints/index.html',
+    'blog/choosing-the-right-size-canvas/index.html',
+    'blog/fathers-day-gift-ideas-sport-film-music-uk/index.html',
+    'blog/personalised-gifts-uk/index.html',
+    'blog/what-is-pop-art-wall-art/index.html',
+  ];
   const repoPages = (list) => list.filter((rel) => !FROM_SANITY.includes(rel));
   const sanityPages = (list) => list.filter((rel) => FROM_SANITY.includes(rel));
 
@@ -330,11 +339,11 @@ say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
      five pages look unfixed when they were not.
      Read from the raw HTML, because on most of these the promise is in the meta
      description, which stripping tags throws away. */
-  const promises = pages.filter((rel) => fs.existsSync(path.join(DIST, rel))
-    && /(FREE UK P&(amp;|#38;)?P on orders|FREE P&(amp;|#38;)?P on orders|free postage)/i.test(read(rel)));
+  const promises = allPages.filter((rel) =>
+    /(FREE UK P&(amp;|#38;)?P on orders|FREE P&(amp;|#38;)?P on orders|free postage)/i.test(read(rel)));
   const saysIt = promises.filter((rel) => /£50 and over/i.test(read(rel)));
-  ok(promises.length >= 8, 'most of these pages do promise free delivery',
-    `${promises.length} of ${pages.length}`);
+  ok(promises.length >= 8, 'a good number of pages do promise free delivery',
+    `${promises.length} of ${allPages.length}`);
   ok(repoPages(promises).every((rel) => saysIt.includes(rel)),
     'and every one written here says "£50 and over"',
     `${saysIt.length} of ${promises.length}`);
