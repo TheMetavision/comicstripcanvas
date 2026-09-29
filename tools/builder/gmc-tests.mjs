@@ -87,6 +87,18 @@ say('\n1. THE REFUND POLICY SAYS WHAT IT MUST\n');
   ok(/You approve your layout in the builder before ordering/i.test(t),
     'the proof-approval wording is kept');
 
+  /* APPROVAL ENDS THE CHANGE-OF-MIND ROUTE, NOT EVERY ROUTE.
+     It used to say approval meant the order "cannot be cancelled or refunded",
+     full stop -- which reads as: approve this and a faulty print is your
+     problem. It is not, and saying so was the one sentence on the page that
+     could talk somebody out of a right they have. */
+  ok(/printing begins\. The order cannot be cancelled for a change of mind once approved/i.test(t),
+    'approval ends the change-of-mind route');
+  ok(/your rights for faulty items are unaffected/i.test(t),
+    '  and says plainly that faults are not covered by that');
+  ok(!/cannot be cancelled or refunded/i.test(t),
+    '  with the unqualified version gone');
+
   /* And what must no longer be there: the blanket refusal. */
   ok(!/unable to accept returns or offer refunds for change of mind/i.test(t),
     'the blanket "no returns on anything" is gone');
@@ -364,6 +376,72 @@ say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
   const base = read('index.html');
   ok(!/Currently we ship to UK mainland/.test(base),
     'the FAQ structured data is updated with everything else');
+}
+
+/* ═════════ 8. one claim, checked across the whole build */
+
+say('\n8. NO PAGE OVERSTATES WHAT APPROVAL COSTS YOU\n');
+{
+  /* Its own walk, deliberately small and self-contained: this is one sentence
+     to keep out of the entire site, and it can appear on any page that talks
+     about proofs -- the refund policy, the terms, a FAQ answer rendered from
+     Sanity, a blog post. Checking a list of pages would be checking the pages
+     somebody remembered. */
+  const all = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name === 'index.html') all.push(path.relative(DIST, full).split(path.sep).join('/'));
+    }
+  })(DIST);
+
+  /* "cannot be cancelled or refunded" is the flat version, and the one that
+     talks somebody out of a right they have: approval ends the change-of-mind
+     route and touches nothing about a faulty print. */
+  const flat = all.filter((rel) => /cannot be cancelled or refunded/i.test(text(read(rel))));
+  ok(flat.length === 0,
+    `no page says approval means "cannot be cancelled or refunded" (${all.length} pages walked)`,
+    flat.join(', '));
+
+  /* And the qualified version is actually present, rather than the claim having
+     simply been deleted and the customer left to guess. */
+  const refund = text(read('refund-policy/index.html'));
+  ok(/cannot be cancelled for a change of mind once approved/i.test(refund),
+    'the refund policy still says what approval DOES end');
+  ok(/rights for faulty items are unaffected/i.test(refund), '  and what it does not');
+
+  /* The terms make the same claim in their own words and must carry the same
+     carve-out. This was fixed alongside the returns policy; asserted here so
+     the two cannot drift apart again. */
+  const terms = text(read('terms-and-conditions/index.html'));
+  ok(/cannot be cancelled for a change of mind/i.test(terms),
+    'the terms qualify it the same way');
+  ok(/faulty, damaged or not as approved/i.test(terms),
+    '  and name the route that stays open');
+
+  /* THE TERMS SAY IT TWICE, in two sections, and both have to carry the
+     carve-out. The personalised section was fixed with the returns policy; the
+     AI-interpretation paragraph further down still said approval made the order
+     "final" full stop, which is the same overstatement in shorter words and
+     sits immediately before the sentence explaining that an interpretation
+     differing from the photograph is not a fault. Exactly the place a customer
+     is deciding whether they have any comeback at all. */
+  ok(!/the order is final\./i.test(terms),
+    'and no section of the terms leaves "the order is final" standing alone');
+  const approvals = terms.match(/cannot be cancelled for a change of mind/gi) || [];
+  ok(approvals.length === 2,
+    '  both places that say it are qualified, not just the first',
+    `${approvals.length} occurrence(s)`);
+  ok(/your rights for faulty items are unaffected/i.test(terms),
+    '  the AI paragraph carries the same carve-out as the refund policy');
+
+  /* Folding that carve-out in left the closing sentence saying "faulty" twice.
+     What it uniquely covered -- statutory rights, and damaged goods -- had to
+     survive the fold rather than be tidied away with the duplication. */
+  ok(/Nothing here affects your statutory rights/i.test(terms),
+    '  statutory rights survive the rewrite');
+  ok(/damaged goods/i.test(terms), '  and so does our position on damaged goods');
 }
 
 say(`\n${pass} passed, ${fail} failed.`);
