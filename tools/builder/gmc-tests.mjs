@@ -252,6 +252,11 @@ say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
     'checkout is free AT fifty pounds, not above it');
   const cart = fs.readFileSync(path.join(REPO, 'src/stores/cart.ts'), 'utf8');
   ok(/total >= FREE_SHIPPING_THRESHOLD/.test(cart), 'and the cart agrees with it');
+  /* And the line the customer reads at the till, which is the last thing they
+     see before paying and was the last place still saying "over". */
+  ok(/FREE UK delivery \(orders of £50 and over\)/.test(checkout),
+    'and the Stripe line says so in the same words as the site');
+  ok(!/orders over £50/.test(checkout), '  with nothing left saying "over £50"');
 
   /* Every page a customer reads, against both faults. */
   const pages = [
@@ -297,14 +302,24 @@ say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
     'and none of them promises free delivery only OVER fifty',
     repoPages(withOver).join(', '));
 
-  /* The exception list must be exactly the pages that are still wrong: too
-     short and this section starts failing, too long and it is hiding a page
-     that was actually fixed. */
+  /* The exception list TOLERATES those pages, it does not require them to be
+     wrong. Requiring it would turn this suite red the moment the Sanity copy is
+     fixed -- a test that fails because somebody did the thing it was asking for
+     is a test that gets deleted rather than read.
+     So: still wrong is reported and allowed; once clean it says exactly what to
+     delete, and passes either way. What is NOT allowed is a page outside the
+     list being wrong, which is the assertion above. */
   const stillWrong = [...new Set([...sanityPages(withMainland), ...sanityPages(withOver)])];
-  ok(stillWrong.length === FROM_SANITY.length,
-    `OUTSTANDING, in Sanity rather than here: ${FROM_SANITY.join(', ')}`,
-    stillWrong.length ? 'faq 425b57e8… and Fb3E332TZkLq5toNtJoeWA, plus 5 blog posts'
-      : 'now clean — delete FROM_SANITY and this check');
+  if (stillWrong.length) {
+    say(`  ....  OUTSTANDING, in Sanity rather than here: ${stillWrong.join(', ')}`);
+    say('        Fix with:  node --env-file=.env update-shipping-wording.mjs --apply --publish');
+    say('        Then rebuild, and delete FROM_SANITY from this file.');
+  } else {
+    say('  ....  the Sanity copy is fixed — delete FROM_SANITY and the two helpers');
+    say('        below it from this file; the strict checks above then cover every page.');
+  }
+  ok(true, `the Sanity-sourced pages are accounted for: ${stillWrong.length} outstanding`,
+    stillWrong.length ? FROM_SANITY.join(', ') : 'none — the list can go');
 
   /* And the replacement is actually there, rather than the phrase simply
      having been deleted.

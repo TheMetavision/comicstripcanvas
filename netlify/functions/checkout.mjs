@@ -317,7 +317,7 @@ export default async (req, context) => {
               currency: 'gbp',
             },
             display_name: qualifiesForFreeShipping
-              ? 'FREE UK delivery (orders over £50)'
+              ? 'FREE UK delivery (orders of £50 and over)'
               : 'Standard UK delivery',
             delivery_estimate: {
               minimum: { unit: 'business_day', value: 4 },
