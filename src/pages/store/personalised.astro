@@ -31,7 +31,7 @@ const fees = await personalisationFees();
 
 <BaseLayout
   title="Personalised Comic Art UK"
-  description="Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Bespoke comic art, made to order in the UK. From £9.99. FREE UK P&P on orders over £50."
+  description="Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Bespoke comic art, made to order in the UK. From £9.99. FREE UK P&P on orders of £50 and over."
 >
 
   <!-- Breadcrumb -->
@@ -125,7 +125,7 @@ const fees = await personalisationFees();
         { step: '01', label: 'Choose Your Style', desc: 'Cover, Icon, or Strip — pick the format that suits your photo and your wall. Covers come in two styles: Classic for portraits, Full bleed for scenes.' },
         { step: '02', label: 'Upload Your Photo', desc: 'Drop your photo straight into the builder and position it yourself. Clear, well-lit photos work best.' },
         { step: '03', label: 'Approve Your Artwork', desc: 'We email your finished artwork within one working day. Nothing prints until you approve it.' },
-        { step: '04', label: 'It Arrives', desc: 'Printed and dispatched within 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95.' },
+        { step: '04', label: 'It Arrives', desc: 'Printed and dispatched within 3–6 working days. FREE UK P&P on orders of £50 and over, otherwise £4.95.' },
       ].map(({ step, label, desc }) => (
         <div class="flex flex-col items-center">
           <span class="text-5xl font-extrabold text-comic-red opacity-20 mb-2">{step}</span>
@@ -154,7 +154,7 @@ const fees = await personalisationFees();
       Choose from three formats: a <a href="/store/comic-book-covers/" class="text-comic-red font-semibold hover:underline">Comic Book Cover</a> that puts your subject centre stage, a <a href="/store/comic-book-icons/" class="text-comic-red font-semibold hover:underline">Comic Book Icon</a> with bold graphic impact, or a <a href="/store/comic-book-strips/" class="text-comic-red font-semibold hover:underline">Comic Book Strip</a> — a single canvas of twelve bold comic art images that tells the full story.
     </p>
     <p>
-      Poster prints start from £9.99. Canvas prints from £26.99. {feeSentence(fees)}. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.
+      Poster prints start from £9.99. Canvas prints from £26.99. {feeSentence(fees)}. FREE UK P&P on orders of £50 and over, otherwise £4.95 flat-rate UK delivery.
     </p>
   </section>
 
@@ -181,7 +181,7 @@ const fees = await personalisationFees();
         },
         {
           q: 'How long does a personalised canvas take to arrive?',
-          a: 'Your layout is instant. We email the finished artwork for approval, usually within one working day, and once you approve it production and dispatch takes 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery.',
+          a: 'Your layout is instant. We email the finished artwork for approval, usually within one working day, and once you approve it production and dispatch takes 3–6 working days. FREE UK P&P on orders of £50 and over, otherwise £4.95 flat-rate UK delivery.',
         },
         {
           q: 'How much does a personalised comic canvas cost?',
@@ -239,7 +239,7 @@ const fees = await personalisationFees();
       {
         "@type": "Question",
         "name": "How long does a personalised canvas take to arrive?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Your layout is instant. We email the finished artwork for approval, usually within one working day, and once you approve it production and dispatch takes 3–6 working days. FREE UK P&P on orders over £50, otherwise £4.95 flat-rate UK delivery." }
+        "acceptedAnswer": { "@type": "Answer", "text": "Your layout is instant. We email the finished artwork for approval, usually within one working day, and once you approve it production and dispatch takes 3–6 working days. FREE UK P&P on orders of £50 and over, otherwise £4.95 flat-rate UK delivery." }
       },
       {
         "@type": "Question",

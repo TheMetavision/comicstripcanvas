@@ -239,5 +239,108 @@ say('\n6. THE FEED\n');
   ok(!query.includes('/*'), 'the GROQ query carries no block comment');
 }
 
+/* ═════════ 7. one delivery promise, in one form of words */
+
+say('\n7. UK-WIDE, AND FREE AT FIFTY\n');
+{
+  /* WHY THE WORDING MATTERS AT THE BOUNDARY. Checkout gives free delivery when
+     the subtotal is >= 5000 pence, so a GBP 50.00 order ships free -- and
+     "free on orders OVER GBP 50" tells that customer the opposite. One word,
+     and the only place it shows is the till. */
+  const checkout = fs.readFileSync(path.join(REPO, 'netlify/functions/checkout.mjs'), 'utf8');
+  ok(/subtotalPence >= FREE_SHIPPING_THRESHOLD_PENCE/.test(checkout),
+    'checkout is free AT fifty pounds, not above it');
+  const cart = fs.readFileSync(path.join(REPO, 'src/stores/cart.ts'), 'utf8');
+  ok(/total >= FREE_SHIPPING_THRESHOLD/.test(cart), 'and the cart agrees with it');
+
+  /* Every page a customer reads, against both faults. */
+  const pages = [
+    'index.html', 'services/index.html', 'store/index.html',
+    'store/personalised/index.html', 'store/comic-book-icons/index.html',
+    'store/comic-book-strips/index.html', 'store/comic-book-covers/index.html',
+    'shipping-policy/index.html', 'terms-and-conditions/index.html',
+    'refund-policy/index.html', 'order-confirmation/index.html',
+  ];
+  const withMainland = [];
+  const withOver = [];
+  const absent = [];
+  for (const rel of pages) {
+    /* order-confirmation is server-rendered and has no HTML in dist. Skipped
+       rather than crashed on, and NAMED, so a page quietly dropping out of the
+       build cannot make this section pass by checking nothing. */
+    if (!fs.existsSync(path.join(DIST, rel))) { absent.push(rel); continue; }
+    const raw = read(rel);
+    if (/mainland/i.test(raw)) withMainland.push(rel);
+    /* The phrase, not the number: "under GBP 50" and "GBP 50 and over" are both
+       fine and both contain the amount. */
+    if (/(over|above)\s*£50\b/i.test(text(raw))) withOver.push(rel);
+  }
+  say(`  (${pages.length - absent.length} pages read${absent.length ? `, ${absent.length} server-rendered and skipped: ${absent.join(', ')}` : ''})`);
+  ok(pages.length - absent.length >= 10, 'most of the pages that price delivery are in dist',
+    `${pages.length - absent.length}/${pages.length}`);
+
+  /* NOT ALL OF THIS COPY IS IN THIS REPOSITORY.
+     /services/ renders its FAQ from Sanity, and two faq documents still carry
+     the old wording -- so does every blog post. Those are content writes to the
+     live dataset, which is somebody's decision and not this branch's.
+     They are named rather than skipped: an exception list that has to be
+     correct is a gap somebody can act on, where a quiet filter is a gap nobody
+     ever sees again. Clear the two faq documents and this list goes with it. */
+  const FROM_SANITY = ['services/index.html'];
+  const repoPages = (list) => list.filter((rel) => !FROM_SANITY.includes(rel));
+  const sanityPages = (list) => list.filter((rel) => FROM_SANITY.includes(rel));
+
+  ok(repoPages(withMainland).length === 0,
+    'no page written in this repo says "mainland" any more',
+    repoPages(withMainland).join(', '));
+  ok(repoPages(withOver).length === 0,
+    'and none of them promises free delivery only OVER fifty',
+    repoPages(withOver).join(', '));
+
+  /* The exception list must be exactly the pages that are still wrong: too
+     short and this section starts failing, too long and it is hiding a page
+     that was actually fixed. */
+  const stillWrong = [...new Set([...sanityPages(withMainland), ...sanityPages(withOver)])];
+  ok(stillWrong.length === FROM_SANITY.length,
+    `OUTSTANDING, in Sanity rather than here: ${FROM_SANITY.join(', ')}`,
+    stillWrong.length ? 'faq 425b57e8… and Fb3E332TZkLq5toNtJoeWA, plus 5 blog posts'
+      : 'now clean — delete FROM_SANITY and this check');
+
+  /* And the replacement is actually there, rather than the phrase simply
+     having been deleted.
+     Against the pages that PROMISE free delivery, not against every page that
+     contains "£50": the cart drawer is on all of them and its placeholder reads
+     "Add £50.00 more for FREE UK P&P", which promises nothing and is replaced
+     the moment anything is in the basket. Counting that as delivery copy made
+     five pages look unfixed when they were not.
+     Read from the raw HTML, because on most of these the promise is in the meta
+     description, which stripping tags throws away. */
+  const promises = pages.filter((rel) => fs.existsSync(path.join(DIST, rel))
+    && /(FREE UK P&(amp;|#38;)?P on orders|FREE P&(amp;|#38;)?P on orders|free postage)/i.test(read(rel)));
+  const saysIt = promises.filter((rel) => /£50 and over/i.test(read(rel)));
+  ok(promises.length >= 8, 'most of these pages do promise free delivery',
+    `${promises.length} of ${pages.length}`);
+  ok(repoPages(promises).every((rel) => saysIt.includes(rel)),
+    'and every one written here says "£50 and over"',
+    `${saysIt.length} of ${promises.length}`);
+
+  /* The shipping policy is the page people are sent to for the detail. */
+  const ship = text(read('shipping-policy/index.html'));
+  ok(/UK Delivery Rates/i.test(ship), 'the shipping policy heading is UK-wide');
+  ok(/FREE P&P on orders of £50 and over/i.test(ship), '  and states the threshold correctly');
+  ok(/anywhere in the UK/i.test(ship), '  and says the price is the same anywhere in the UK');
+  ok(/ship to UK addresses only/i.test(ship), '  and that we ship UK-wide');
+
+  /* llms.txt is copy too -- it is what a model repeats about the shop. */
+  const llms = fs.readFileSync(path.join(REPO, 'public/llms.txt'), 'utf8');
+  ok(!/mainland/i.test(llms), 'llms.txt drops "mainland"');
+  ok(/£50 and over/.test(llms), '  and uses the same wording as the site');
+
+  /* The structured data Google reads for the FAQ carries the same sentence. */
+  const base = read('index.html');
+  ok(!/Currently we ship to UK mainland/.test(base),
+    'the FAQ structured data is updated with everything else');
+}
+
 say(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
