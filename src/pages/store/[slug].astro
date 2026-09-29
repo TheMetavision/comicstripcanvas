@@ -137,6 +137,100 @@ if (builderTemplate && (typeof personalisationFee !== 'number' || !Number.isFini
 const personalisedFrom =
   personalisationFee !== undefined ? PRICES.poster.small + personalisationFee : undefined;
 
+/* ───────────────────────── Product schema ─────────────────────────
+ *
+ * One Offer per variant, not an AggregateOffer with a hardcoded 9.99-46.99.
+ * The old one said the same two numbers on every product in the shop, which was
+ * wrong twice over: a personalised product cannot be bought for 9.99 because the
+ * fee is not optional, and an aggregate gives Google no URL to send anybody to.
+ *
+ * Each offer carries the ?format=&size= link the shopping feed uses, and the
+ * page now reads those back (see preselectFromQuery), so the price in the
+ * schema, the price in the feed and the price on the landing page are one
+ * number arrived at three ways rather than three numbers that agree today.
+ */
+/* The keys, from the price table itself rather than written out again: a
+   fourth format added to PRICES appears in the schema without anybody
+   remembering this file. */
+const FORMAT_KEYS = Object.keys(PRICES) as ProductFormat[];
+const SIZE_KEYS = Object.keys(SIZES) as ProductSize[];
+/* Astro.site, so the canonical host is configured in one place. */
+const SITE_URL = (Astro.site ? String(Astro.site) : 'https://comicstripcanvas.co.uk/').replace(/\/$/, '');
+
+const feeForSchema = typeof personalisationFee === 'number' && Number.isFinite(personalisationFee)
+  ? personalisationFee
+  : 0;
+/* Valid through the end of next month. Google wants a date it can age out;
+   without one an offer is treated as indefinite and goes stale quietly. */
+const priceValidUntil = (() => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 2, 0);
+  return d.toISOString().slice(0, 10);
+})();
+/* The returns terms, in the schema, saying the same thing as /refund-policy/ and
+   as g:return_policy_label in the shopping feed. Google's merchant listing
+   guidance asks for it and the Rich Results test names it as missing without
+   one; more to the point, a personalised item and a plain print have different
+   answers and this is where a shopping surface reads them.
+
+   A personalised build is exempt from the change-of-mind right because it is
+   made to the customer's specification -- which is the law's own wording, not a
+   policy we chose -- so it is NotPermitted here. Everything else carries the
+   full 14 days, returned by post at the customer's cost. */
+const returnPolicy = builderTemplate
+  ? {
+    "@type": "MerchantReturnPolicy",
+    "applicableCountry": "GB",
+    "returnPolicyCategory": "https://schema.org/MerchantReturnNotPermitted",
+  }
+  : {
+    "@type": "MerchantReturnPolicy",
+    "applicableCountry": "GB",
+    "returnPolicyCategory": "https://schema.org/MerchantReturnFiniteReturnWindow",
+    "merchantReturnDays": 14,
+    "returnMethod": "https://schema.org/ReturnByMail",
+    "returnFees": "https://schema.org/ReturnShippingFees",
+  };
+
+/* Delivery, from the same numbers the terms page quotes: GBP 4.95 standard,
+   free over GBP 50, 3-6 working days to dispatch. */
+const shippingDetails = {
+  "@type": "OfferShippingDetails",
+  "shippingRate": { "@type": "MonetaryAmount", "value": "4.95", "currency": "GBP" },
+  "shippingDestination": { "@type": "DefinedRegion", "addressCountry": "GB" },
+  "deliveryTime": {
+    "@type": "ShippingDeliveryTime",
+    "handlingTime": { "@type": "QuantitativeValue", "minValue": 3, "maxValue": 6, "unitCode": "DAY" },
+    "transitTime": { "@type": "QuantitativeValue", "minValue": 1, "maxValue": 2, "unitCode": "DAY" },
+  },
+};
+
+const offers = FORMAT_KEYS.flatMap((format) =>
+  SIZE_KEYS.map((size) => ({
+    "@type": "Offer",
+    "name": `${FORMAT_LABELS[format]} — ${sizeLabelFor(size, orientation, 'x')}`,
+    "url": `${SITE_URL}/store/${product.slug}/?format=${format}&size=${size}`,
+    "price": (PRICES[format][size] + feeForSchema).toFixed(2),
+    "priceCurrency": "GBP",
+    "availability": "https://schema.org/InStock",
+    "itemCondition": "https://schema.org/NewCondition",
+    "priceValidUntil": priceValidUntil,
+    "seller": { "@type": "Organization", "name": "Comic Strip Canvas" },
+    "hasMerchantReturnPolicy": returnPolicy,
+    "shippingDetails": shippingDetails,
+  }))
+);
+const productSchema = {
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": product.title,
+  "description": product.seo?.metaDescription || product.description,
+  "image": mainImageUrl || undefined,
+  "sku": product.slug,
+  "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
+  "offers": offers,
+};
+
 const relatedProducts = product.relatedProducts || [];
 const seoTitle = product.seo?.metaTitle || product.title;
 const seoDesc = product.seo?.metaDescription || product.description;
@@ -395,23 +489,7 @@ const seoDesc = product.seo?.metaDescription || product.description;
     </section>
   )}
 
-  <script type="application/ld+json" set:html={JSON.stringify({
-    "@context": "https://schema.org",
-    "@type": "Product",
-    "name": product.title,
-    "description": product.seo?.metaDescription || product.description,
-    "image": mainImageUrl || undefined,
-    "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
-    "offers": {
-      "@type": "AggregateOffer",
-      "lowPrice": 9.99,
-      "highPrice": 46.99,
-      "priceCurrency": "GBP",
-      "offerCount": 9,
-      "availability": "https://schema.org/InStock",
-      "seller": { "@type": "Organization", "name": "Comic Strip Canvas" }
-    }
-  })}></script>
+  <script type="application/ld+json" set:html={JSON.stringify(productSchema)}></script>
 
   <div id="product-data" class="hidden"
     data-product-id={product._id}
@@ -487,6 +565,35 @@ const seoDesc = product.seo?.metaDescription || product.description;
         updatePrice();
       });
     });
+
+    /* ?format= and ?size=, which is how the shopping feed and the Product
+       schema link to a particular variant.
+       Until this existed every one of those links opened on poster/small, so an
+       ad for a large gallery canvas landed on a page reading GBP 9.99 -- the
+       price mismatch Google disapproves items for, and a customer being shown
+       one price after clicking another. The buttons are the source of truth for
+       what is valid: an unknown value simply finds no button and leaves the
+       default alone. */
+    (function preselectFromQuery() {
+      const q = new URLSearchParams(location.search);
+      const wantFormat = q.get('format');
+      const wantSize = q.get('size');
+      if (wantFormat) {
+        const btn = [...formatBtns].find(b => (b as HTMLElement).dataset.format === wantFormat);
+        if (btn) {
+          selectedFormat = wantFormat;
+          activateBtn(formatBtns, btn, 'border-comic-yellow');
+        }
+      }
+      if (wantSize) {
+        const btn = [...sizeBtns].find(b => (b as HTMLElement).dataset.size === wantSize);
+        if (btn) {
+          selectedSize = wantSize;
+          activateBtn(sizeBtns, btn, 'border-comic-yellow');
+        }
+      }
+      updatePrice();
+    })();
 
     /* Switching styles swaps the MAIN image and nothing else. The thumbnails
        below it are the gallery -- lifestyle mockups, detail shots, whatever

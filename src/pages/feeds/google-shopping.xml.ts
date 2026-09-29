@@ -3,7 +3,8 @@ export const prerender = false;
 import type { APIRoute } from 'astro';
 import { createClient } from '@sanity/client';
 import imageUrlBuilder from '@sanity/image-url';
-import { SIZE_INCHES, SIZE_NAME } from '../../../netlify/functions/_shared/sizes.mjs';
+import { SIZE_INCHES, SIZE_NAME, sizeWH, orientationFromAspect }
+  from '../../../netlify/functions/_shared/sizes.mjs';
 
 // Uncached, even though this runs per request rather than at build. A stale
 // price in a shopping feed gets items disapproved by Google, which is a worse
@@ -18,12 +19,11 @@ const sanityClient = createClient({
 
 const builder = imageUrlBuilder(sanityClient);
 
-// Pricing matrix — must match what the site actually charges
-const PRICES: Record<string, Record<string, number>> = {
-  poster: { small: 9.99, medium: 12.99, large: 16.99 },
-  'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
-  'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
-};
+/* The site's own price table, imported rather than copied. This used to be a
+   second hand-maintained matrix, which is one place to forget when a price
+   changes -- and a feed that disagrees with the page it links to is how items
+   get disapproved. */
+import { PRICES } from '../../data/products';
 
 const FORMAT_LABELS: Record<string, string> = {
   poster: 'Poster Print',
@@ -39,6 +39,16 @@ const SIZE_LABELS: Record<string, string> = {
   small: `${SIZE_NAME.small} ${SIZE_INCHES.small[0]}x${SIZE_INCHES.small[1]}in`,
   medium: `${SIZE_NAME.medium} ${SIZE_INCHES.medium[0]}x${SIZE_INCHES.medium[1]}in`,
   large: `${SIZE_NAME.large} ${SIZE_INCHES.large[0]}x${SIZE_INCHES.large[1]}in`,
+};
+
+/* g:size takes the dimensions and nothing else -- "Large 24x16in" is a
+   description, and Google groups variants by the literal value. The orientation
+   is applied per product below, because a strip is 18x12 and a cover 12x18 from
+   the same entry, and the size shown on the landing page has to be the one in
+   the feed. */
+const sizeAttr = (key: string, orient: string) => {
+  const wh = sizeWH(key, orient);
+  return wh ? `${wh[0]}x${wh[1]}in` : '';
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -72,15 +82,27 @@ function truncate(str: string, max: number): string {
 
 export const GET: APIRoute = async () => {
   try {
+    /* personalisationFee is the fee the customer actually pays on top, from the
+       same field checkout.mjs prices from. classicSceneId and the full-bleed
+       scene id say whether the design can be reopened through "Customise this
+       design", which decides the returns label.
+
+       NO BLOCK COMMENTS INSIDE THE QUERY. GROQ has no C-style comment syntax,
+       so one in here parses as part of the projection and the whole feed
+       answers 500 -- which is what it did until this was run once. Use GROQ's
+       own line comments, or say it out here as this does. */
     const query = `*[_type == "product"] | order(sortOrder asc) {
       _id,
       title,
       "slug": slug.current,
       category,
       description,
-      "images": images[]{asset->{url}, alt},
+      "images": images[]{asset->{url, "aspectRatio": metadata.dimensions.aspectRatio}, alt},
       tags,
       isPersonalised,
+      personalisationFee,
+      classicSceneId,
+      "fullBleedSceneId": fullBleed.sceneId,
       featured
     }`;
 
@@ -98,6 +120,43 @@ export const GET: APIRoute = async () => {
 
       const productUrl = `${SITE_URL}/store/${product.slug}/`;
       const category = CATEGORY_LABELS[product.category] || product.category;
+      /* Which way up, from the artwork itself: there is no orientation field on
+         a product and a third of the shop is landscape, so g:size would be
+         wrong for a third of the feed if it were assumed. */
+      const orientation = orientationFromAspect(product.images?.[0]?.asset?.aspectRatio);
+
+      /* THE FEE. A personalised product's listed price is the print plus the
+         personalisation, because that is the least the customer can pay: there
+         is no way to buy one without it. Quoting the bare print price is an
+         underquote, and Google checks the feed price against the landing page.
+         In POUNDS on the document -- customiseFee is in pence, which is a trap
+         worth knowing about; this one is not that one. */
+      const fee = product.isPersonalised && typeof product.personalisationFee === 'number'
+        && Number.isFinite(product.personalisationFee)
+        ? product.personalisationFee
+        : 0;
+      if (product.isPersonalised && !fee) {
+        /* Loud, and the item is left out rather than sent at the wrong price.
+           An underpriced item that Google approves is worse than a missing one:
+           somebody clicks it expecting the price they were shown. */
+        console.error(`google-shopping: "${product.slug}" is personalised but has no `
+          + `personalisationFee (got ${JSON.stringify(product.personalisationFee)}) — omitted from the feed`);
+        continue;
+      }
+
+      /* WHAT THIS ITEM IS, not what the product could also be sold as.
+         Nearly every product in the shop has a studio scene and so CAN be
+         reopened through "Customise this design" -- but that is a separate
+         purchase at a separate price, and it is not in this feed. Every item
+         here is either a plain print or one of the three builder products.
+         A plain print carries the full 14-day right to change your mind, so
+         labelling one "personalised" because the design happens to also be
+         customisable would tell Google the customer has no such right, which
+         contradicts the refund policy and is untrue of the thing being sold.
+         Labelling on `customisable` did exactly that to 2,250 of 2,799 items.
+         If customise variants are ever listed as items of their own, they get
+         the personalised label -- they are made to specification. */
+      const returnsLabel = product.isPersonalised ? 'personalised' : 'standard';
       const description = product.description
         ? truncate(product.description, 4900)
         : `${category} — bold pop culture wall art from Comic Strip Canvas`;
@@ -105,7 +164,7 @@ export const GET: APIRoute = async () => {
       // Generate 9 variants: 3 formats × 3 sizes
       for (const format of FORMATS) {
         for (const size of SIZES) {
-          const price = PRICES[format][size];
+          const price = PRICES[format][size] + fee;
           const formatLabel = FORMAT_LABELS[format];
           const sizeLabel = SIZE_LABELS[size];
 
@@ -134,7 +193,9 @@ export const GET: APIRoute = async () => {
       <g:brand>${xmlEscape(BRAND)}</g:brand>
       <g:condition>new</g:condition>
       <g:identifier_exists>no</g:identifier_exists>
-      <g:product_type>${xmlEscape(`Home &amp; Garden > Decor > Artwork > Posters, Prints, &amp; Visual Artwork > ${category}`)}</g:product_type>
+      <g:size>${xmlEscape(sizeAttr(size, orientation))}</g:size>
+      <g:return_policy_label>${returnsLabel}</g:return_policy_label>
+      <g:product_type>${xmlEscape(`Home & Garden > Decor > Artwork > Posters, Prints, & Visual Artwork > ${category}`)}</g:product_type>
       <g:google_product_category>500044</g:google_product_category>
       <g:custom_label_0>${xmlEscape(category)}</g:custom_label_0>
       <g:custom_label_1>${xmlEscape(formatLabel)}</g:custom_label_1>
