@@ -32,7 +32,8 @@ const sanity = createClient({
   dataset: 'production',
   apiVersion: '2026-04-11',
   useCdn: false,
-  ...(process.env.SANITY_WRITE_TOKEN ? { token: process.env.SANITY_WRITE_TOKEN } : {}),
+  // Required: orders have dotted _ids, which an anonymous read can't see.
+  token: process.env.SANITY_WRITE_TOKEN,
 });
 
 const PRODUCT_FIELDS = `{

@@ -25,6 +25,8 @@ export default defineType({
       readOnly: true,
       description: 'The last numeric order value issued. Next order will be this + 1.',
     }),
+    // Pre-migration _id, set by tools/migrate-private-ids.mjs.
+    defineField({ name: 'legacyId', title: 'Legacy ID', type: 'string', readOnly: true, hidden: true }),
   ],
   preview: {
     select: {

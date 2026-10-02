@@ -467,6 +467,8 @@ export const handler = async (event) => {
 
   try {
     const doc: Record<string, unknown> = {
+      // Dotted _id: hidden from anonymous API reads (name, email, message).
+      _id: `contactSubmission.${crypto.randomUUID()}`,
       _type: 'contactSubmission',
       refCode,
       status: 'new',

@@ -64,7 +64,11 @@ const BRAND = {
   studioPersonalisations: 'https://comicstripcanvas.sanity.studio/structure/personalisations',
 };
 
-const ORDER_COUNTER_ID = 'orderCounter';
+// Dotted, like the order ids: hidden from anonymous API reads. Until
+// tools/migrate-private-ids.mjs has moved it, the old undotted counter may
+// still hold the sequence; a new counter is seeded from it.
+const ORDER_COUNTER_ID = 'orderCounter.csc';
+const LEGACY_ORDER_COUNTER_ID = 'orderCounter';
 
 /**
  * Mark every personalised build on a paid session, and kick off its render.
@@ -128,11 +132,13 @@ export async function settlePersonalisations({ session, orderId, orderNumber, li
  * orders can never receive the same number.
  */
 async function getNextOrderNumber() {
-  // Ensure the counter document exists (no-op if it already does).
+  // Ensure the counter document exists (no-op if it already does), seeded
+  // from the pre-migration counter so numbering carries on.
+  const legacy = await sanity.getDocument(LEGACY_ORDER_COUNTER_ID);
   await sanity.createIfNotExists({
     _id: ORDER_COUNTER_ID,
     _type: 'orderCounter',
-    lastOrderNumber: 1000,
+    lastOrderNumber: legacy?.lastOrderNumber || 1000,
   });
 
   // Retry loop in case of a concurrent write collision.
@@ -171,8 +177,15 @@ async function fulfilOrder(session) {
       // order _id derived from the session id, and bail out before ANY side
       // effect (order-number increment, pending delete, email sends) if an
       // order for this session already exists.
-      const orderId = `order-${session.id}`;
-      const alreadyProcessed = await sanity.getDocument(orderId);
+      // The dot keeps the order (name, email, address) out of anonymous API
+      // reads. Orders created before that change have id order-<session>, or
+      // after migration keep it as legacyId; match those too so a late retry
+      // of one is still recognised.
+      const orderId = `order.${session.id}`;
+      const alreadyProcessed = await sanity.fetch(
+        `*[_type == "order" && (_id in [$id, $legacy] || legacyId == $legacy || stripeSessionId == $sid)][0]{ _id, orderNumber }`,
+        { id: orderId, legacy: `order-${session.id}`, sid: session.id }
+      );
       if (alreadyProcessed) {
         console.log(`Duplicate webhook for session ${session.id} — order ${alreadyProcessed.orderNumber} already exists. Skipping.`);
         return new Response('Already processed', { status: 200 });

@@ -329,6 +329,8 @@ export default defineType({
       readOnly: true,
       description: 'When payment was confirmed and the order was created. Set automatically.',
     }),
+    // Pre-migration _id, set by tools/migrate-private-ids.mjs.
+    defineField({ name: 'legacyId', title: 'Legacy ID', type: 'string', readOnly: true, hidden: true }),
   ],
   preview: {
     select: {

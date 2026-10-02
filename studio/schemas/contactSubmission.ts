@@ -112,6 +112,8 @@ export default defineType({
       readOnly: true,
       description: "SHA-256 hash of the submitter's IP, used only for rate-limit deduplication. Not the raw IP, to keep this GDPR-clean.",
     }),
+    // Pre-migration _id, set by tools/migrate-private-ids.mjs.
+    defineField({ name: 'legacyId', title: 'Legacy ID', type: 'string', readOnly: true, hidden: true }),
   ],
 
   preview: {
