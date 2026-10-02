@@ -1,19 +1,25 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
+import { docIdFor, refOf } from './_shared/pp-id.mjs';
 import { PRICES } from './_shared/catalog.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import {
   CLASSIC, FULL_BLEED, isStyle, styleLabel, styleLabelFor, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
 
-// Read-only: the dataset is public, so no token is needed here and none is
-// given. Fees are content, not code -- they live on the product document so
-// they can be changed without a deploy.
+// Read-only, but with a token: the build documents checkout prices from live at
+// dotted _ids (pendingPersonalisation.<ref>), which anonymous reads cannot see.
+// SANITY_READ_TOKEN (Viewer) by preference; SANITY_WRITE_TOKEN, which every
+// other function already holds, until it is set. Without either, every
+// personalised line is refused as unpriced rather than undercharged. Fees are
+// content, not code -- they live on the product document so they can be
+// changed without a deploy.
 const sanity = createClient({
   projectId: 'lwbwahym',
   dataset: 'production',
   apiVersion: '2026-04-11',
   useCdn: false,
+  token: process.env.SANITY_READ_TOKEN || process.env.SANITY_WRITE_TOKEN,
 });
 
 const isPersonalisationId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
@@ -131,9 +137,9 @@ export default async (req, context) => {
       const rows = await sanity.fetch(
         '*[_type == "pendingPersonalisation" && _id in $ids]{ _id, kind, productId, artworkStyle, ' +
         '"customiseFee": *[_type == "product" && _id == ^.productId][0].customiseFee }',
-        { ids: buildIds }
+        { ids: buildIds.map(docIdFor) }
       );
-      buildById = Object.fromEntries(rows.map((r) => [r._id, r]));
+      buildById = Object.fromEntries(rows.map((r) => [refOf(r._id), r]));
     }
 
     // Server-authoritative pricing (H1): never trust the client's unitPrice.

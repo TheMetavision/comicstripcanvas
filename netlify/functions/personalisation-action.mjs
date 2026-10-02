@@ -2,6 +2,7 @@ import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { EMAIL_BRAND, emailHeader, button } from './_shared/email.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * Studio document actions that need to reach outside Sanity.
@@ -104,7 +105,7 @@ export default async (req) => {
   const { action, id } = body || {};
   if (!isId(id)) return json({ ok: false, error: 'Invalid id' }, 400);
 
-  const doc = await sanity.getDocument(id);
+  const doc = await sanity.getDocument(docIdFor(id));
   if (!doc) return json({ ok: false, error: 'Unknown personalisation' }, 404);
 
   const origin = internalOrigin(req);
@@ -158,7 +159,7 @@ async function approve(doc, id, origin, rawNote) {
      to say must not leave the first one's note on the document, where the page
      would show it as the note that went with this proof. */
   patch.proofNote = note;
-  await sanity.patch(id).set(patch).commit();
+  await sanity.patch(docIdFor(id)).set(patch).commit();
 
   // The customer address lives on the order the webhook stamped onto this
   // document, not on the personalisation itself.
@@ -199,7 +200,7 @@ async function approve(doc, id, origin, rawNote) {
 async function hold(doc, id, note) {
   const text = typeof note === 'string' ? note.trim().slice(0, 2000) : '';
   if (!text) return json({ ok: false, error: 'A hold needs a note' }, 400);
-  await sanity.patch(id).set({ status: 'on_hold', holdNote: text }).commit();
+  await sanity.patch(docIdFor(id)).set({ status: 'on_hold', holdNote: text }).commit();
   console.log(`personalisation-action: ${id} put on hold — ${text.slice(0, 120)}`);
   return json({ ok: true, status: 'on_hold' });
 }
@@ -210,7 +211,7 @@ async function rerender(doc, id, origin) {
     return json({ ok: false, error: `Cannot re-render from "${doc.status}"` }, 409);
   }
   // preparing is in the render job's renderable set, so it will pick this up.
-  await sanity.patch(id).set({ status: 'preparing' }).unset(['renderError']).commit();
+  await sanity.patch(docIdFor(id)).set({ status: 'preparing' }).unset(['renderError']).commit();
 
   const res = await fetch(`${origin}/api/render-personalisation`, {
     method: 'POST',
@@ -219,7 +220,7 @@ async function rerender(doc, id, origin) {
   });
   if (!res.ok) {
     const msg = `The render job would not start (${res.status})`;
-    await sanity.patch(id).set({ status: 'on_hold', renderError: msg }).commit();
+    await sanity.patch(docIdFor(id)).set({ status: 'on_hold', renderError: msg }).commit();
     return json({ ok: false, error: msg }, 502);
   }
   console.log(`personalisation-action: ${id} queued for re-render`);

@@ -1,6 +1,7 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * Save a build we have edited on the customer's behalf, and re-render it.
@@ -122,7 +123,7 @@ export default async (req) => {
     }, 400);
   }
 
-  const doc = await sanity.getDocument(id);
+  const doc = await sanity.getDocument(docIdFor(id));
   if (!doc || doc._type !== 'pendingPersonalisation') {
     return json({ ok: false, error: 'Unknown personalisation' }, 404);
   }
@@ -200,7 +201,7 @@ export default async (req) => {
   }
 
   try {
-    let patch = sanity.patch(id);
+    let patch = sanity.patch(docIdFor(id));
     /* ifRevisionID, because the renderer patches these same documents and the
        read above is seconds old. Only when the editor told us which revision it
        was working from -- a caller that did not say cannot be held to one. */
@@ -252,7 +253,7 @@ export default async (req) => {
        with nothing rendering it is invisible in the Studio, and the sweep reads
        renderError. */
     try {
-      await sanity.patch(id).set({ status: 'on_hold', renderError }).commit();
+      await sanity.patch(docIdFor(id)).set({ status: 'on_hold', renderError }).commit();
     } catch (patchErr) {
       console.error(`personalisation-edit-save: could not record the render failure on ${id}:`, patchErr.message);
     }

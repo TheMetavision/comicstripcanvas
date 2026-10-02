@@ -8,6 +8,7 @@ import {
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyStyleLimit } from './_shared/limit-email.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * Re-style one panel:
@@ -66,7 +67,7 @@ export default async (req, context) => {
 
   try {
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleCalls, guardKey, origin, templateId }', { id });
+      '*[_id == $id][0]{ photos, styleCalls, guardKey, origin, templateId }', { id: docIdFor(id) });
     if (!doc) return notFound();
     const row = (doc.photos || []).find((p) => p.panel === panel);
     if (!row || !row.rawKey) return notFound();
@@ -155,7 +156,7 @@ export default async (req, context) => {
          nothing to lose is marked. */
       if (row.styleStatus !== 'done') {
         await sanity
-          .patch(id)
+          .patch(docIdFor(id))
           .set({
             [`photos[panel == "${panel}"].styleStatus`]: 'failed',
             [`photos[panel == "${panel}"].styleError`]: 'cap',
@@ -175,7 +176,7 @@ export default async (req, context) => {
     // Put it back to pending before firing, so a poll between the two sees an
     // honest state rather than the previous 'failed'.
     await sanity
-      .patch(id)
+      .patch(docIdFor(id))
       .set({ [`photos[panel == "${panel}"].styleStatus`]: 'pending' })
       .unset([`photos[panel == "${panel}"].styleError`])
       .commit();

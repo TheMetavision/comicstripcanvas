@@ -20,18 +20,29 @@ Any older agent instructions, scripts, or notes that reference the old path shou
 - **GitHub remote:** https://github.com/TheMetavision/comicstripcanvas.git
 - **Stack:** Astro + Sanity CMS + Netlify (per Metavision house standard)
 
-### Sanity dataset must stay public
+### Public dataset, private customer documents
 
-`netlify/functions/checkout.mjs` reads the `personalisationFee` off the product
-document with **no auth token** -- the same way `src/lib/sanity.ts` reads content.
-That works only while the `production` dataset is publicly readable.
+The `production` dataset is publicly readable (Free plan), and site content is
+read without a token (`src/lib/sanity.ts`). Customer documents are not public:
+`order`, `contactSubmission`, `orderCounter` and `pendingPersonalisation` live at
+dotted `_id`s, which anonymous reads never return. Check with
+`node tools/check-public-exposure.mjs` (exit 1 if anything shows).
 
-If the dataset is ever switched to private, personalised checkout stops working:
-the fee lookup returns nothing and the function refuses the line with "This
-personalised product is not priced yet" rather than undercharging. Non-personalised
-checkout is unaffected, so it would fail quietly for one product family only.
+A build is known everywhere outside Sanity by its ref (`pp-<hex>`): URLs, basket,
+Stripe metadata, order lines, emails, Blobs keys. Its document is at
+`pendingPersonalisation.<ref>` -- always go through
+`netlify/functions/_shared/pp-id.mjs` (`docIdFor` / `refOf`).
 
-Either keep the dataset public, or give the function a read token and use it there.
+Anything that reads a build document needs a token: the functions use
+SANITY_WRITE_TOKEN; `checkout.mjs`, the admin pages (`src/lib/sanity-server.ts`)
+and the photo edge function prefer the Viewer token SANITY_READ_TOKEN. Without a
+token, checkout refuses personalised lines as unpriced rather than undercharging,
+and the photo edge function steps aside to the buffered function.
+
+Customer photos never go in Sanity assets (asset URLs and the asset list are
+public). The builder's photos are in Blobs; the legacy flow's were moved to the
+`legacy-customer-photos` store by `tools/migrate-private-personalisation.mjs`
+and are served only at `/admin/api/legacy-photo/*` behind Basic Auth.
 
 ### Notes
 

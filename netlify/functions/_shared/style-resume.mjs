@@ -2,6 +2,7 @@ import {
   guardStore, readGlobal, visitorHasStyleBudget, busyMessageFor, originOr, ORIGINS,
   styleLimitNotice, familyForTemplate,
 } from './spend-guard.mjs';
+import { asDocId, refOf } from './pp-id.mjs';
 
 /**
  * Restarting photos the circuit breaker paused.
@@ -62,7 +63,7 @@ export const pausedRows = (doc) =>
  */
 export async function pausePanel(sanity, id, panel, spendOrigin) {
   await sanity
-    .patch(id)
+    .patch(asDocId(id))
     .set({
       [`photos[panel == "${panel}"].styleStatus`]: PAUSED,
       [`photos[panel == "${panel}"].styleError`]: busyMessageFor(spendOrigin),
@@ -82,9 +83,9 @@ export async function pausePanel(sanity, id, panel, spendOrigin) {
  * does, so the panel, the Studio row and the status poll cannot drift apart.
  */
 export async function limitPanel(sanity, id, panel, templateId) {
-  const notice = styleLimitNotice(id, familyForTemplate(templateId));
+  const notice = styleLimitNotice(refOf(id), familyForTemplate(templateId));
   await sanity
-    .patch(id)
+    .patch(asDocId(id))
     .set({
       [`photos[panel == "${panel}"].styleStatus`]: LIMITED,
       [`photos[panel == "${panel}"].styleError`]: notice.text,
@@ -129,7 +130,7 @@ async function resumePanel({ sanity, store, doc, panel, origin, now }) {
     const res = await fetch(`${origin}/api/style-photo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: doc._id, panel }),
+      body: JSON.stringify({ id: refOf(doc._id), panel }),
     });
     if (!res.ok) {
       console.error(`style-resume: ${doc._id} ${panel} trigger returned ${res.status}`);

@@ -241,6 +241,15 @@ export function createClient() {
         });
       }
 
+      /* The webhook's idempotency read: the order at its dotted id, at its
+         pre-migration id (or carrying that as legacyId), or by Stripe session. */
+      if (/_type == "order" && \(_id in \[\$id, \$legacy\]/.test(q)) {
+        const o = [...docs.values()].find((d) => d._type === 'order' && (
+          d._id === params.id || d._id === params.legacy
+          || d.legacyId === params.legacy || d.stripeSessionId === params.sid));
+        return o ? { _id: o._id, orderNumber: o.orderNumber ?? null } : null;
+      }
+
       throw new Error(`stub: no answer for query ${q.slice(0, 160)}`);
     },
     async create(doc) {

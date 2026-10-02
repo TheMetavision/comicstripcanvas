@@ -36,6 +36,10 @@
 import { register } from 'node:module';
 import fsSync from 'node:fs';
 import path from 'node:path';
+
+/* Builds are addressed by ref (pp-<hex>); their documents live at
+   pendingPersonalisation.<ref> -- netlify/functions/_shared/pp-id.mjs. */
+const DOC = (ref) => (String(ref).startsWith('pendingPersonalisation.') ? ref : `pendingPersonalisation.${ref}`);
 import { fileURLToPath } from 'node:url';
 
 register('./_stubs/hooks.mjs', import.meta.url);
@@ -216,7 +220,7 @@ for (const [templateId, panelId, family] of TEMPLATES) {
     `${templateId}: it hands back a build id`, body.id);
 
   /* A 200 is not the same as having stored anything. */
-  const doc = sanityStub.docs.get(body.id);
+  const doc = sanityStub.docs.get(DOC(body.id));
   ok(!!doc, `${templateId}: a document was actually written`, doc ? 'yes' : 'no');
 
   /* Everything below reads that document, so a missing one is reported once
@@ -270,7 +274,7 @@ say('\n2. A SECOND PHOTO ON AN EXISTING BUILD\n');
   ok(second.status === 200, 'and so does the second', String(second.status));
   ok(second.body.id === first.body.id, 'on the same build', second.body.id);
 
-  const doc = sanityStub.docs.get(first.body.id) || {};
+  const doc = sanityStub.docs.get(DOC(first.body.id)) || {};
   ok(doc.photos?.length === 2, 'the document holds both panels',
     (doc.photos || []).map((p) => p.panel).join(', ') || 'no document');
   ok(doc.photoKeys?.length === 2, 'and both keys', String(doc.photoKeys?.length));
@@ -299,7 +303,7 @@ say('\n3. A CUSTOMER AT THEIR LIMIT KEEPS THEIR PHOTO\n');
   ok(second.status === 200, 'the upload at the limit is NOT refused', String(second.status));
   ok(second.status !== 429, 'specifically not a 429 before storage');
 
-  const doc = sanityStub.docs.get(second.body.id) || {};
+  const doc = sanityStub.docs.get(DOC(second.body.id)) || {};
   ok(!!doc._id, 'their build was still written', doc._id || 'no document');
   ok(Object.keys(blobStub.dump('personalisation')).length === 2,
     'and their photograph was still stored — both uploads are on disk',
@@ -385,7 +389,7 @@ say('\n6. AN UPLOAD WITH NO TEMPLATE\n');
   resetAll();
   const { status, body } = await upload({ templateId: null });
   ok(status === 200, 'an upload without a templateId still works', String(status));
-  const doc = sanityStub.docs.get(body.id) || {};
+  const doc = sanityStub.docs.get(DOC(body.id)) || {};
   ok(!!doc._id, 'and still writes its document', doc._id || 'no document');
   ok(doc.templateId === undefined, 'with no template on it yet', String(doc.templateId));
   ok(doc.styleSize === '2K', 'defaulting to 2K until the recipe says otherwise',
@@ -412,7 +416,7 @@ const product = (slug, extra = {}) => ({
   title: slug, ...extra,
 });
 const build = (id, extra = {}) => ({
-  _id: id, _type: 'pendingPersonalisation', ...extra,
+  _id: DOC(id), _type: 'pendingPersonalisation', ...extra,
 });
 const seed = (...docs) => { for (const d of docs) sanityStub.docs.set(d._id, d); };
 
@@ -695,7 +699,7 @@ function seedPaidSessionWithBuild(buildId, id = 'cs_test_paid_1') {
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
   ok(r.status === 200, 'a paid session is accepted', `${r.status} ${r.text}`);
 
-  const order = sanityStub.docs.get(`order-${session.id}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
   ok(!!order, 'an order document was created', order ? 'yes' : 'no');
   ok(order?._type === 'order', 'of type order', order?._type);
   ok(/^CSC-\d+$/.test(order?.orderNumber || ''), 'with a sequential order number',
@@ -709,7 +713,7 @@ function seedPaidSessionWithBuild(buildId, id = 'cs_test_paid_1') {
 
   /* The counter, which is the part that must never hand out the same number
      twice. */
-  const counter = sanityStub.docs.get('orderCounter');
+  const counter = sanityStub.docs.get('orderCounter.csc');
   ok(counter?.lastOrderNumber === 1001, 'the order counter was incremented once',
     String(counter?.lastOrderNumber));
 }
@@ -744,7 +748,7 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
 
   ok(r.status === 200, 'the order is NOT blocked', `${r.status} ${r.text}`);
-  const order = sanityStub.docs.get(`order-${session.id}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
   ok(!!order, 'the order document was still created');
   ok(order?.lineItems?.[0]?.printFile === undefined,
     'and its line carries no print file');
@@ -779,7 +783,7 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
   ok(r.status === 200, 'a printable line is accepted', String(r.status));
 
-  const order = sanityStub.docs.get(`order-${session.id}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
   ok(order?.lineItems?.[0]?.printFile === 'https://cdn.test/print.png',
     'the line carries the resolved print file', order?.lineItems?.[0]?.printFile);
   ok(!(teamMail()?.html || '').includes('PRINT FILE MISSING'),
@@ -797,8 +801,8 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
   resetAll();
   const BUILD = `pp-${'d'.repeat(32)}`;
   seed(product('gizmo', { images: [{ asset: { _ref: LISTING_REF } }] }));
-  sanityStub.docs.set(BUILD, {
-    _id: BUILD, _type: 'pendingPersonalisation', status: 'draft',
+  sanityStub.docs.set(DOC(BUILD), {
+    _id: DOC(BUILD), _type: 'pendingPersonalisation', status: 'draft',
     photos: [{ panel: 'art', styleStatus: 'done', styledKey: 'k' }],
     templateId: 'cover',
   });
@@ -806,7 +810,7 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
   ok(r.status === 200, 'a built line is accepted', String(r.status));
 
-  const order = sanityStub.docs.get(`order-${session.id}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
   ok(order?.lineItems?.[0]?.printFile === undefined,
     'it carries no print file, as designed');
   ok(!(teamMail()?.html || '').includes('PRINT FILE MISSING'),
@@ -828,7 +832,7 @@ say('\n10b. WEBHOOK: SIZE READS THE WAY THE PICTURE IS SHAPED\n');
   }));
   const session = seedPaidSessionWithBuild(null, 'cs_test_paid_pt');
   await postWebhook(stripeEvent('checkout.session.completed', session));
-  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  const line = sanityStub.docs.get(`order.${session.id}`)?.lineItems?.[0];
   /* The fixture orders Small; what is under test is which way up it reads. */
   ok(line?.size === 'Small (8×12")', 'a portrait product says 8×12, not 12×8', line?.size);
   ok(!line?.artworkStyleLabel,
@@ -842,7 +846,7 @@ say('\n10b. WEBHOOK: SIZE READS THE WAY THE PICTURE IS SHAPED\n');
   }));
   const session = seedPaidSessionWithBuild(null, 'cs_test_paid_ls');
   await postWebhook(stripeEvent('checkout.session.completed', session));
-  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  const line = sanityStub.docs.get(`order.${session.id}`)?.lineItems?.[0];
   ok(line?.size === 'Small (12×8")', 'a landscape product says 12×8, not 8×12', line?.size);
 }
 {
@@ -855,7 +859,7 @@ say('\n10b. WEBHOOK: SIZE READS THE WAY THE PICTURE IS SHAPED\n');
   }));
   const session = seedPaidSessionWithBuild(null, 'cs_test_paid_two');
   await postWebhook(stripeEvent('checkout.session.completed', session));
-  const line = sanityStub.docs.get(`order-${session.id}`)?.lineItems?.[0];
+  const line = sanityStub.docs.get(`order.${session.id}`)?.lineItems?.[0];
   ok(line?.artworkStyleLabel === 'Classic cover',
     'a two-style product names the style on the line', line?.artworkStyleLabel);
 }
@@ -1076,8 +1080,8 @@ say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');
 {
   resetAll();
   const BUILD = `pp-${'c'.repeat(32)}`;
-  sanityStub.docs.set(BUILD, {
-    _id: BUILD, _type: 'pendingPersonalisation', status: 'draft',
+  sanityStub.docs.set(DOC(BUILD), {
+    _id: DOC(BUILD), _type: 'pendingPersonalisation', status: 'draft',
     photos: [{ panel: 'art', styleStatus: 'done', styledKey: 'k' }],
     templateId: 'cover',
   });
@@ -1085,7 +1089,7 @@ say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
   ok(r.status === 200, 'the paid personalised session is accepted', `${r.status} ${r.text}`);
 
-  const order = sanityStub.docs.get(`order-${session.id}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
   ok(!!order, 'the order exists');
   ok(order?.isPersonalised === true, 'and is marked personalised',
     String(order?.isPersonalised));
@@ -1096,7 +1100,7 @@ say('\n11. WEBHOOK: A PERSONALISED ORDER STARTS ITS RENDER\n');
   ok(renders[0]?.body?.id === BUILD || JSON.stringify(renders[0]?.body).includes(BUILD),
     'for the build that was bought', JSON.stringify(renders[0]?.body));
 
-  const buildDoc = sanityStub.docs.get(BUILD);
+  const buildDoc = sanityStub.docs.get(DOC(BUILD));
   ok(buildDoc?.status !== 'draft', 'and the build is no longer a draft',
     buildDoc?.status);
 }
@@ -1108,16 +1112,16 @@ say('\n12. WEBHOOK: DUPLICATES, AND WHAT IS NOT A PAID ORDER\n');
   const session = seedPaidSessionWithBuild(null);
   const body = stripeEvent('checkout.session.completed', session);
   const first = await postWebhook(body);
-  const counterAfterFirst = sanityStub.docs.get('orderCounter')?.lastOrderNumber;
+  const counterAfterFirst = sanityStub.docs.get('orderCounter.csc')?.lastOrderNumber;
   const second = await postWebhook(body);
 
   ok(first.status === 200 && second.status === 200, 'both deliveries are accepted',
     `${first.status} / ${second.status}`);
   ok(/already processed/i.test(second.text), 'the second says it was already done',
     second.text);
-  ok(sanityStub.docs.get('orderCounter')?.lastOrderNumber === counterAfterFirst,
+  ok(sanityStub.docs.get('orderCounter.csc')?.lastOrderNumber === counterAfterFirst,
     'and does NOT take another order number',
-    `${counterAfterFirst} -> ${sanityStub.docs.get('orderCounter')?.lastOrderNumber}`);
+    `${counterAfterFirst} -> ${sanityStub.docs.get('orderCounter.csc')?.lastOrderNumber}`);
   ok([...sanityStub.docs.values()].filter((d) => d._type === 'order').length === 1,
     'there is exactly one order', String([...sanityStub.docs.values()].filter((d) => d._type === 'order').length));
   ok(renders.length === 0, 'and nothing was rendered a second time', String(renders.length));
@@ -1128,7 +1132,7 @@ say('\n12. WEBHOOK: DUPLICATES, AND WHAT IS NOT A PAID ORDER\n');
   const r = await postWebhook(stripeEvent('checkout.session.completed', unpaid));
   ok(r.status === 200, 'an unpaid completed session is accepted', String(r.status));
   ok(/awaiting payment/i.test(r.text), 'but only to say it is waiting', r.text);
-  ok(!sanityStub.docs.get(`order-${unpaid.id}`), 'no order was created');
+  ok(!sanityStub.docs.get(`order.${unpaid.id}`), 'no order was created');
 
   /* ...and then the payment clears. The session has to be the SAME one, line
      items and all -- the first attempt at this seeded a different id and the
@@ -1139,7 +1143,7 @@ say('\n12. WEBHOOK: DUPLICATES, AND WHAT IS NOT A PAID ORDER\n');
     stripeEvent('checkout.session.async_payment_succeeded', paidSession({ id: 'cs_test_unpaid' }))
   );
   ok(cleared.status === 200, 'async_payment_succeeded fulfils it', String(cleared.status));
-  ok(!!sanityStub.docs.get('order-cs_test_unpaid'), 'and the order appears then');
+  ok(!!sanityStub.docs.get('order.cs_test_unpaid'), 'and the order appears then');
 
   /* ---- a failed async payment creates nothing ---- */
   resetAll();
@@ -1147,16 +1151,16 @@ say('\n12. WEBHOOK: DUPLICATES, AND WHAT IS NOT A PAID ORDER\n');
     stripeEvent('checkout.session.async_payment_failed', paidSession({ id: 'cs_test_failed' }))
   );
   ok(failed.status === 200, 'a failed async payment is acknowledged', String(failed.status));
-  ok(!sanityStub.docs.get('order-cs_test_failed'), 'and creates no order');
+  ok(!sanityStub.docs.get('order.cs_test_failed'), 'and creates no order');
 
   /* ---- an expired session bins the pending build and its photos ---- */
   resetAll();
   const BUILD = `pp-${'d'.repeat(32)}`;
-  sanityStub.docs.set(BUILD, { _id: BUILD, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(BUILD), { _id: DOC(BUILD), _type: 'pendingPersonalisation' });
   const expired = await postWebhook(stripeEvent('checkout.session.expired',
     paidSession({ id: 'cs_test_expired', metadata: { personalisationRef: BUILD } })));
   ok(expired.status === 200, 'an expired session is acknowledged', String(expired.status));
-  ok(!sanityStub.docs.has(BUILD), 'and the abandoned build is deleted with its photos');
+  ok(!sanityStub.docs.has(DOC(BUILD)), 'and the abandoned build is deleted with its photos');
 }
 
 say('\n13. WEBHOOK: MALFORMED AND UNAUTHORISED\n');
@@ -1208,8 +1212,8 @@ async function seedBuild({
   origin = 'customer', guardKey = 'vtesthash00000001', styleCalls = 0,
 } = {}) {
   const rawKey = `personalisation/${id}/${panel}.jpg`;
-  sanityStub.docs.set(id, {
-    _id: id, _type: 'pendingPersonalisation', templateId, origin, guardKey, styleCalls,
+  sanityStub.docs.set(DOC(id), {
+    _id: DOC(id), _type: 'pendingPersonalisation', templateId, origin, guardKey, styleCalls,
     styleSize: '2K',
     photos: [{ panel, rawKey, styleStatus: 'pending' }],
   });
@@ -1231,7 +1235,7 @@ const runStyle = async (id, panel) => {
 };
 
 const panelOf = (id, panel) =>
-  (sanityStub.docs.get(id)?.photos || []).find((p) => p.panel === panel) || {};
+  (sanityStub.docs.get(DOC(id))?.photos || []).find((p) => p.panel === panel) || {};
 
 {
   resetAll();
@@ -1270,8 +1274,8 @@ const panelOf = (id, panel) =>
     'a cover call is billed to the covers allowance', Object.keys(counters).join(', '));
   ok(Object.keys(counters).some((k) => k === `global/${new Date().toISOString().slice(0, 10)}.json`),
     'and to the customer day counter');
-  ok(sanityStub.docs.get(id).styleCalls === 1, 'the per-design cap was charged',
-    String(sanityStub.docs.get(id).styleCalls));
+  ok(sanityStub.docs.get(DOC(id)).styleCalls === 1, 'the per-design cap was charged',
+    String(sanityStub.docs.get(DOC(id)).styleCalls));
 }
 
 say('\n15. STYLING: WHICH BUDGET IT SPENDS\n');
@@ -1310,8 +1314,8 @@ say('\n15. STYLING: WHICH BUDGET IT SPENDS\n');
   ok(panelOf(seeded.id, seeded.panel).styleStatus === 'paused', 'and says so on the panel',
     panelOf(seeded.id, seeded.panel).styleStatus);
   ok(genaiStub.calls.length === 0, 'the model was never called', String(genaiStub.calls.length));
-  ok(sanityStub.docs.get(seeded.id).styleCalls === 0, 'and nothing was charged',
-    String(sanityStub.docs.get(seeded.id).styleCalls));
+  ok(sanityStub.docs.get(DOC(seeded.id)).styleCalls === 0, 'and nothing was charged',
+    String(sanityStub.docs.get(DOC(seeded.id)).styleCalls));
   delete process.env.STYLE_DAILY_MAX;
 
   /* The customer's own allowance stops it differently: limited, not paused. */
@@ -1378,9 +1382,9 @@ say('\n16. STYLING: WHEN THE MODEL SAYS NO\n');
      model looked at the photograph and gave its answer". A refusal costs money
      because the generation ran. Only a status that means the request never
      reached the model (401, 403, 429) or a 5xx is handed back. */
-  ok(sanityStub.docs.get(seeded.id).styleCalls === 1,
+  ok(sanityStub.docs.get(DOC(seeded.id)).styleCalls === 1,
     'the call is NOT refunded — the model was reached and answered',
-    String(sanityStub.docs.get(seeded.id).styleCalls));
+    String(sanityStub.docs.get(DOC(seeded.id)).styleCalls));
 
   /* An empty response is a different thing and must not read as a refusal. */
   resetAll();
@@ -1404,9 +1408,9 @@ say('\n16. STYLING: WHEN THE MODEL SAYS NO\n');
 
   /* A 5xx never got an answer, so it IS handed back -- the other half of the
      rule, and the one that stops an outage eating a build's sixteen calls. */
-  ok(sanityStub.docs.get(seeded.id).styleCalls === 0,
+  ok(sanityStub.docs.get(DOC(seeded.id)).styleCalls === 0,
     'a 503 hands the call back — nothing was generated',
-    String(sanityStub.docs.get(seeded.id).styleCalls));
+    String(sanityStub.docs.get(DOC(seeded.id)).styleCalls));
   const afterOutage = Object.keys(blobStub.dump('spend-guard'))
     .filter((k) => k.includes('/style-'));
   ok(afterOutage.length === 0 || JSON.parse(blobStub.dump('spend-guard')[afterOutage[0]]).hours
@@ -1480,8 +1484,8 @@ say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
   genaiStub.willReturnImage();
   let styled = await runStyle(id, 'art');
   ok(styled.status === 200, 'and styled', `${styled.status} ${styled.text}`);
-  ok(sanityStub.docs.get(id).styleCalls === 1, 'one style call so far',
-    String(sanityStub.docs.get(id).styleCalls));
+  ok(sanityStub.docs.get(DOC(id)).styleCalls === 1, 'one style call so far',
+    String(sanityStub.docs.get(DOC(id)).styleCalls));
 
   const afterFirst = {
     keys: Object.keys(blobStub.dump('personalisation')).sort(),
@@ -1498,7 +1502,7 @@ say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
   styled = await runStyle(id, 'art');
   ok(styled.status === 200, 'and is styled too', `${styled.status} ${styled.text}`);
 
-  const doc = sanityStub.docs.get(id) || {};
+  const doc = sanityStub.docs.get(DOC(id)) || {};
 
   /* ---- ONE of everything ---- */
   ok(doc.photos?.length === 1, 'the document still has ONE photos row',
@@ -1543,7 +1547,7 @@ say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
   await upload({ templateId: 'cover', panelId: 'art', id });
   genaiStub.willReturnImage();
   await runStyle(id, 'art');
-  const after3 = sanityStub.docs.get(id);
+  const after3 = sanityStub.docs.get(DOC(id));
   ok(after3.photos.length === 1 && after3.photoKeys.length === 1,
     'a third replacement is still one row and one key',
     `${after3.photos.length} / ${after3.photoKeys.length}`);
@@ -1557,7 +1561,7 @@ say('\n18. REPLACING A PHOTO OVERWRITES IT, AND DOES NOT ACCUMULATE\n');
   const strip = await upload({ templateId: 'strip', panelId: 'panel-01' });
   await upload({ templateId: 'strip', panelId: 'panel-02', id: strip.body.id });
   await upload({ templateId: 'strip', panelId: 'panel-01', id: strip.body.id });
-  const stripDoc = sanityStub.docs.get(strip.body.id);
+  const stripDoc = sanityStub.docs.get(DOC(strip.body.id));
   ok(stripDoc.photos.length === 2, 'two panels, one of them replaced, is still two rows',
     stripDoc.photos.map((p) => p.panel).join(', '));
   ok(stripDoc.photos.filter((p) => p.panel === 'panel-01').length === 1,
@@ -1583,8 +1587,8 @@ say('\n19. deleteBuild: BLOBS FIRST, THEN THE DOCUMENT\n');
   await photos.set(`personalisation/${ID}/styled-art.jpg`, 'styled');
   await photos.set(`personalisation/${OTHER}/art.jpg`, 'someone else');
   await renders.set(`renders/${ID}/print.png`, 'print');
-  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
-  sanityStub.docs.set(OTHER, { _id: OTHER, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(ID), { _id: DOC(ID), _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(OTHER), { _id: DOC(OTHER), _type: 'pendingPersonalisation' });
 
   /* Watch the order rather than the outcome: both end up gone either way, and
      only the sequence says whether a half-failure would litter. */
@@ -1601,35 +1605,35 @@ say('\n19. deleteBuild: BLOBS FIRST, THEN THE DOCUMENT\n');
   ok(r.blobs.length === 3, 'both prefixes are collected — photos and renders',
     r.blobs.join(', '));
   ok(order.filter((o) => o.startsWith('blob:')).length === 3, 'three blobs went');
-  ok(order[order.length - 1] === `doc:${ID}`, 'and the DOCUMENT went last', order.join(' | '));
+  ok(order[order.length - 1] === `doc:${DOC(ID)}`, 'and the DOCUMENT went last', order.join(' | '));
   ok(order.slice(0, -1).every((o) => o.startsWith('blob:')),
     'with nothing after it — a failure mid-way leaves the record, not the litter');
-  ok(!sanityStub.docs.has(ID), 'the build is gone');
-  ok(sanityStub.docs.has(OTHER), "and the next build's document is untouched");
+  ok(!sanityStub.docs.has(DOC(ID)), 'the build is gone');
+  ok(sanityStub.docs.has(DOC(OTHER)), "and the next build's document is untouched");
   ok(Object.keys(blobStub.dump('personalisation')).length === 1,
     "and so are its photographs", Object.keys(blobStub.dump('personalisation')).join(', '));
 
   /* Safe when the blobs have already gone -- a half-finished earlier attempt,
      or retention having swept them as orphans first. */
-  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(ID), { _id: DOC(ID), _type: 'pendingPersonalisation' });
   const again = await deleteBuild(ID, { sanity: watchedSanity, stores: watched });
   ok(again.blobs.length === 0 && again.deleted === true,
     'a build whose blobs are already gone still loses its document',
     `${again.blobs.length} blob(s)`);
 
   /* And safe on an id that never had blobs under these prefixes. */
-  sanityStub.docs.set('legacy-thing', { _id: 'legacy-thing', _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC('legacy-thing'), { _id: DOC('legacy-thing'), _type: 'pendingPersonalisation' });
   const legacy = await deleteBuild('legacy-thing', { sanity: watchedSanity, stores: watched });
   ok(legacy.blobs.length === 0 && legacy.deleted === true,
     'a legacy id is deleted without asking the blob store anything');
 
   /* A dry run lists and touches nothing. */
   await photos.set(`personalisation/${ID}/art.jpg`, 'raw again');
-  sanityStub.docs.set(ID, { _id: ID, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(ID), { _id: DOC(ID), _type: 'pendingPersonalisation' });
   const dry = await deleteBuild(ID, { sanity: watchedSanity, stores: watched, dryRun: true });
   ok(dry.blobs.length === 1 && dry.deleted === false, 'a dry run reports without deleting',
     `${dry.blobs.length} listed`);
-  ok(sanityStub.docs.has(ID) && blobStub.dump('personalisation')[`personalisation/${ID}/art.jpg`],
+  ok(sanityStub.docs.has(DOC(ID)) && blobStub.dump('personalisation')[`personalisation/${ID}/art.jpg`],
     'and both are still there');
 }
 
@@ -1641,7 +1645,7 @@ say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
      full thirty-day sweep with the customer's photographs in it. */
   resetAll();
   const BUILD = `pp-${'9'.repeat(32)}`;
-  sanityStub.docs.set(BUILD, { _id: BUILD, _type: 'pendingPersonalisation', status: 'draft' });
+  sanityStub.docs.set(DOC(BUILD), { _id: DOC(BUILD), _type: 'pendingPersonalisation', status: 'draft' });
   const photos = blobStub.getStore('personalisation');
   await photos.set(`personalisation/${BUILD}/art.jpg`, 'the customer photo');
   await photos.set(`personalisation/${BUILD}/styled-art.jpg`, 'the styled one');
@@ -1666,7 +1670,7 @@ say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
 
   const r = await postWebhook(stripeEvent('checkout.session.expired', session));
   ok(r.status === 200, 'the expired event is acknowledged', String(r.status));
-  ok(!sanityStub.docs.has(BUILD), 'the abandoned build is deleted');
+  ok(!sanityStub.docs.has(DOC(BUILD)), 'the abandoned build is deleted');
   ok(Object.keys(blobStub.dump('personalisation')).length === 0,
     "AND the customer's photographs go with it",
     Object.keys(blobStub.dump('personalisation')).join(', '));
@@ -1675,14 +1679,14 @@ say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
      flow that is gone. */
   resetAll();
   const LEGACY = `pp-${'0'.repeat(31)}a`;
-  sanityStub.docs.set(LEGACY, { _id: LEGACY, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(LEGACY), { _id: DOC(LEGACY), _type: 'pendingPersonalisation' });
   await blobStub.getStore('personalisation').set(`personalisation/${LEGACY}/art.jpg`, 'old');
   const legacySession = paidSession({
     id: 'cs_test_legacy_expired', metadata: { personalisationRef: LEGACY },
   });
   stripeStub.sessions.push({ ...legacySession, line_items: [] });
   await postWebhook(stripeEvent('checkout.session.expired', legacySession));
-  ok(!sanityStub.docs.has(LEGACY), 'a legacy personalisationRef is still honoured');
+  ok(!sanityStub.docs.has(DOC(LEGACY)), 'a legacy personalisationRef is still honoured');
   ok(Object.keys(blobStub.dump('personalisation')).length === 0, 'with its blobs too');
 
   /* An ordinary abandoned basket has nothing to delete and says so. */
@@ -1699,8 +1703,8 @@ say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
   /* A PAID order must NOT lose its build here -- the render has not run yet. */
   resetAll();
   const PAID = `pp-${'1'.repeat(31)}b`;
-  sanityStub.docs.set(PAID, {
-    _id: PAID, _type: 'pendingPersonalisation', status: 'draft',
+  sanityStub.docs.set(DOC(PAID), {
+    _id: DOC(PAID), _type: 'pendingPersonalisation', status: 'draft',
     photos: [{ panel: 'art', styleStatus: 'done', styledKey: 'k' }],
   });
   const paid = paidSession({ id: 'cs_test_paid_keeps' });
@@ -1718,10 +1722,10 @@ say('\n20. AN ABANDONED CHECKOUT TAKES THE PHOTOGRAPHS WITH IT\n');
     }],
   });
   await postWebhook(stripeEvent('checkout.session.completed', paid));
-  ok(sanityStub.docs.has(PAID),
+  ok(sanityStub.docs.has(DOC(PAID)),
     'a PAID build survives fulfilment — it is what the print file is rendered from');
-  ok(sanityStub.docs.get(PAID)?.status === 'paid', 'and is marked paid instead of deleted',
-    sanityStub.docs.get(PAID)?.status);
+  ok(sanityStub.docs.get(DOC(PAID))?.status === 'paid', 'and is marked paid instead of deleted',
+    sanityStub.docs.get(DOC(PAID))?.status);
 }
 
 say('\n21. RETENTION, THROUGH THE SAME HELPER\n');
@@ -1741,8 +1745,8 @@ say('\n21. RETENTION, THROUGH THE SAME HELPER\n');
   const OLD = `pp-${'a'.repeat(31)}1`;
   const NEW = `pp-${'b'.repeat(31)}2`;
   for (const [id, days] of [[OLD, 40], [NEW, 1]]) {
-    sanityStub.docs.set(id, {
-      _id: id, _type: 'pendingPersonalisation', status: 'draft', _createdAt: ago(days),
+    sanityStub.docs.set(DOC(id), {
+      _id: DOC(id), _type: 'pendingPersonalisation', status: 'draft', _createdAt: ago(days),
     });
     await stores.personalisation.set(`personalisation/${id}/art.jpg`, 'x',
       { metadata: { uploadedAt: ago(days) } });
@@ -1755,8 +1759,8 @@ say('\n21. RETENTION, THROUGH THE SAME HELPER\n');
     deps: { sanity: { ...sanityStub.createClient(), async delete(id) { sanityStub.docs.delete(id); } }, stores },
   });
 
-  ok(!sanityStub.docs.has(OLD), 'a build past the abandoned window is deleted');
-  ok(sanityStub.docs.has(NEW), 'and a fresh one is kept');
+  ok(!sanityStub.docs.has(DOC(OLD)), 'a build past the abandoned window is deleted');
+  ok(sanityStub.docs.has(DOC(NEW)), 'and a fresh one is kept');
   ok(!blobStub.dump('personalisation')[`personalisation/${OLD}/art.jpg`],
     'its photograph went with it');
   ok(!blobStub.dump('renders')[`renders/${OLD}/print.png`], 'and its render');
@@ -1790,7 +1794,7 @@ say('\n22. THE ORPHAN SWEEP AT ONE DAY\n');
     { metadata: { uploadedAt: ago(2) } });
   await stores.personalisation.set(`personalisation/${LIVE}/art.jpg`, 'x',
     { metadata: { uploadedAt: ago(72) } });
-  sanityStub.docs.set(LIVE, { _id: LIVE, _type: 'pendingPersonalisation' });
+  sanityStub.docs.set(DOC(LIVE), { _id: DOC(LIVE), _type: 'pendingPersonalisation' });
 
   const r = await retention.sweepOrphanBlobs({
     now: NOW_R,
@@ -1844,8 +1848,8 @@ const finalise = async (id, recipe = RECIPE) => {
 /* A draft, the way the upload path leaves one. */
 async function seedDraft(status = 'draft', id = `pp-${'a'.repeat(32)}`) {
   const rawKey = `personalisation/${id}/art.jpg`;
-  sanityStub.docs.set(id, {
-    _id: id, _type: 'pendingPersonalisation', _rev: 'rev-seed',
+  sanityStub.docs.set(DOC(id), {
+    _id: DOC(id), _type: 'pendingPersonalisation', _rev: 'rev-seed',
     ...(status === null ? {} : { status }),
     templateId: 'cover', styleSize: '4K', styleCalls: 0,
     guardKey: 'vtesthash00000001', origin: 'customer',
@@ -1864,7 +1868,7 @@ async function seedDraft(status = 'draft', id = `pp-${'a'.repeat(32)}`) {
   const { id } = await seedDraft('draft');
   const r = await finalise(id, REWRITE);
   ok(r.status === 200, 'a DRAFT accepts finalise', `${r.status} ${JSON.stringify(r.body)}`);
-  const doc = sanityStub.docs.get(id);
+  const doc = sanityStub.docs.get(DOC(id));
   ok(doc.sceneSvg === REWRITE.svg, 'and the new scene is stored');
   ok(doc.printSize === '16 × 24 in', 'with the print size off the recipe', doc.printSize);
   ok(doc.minEffectiveDpi === 180, 'and the worst dpi', String(doc.minEffectiveDpi));
@@ -1880,10 +1884,10 @@ const LOCKED_STATUSES = [
 for (const status of LOCKED_STATUSES) {
   resetAll();
   const { id } = await seedDraft(status);
-  const before = JSON.stringify(sanityStub.docs.get(id));
+  const before = JSON.stringify(sanityStub.docs.get(DOC(id)));
 
   const r = await finalise(id, REWRITE);
-  const after = sanityStub.docs.get(id);
+  const after = sanityStub.docs.get(DOC(id));
   ok(r.status === 409, `finalise on "${status}" is refused with 409`, String(r.status));
   ok(r.body.locked === true && r.body.status === status,
     `  and says which status refused it`, JSON.stringify(r.body.status));
@@ -1897,12 +1901,12 @@ for (const status of LOCKED_STATUSES) {
 {
   resetAll();
   const { id } = await seedDraft(null);
-  const before = JSON.stringify(sanityStub.docs.get(id));
+  const before = JSON.stringify(sanityStub.docs.get(DOC(id)));
   const r = await finalise(id, REWRITE);
   ok(r.status === 409, 'a document with NO status is refused as well', String(r.status));
   ok(r.body.status === null, '  and reports the absence rather than inventing one',
     JSON.stringify(r.body.status));
-  ok(JSON.stringify(sanityStub.docs.get(id)) === before, '  unchanged');
+  ok(JSON.stringify(sanityStub.docs.get(DOC(id))) === before, '  unchanged');
 }
 
 /* ---- a photo cannot be swapped in either, and the blob is not touched ---- */
@@ -1910,7 +1914,7 @@ for (const status of ['paid', 'rendered', 'in_production']) {
   resetAll();
   const { id, rawKey } = await seedDraft(status);
   const wasBytes = Buffer.from(blobStub.dump('personalisation')[rawKey] || []).length;
-  const before = JSON.stringify(sanityStub.docs.get(id));
+  const before = JSON.stringify(sanityStub.docs.get(DOC(id)));
   /* resetAll does not clear this -- the upload() helper does, and this test
      calls the handler directly -- so without it the assertion below would be
      reading a styling trigger from an earlier section. */
@@ -1922,7 +1926,7 @@ for (const status of ['paid', 'rendered', 'in_production']) {
 
   ok(res.status === 409, `a photo posted to "${status}" is refused`, String(res.status));
   ok(body.locked === true, '  as locked');
-  ok(JSON.stringify(sanityStub.docs.get(id)) === before, '  the document is unchanged');
+  ok(JSON.stringify(sanityStub.docs.get(DOC(id))) === before, '  the document is unchanged');
   /* The point of refusing before the store write: the key is deterministic per
      panel, so a refusal that came after it would already have replaced the
      photograph that was actually bought. */
@@ -1961,27 +1965,27 @@ for (const status of ['paid', 'rendered', 'in_production']) {
   resetAll();
   const { id } = await seedDraft('draft');
   const client = sanityStub.createClient();
-  const stale = sanityStub.docs.get(id)._rev;
+  const stale = sanityStub.docs.get(DOC(id))._rev;
 
   /* Something else writes first. */
-  await client.patch(id).set({ status: 'paid' }).commit();
-  const moved = sanityStub.docs.get(id)._rev;
+  await client.patch(DOC(id)).set({ status: 'paid' }).commit();
+  const moved = sanityStub.docs.get(DOC(id))._rev;
   ok(moved !== stale, 'a concurrent write moves the revision on', `${stale} -> ${moved}`);
 
   let conflict = null;
   try {
-    await client.patch(id).ifRevisionId(stale).set({ sceneSvg: 'clobbered' }).commit();
+    await client.patch(DOC(id)).ifRevisionId(stale).set({ sceneSvg: 'clobbered' }).commit();
   } catch (e) { conflict = e; }
   ok(conflict && conflict.statusCode === 409,
     'and a patch holding the old revision is refused', conflict ? conflict.message : 'it was ALLOWED');
-  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg, '  the scene was not clobbered');
-  ok(sanityStub.docs.get(id).status === 'paid', '  and the newer status stands', sanityStub.docs.get(id).status);
+  ok(sanityStub.docs.get(DOC(id)).sceneSvg === RECIPE.svg, '  the scene was not clobbered');
+  ok(sanityStub.docs.get(DOC(id)).status === 'paid', '  and the newer status stands', sanityStub.docs.get(DOC(id)).status);
 
   /* And the same patch with the CURRENT revision goes through, so the guard is
      a precondition rather than a blanket refusal. */
   let allowed = true;
   try {
-    await client.patch(id).ifRevisionId(sanityStub.docs.get(id)._rev).set({ customerNotes: 'ok' }).commit();
+    await client.patch(DOC(id)).ifRevisionId(sanityStub.docs.get(DOC(id))._rev).set({ customerNotes: 'ok' }).commit();
   } catch { allowed = false; }
   ok(allowed, 'while the same patch with the current revision is applied');
 }
@@ -1992,17 +1996,17 @@ for (const status of ['paid', 'rendered', 'in_production']) {
   const up = await upload({ panelId: 'art', templateId: 'cover' });
   ok(up.status === 200, 'build: the first photo creates the document', String(up.status));
   const id = up.body.id;
-  ok(sanityStub.docs.get(id).status === 'draft', '  as a draft',
-    sanityStub.docs.get(id).status);
+  ok(sanityStub.docs.get(DOC(id)).status === 'draft', '  as a draft',
+    sanityStub.docs.get(DOC(id)).status);
 
   const fin = await finalise(id, RECIPE);
   ok(fin.status === 200, 'finalise: the brief is accepted', `${fin.status} ${JSON.stringify(fin.body)}`);
-  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg, '  and the scene is stored');
+  ok(sanityStub.docs.get(DOC(id)).sceneSvg === RECIPE.svg, '  and the scene is stored');
 
   const session = seedPaidSessionWithBuild(id, 'cs_test_lock_flow');
   const r = await postWebhook(stripeEvent('checkout.session.completed', session));
   ok(r.status === 200, 'pay: the webhook accepts the session', `${r.status} ${r.text}`);
-  const paid = sanityStub.docs.get(id);
+  const paid = sanityStub.docs.get(DOC(id));
   ok(paid.status === 'paid', '  and the build is marked paid', paid.status);
   ok(!!paid.orderNumber, '  with its order number', paid.orderNumber);
   ok(renders.length === 1, '  and its render was asked for', String(renders.length));
@@ -2010,7 +2014,7 @@ for (const status of ['paid', 'rendered', 'in_production']) {
   /* From here the door is shut -- which is the whole point. */
   const after = await finalise(id, REWRITE);
   ok(after.status === 409, 'and now the same finalise is refused', String(after.status));
-  ok(sanityStub.docs.get(id).sceneSvg === RECIPE.svg,
+  ok(sanityStub.docs.get(DOC(id)).sceneSvg === RECIPE.svg,
     '  the design that was paid for is what remains');
 
   /* ---- and the email the customer just got describes THIS flow ---- */
@@ -2114,8 +2118,8 @@ const paidRecipe = (over = {}) => ({
 async function seedPaidBuild(status = 'rendered', over = {}) {
   const recipe = paidRecipe();
   const { svg, ...rest } = recipe;
-  sanityStub.docs.set(EDIT_ID, {
-    _id: EDIT_ID, _type: 'pendingPersonalisation', _rev: 'rev-paid-1',
+  sanityStub.docs.set(DOC(EDIT_ID), {
+    _id: DOC(EDIT_ID), _type: 'pendingPersonalisation', _rev: 'rev-paid-1',
     status,
     templateId: 'cover', printSize: '16 × 24 in', outputFormat: 'standard',
     orderNumber: 'CSC-1006', orderId: 'order-cs_live_x', minEffectiveDpi: 143,
@@ -2193,12 +2197,12 @@ for (const status of ['in_production', 'dispatched']) {
   const r = await getScene();
   ok(r.body.editable === false, `"${status}" cannot be opened`);
 
-  const before = JSON.stringify(sanityStub.docs.get(EDIT_ID));
+  const before = JSON.stringify(sanityStub.docs.get(DOC(EDIT_ID)));
   const save = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
   ok(save.status === 409, `  and a save from "${status}" is refused`, String(save.status));
   ok(/already approved this artwork/i.test(save.body.error || ''),
     '  saying the customer has already approved it', (save.body.error || '').slice(0, 60));
-  ok(JSON.stringify(sanityStub.docs.get(EDIT_ID)) === before, '  with the document unchanged');
+  ok(JSON.stringify(sanityStub.docs.get(DOC(EDIT_ID))) === before, '  with the document unchanged');
   ok(renders.length === 0, '  and no render started');
 }
 for (const status of ['draft', 'paid', 'preparing']) {
@@ -2212,8 +2216,8 @@ for (const status of ['draft', 'paid', 'preparing']) {
 {
   resetAll();
   const { recipe } = await seedPaidBuild('rendered');
-  const wasRecipe = sanityStub.docs.get(EDIT_ID).recipe;
-  const wasScene = sanityStub.docs.get(EDIT_ID).sceneSvg;
+  const wasRecipe = sanityStub.docs.get(DOC(EDIT_ID)).recipe;
+  const wasScene = sanityStub.docs.get(DOC(EDIT_ID)).sceneSvg;
 
   /* An edit: the title is retyped and the panel is nudged, but the paid keys
      and the crop's shape travel with it exactly as the builder re-emits them. */
@@ -2226,7 +2230,7 @@ for (const status of ['draft', 'paid', 'preparing']) {
   const r = await editSave({ id: EDIT_ID, recipe: edited, rev: 'rev-paid-1' });
   ok(r.status === 200 && r.body.ok, 'the save is accepted', `${r.status} ${JSON.stringify(r.body).slice(0, 80)}`);
 
-  const doc = sanityStub.docs.get(EDIT_ID);
+  const doc = sanityStub.docs.get(DOC(EDIT_ID));
   ok(doc.sceneSvg.includes('TIDIED TITLE'), '  the new scene is stored');
   const saved = JSON.parse(doc.recipe);
   ok(saved.panels[0].transform.offsetX === -90, '  the edited crop is stored',
@@ -2264,17 +2268,17 @@ for (const status of ['draft', 'paid', 'preparing']) {
   resetAll();
   await seedPaidBuild('rendered');
   await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
-  const firstOriginal = JSON.stringify(sanityStub.docs.get(EDIT_ID).customerOriginal);
+  const firstOriginal = JSON.stringify(sanityStub.docs.get(DOC(EDIT_ID)).customerOriginal);
 
   /* Back to a status an edit is allowed from, as a re-render would leave it. */
-  sanityStub.docs.set(EDIT_ID, { ...sanityStub.docs.get(EDIT_ID), status: 'rendered' });
-  const rev2 = sanityStub.docs.get(EDIT_ID)._rev;
+  sanityStub.docs.set(DOC(EDIT_ID), { ...sanityStub.docs.get(DOC(EDIT_ID)), status: 'rendered' });
+  const rev2 = sanityStub.docs.get(DOC(EDIT_ID))._rev;
   const second = paidRecipe({
     svg: '<svg viewBox="0 0 100 100"><text>SECOND PASS</text></svg>',
   });
   const r2 = await editSave({ id: EDIT_ID, recipe: second, rev: rev2 });
   ok(r2.status === 200, 'a second edit is accepted', String(r2.status));
-  const doc = sanityStub.docs.get(EDIT_ID);
+  const doc = sanityStub.docs.get(DOC(EDIT_ID));
   ok(JSON.stringify(doc.customerOriginal) === firstOriginal,
     '  and customerOriginal is byte-identical — still THEIR design, not our first attempt');
   ok(doc.customerOriginal.sceneSvg.includes('CUSTOMER TITLE'), '  which it is');
@@ -2292,7 +2296,7 @@ for (const status of ['draft', 'paid', 'preparing']) {
   const r = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-paid-1' });
   ok(r.status === 200, 'a save from approved is accepted', String(r.status));
   ok(r.body.tokenRevoked === true, '  and reports the token revoked');
-  const doc = sanityStub.docs.get(EDIT_ID);
+  const doc = sanityStub.docs.get(DOC(EDIT_ID));
   ok(doc.approveToken === undefined,
     '  the approve token is gone — the emailed link now shows the expired page');
   ok(doc.approvedAt === undefined,
@@ -2303,8 +2307,8 @@ for (const status of ['draft', 'paid', 'preparing']) {
   const res = await personalisationApprove(new Request(
     `https://test.local/api/personalisation-approve?id=${EDIT_ID}&t=${'a'.repeat(48)}`), {});
   ok(res.status === 410, '  and the old link itself now answers 410', String(res.status));
-  ok(sanityStub.docs.get(EDIT_ID).status === 'preparing',
-    '  without advancing the build', sanityStub.docs.get(EDIT_ID).status);
+  ok(sanityStub.docs.get(DOC(EDIT_ID)).status === 'preparing',
+    '  without advancing the build', sanityStub.docs.get(DOC(EDIT_ID)).status);
 }
 
 /* ---- the revision lock ---- */
@@ -2314,7 +2318,7 @@ for (const status of ['draft', 'paid', 'preparing']) {
   const r = await editSave({ id: EDIT_ID, recipe: paidRecipe(), rev: 'rev-that-is-stale' });
   ok(r.status === 409, 'a save against a stale revision is refused', String(r.status));
   ok(r.body.conflict === true, '  as a conflict');
-  ok(sanityStub.docs.get(EDIT_ID).editCount === undefined, '  and nothing was counted');
+  ok(sanityStub.docs.get(DOC(EDIT_ID)).editCount === undefined, '  and nothing was counted');
   ok(renders.length === 0, '  and no render started');
 }
 
@@ -2374,7 +2378,7 @@ for (const status of ['draft', 'paid', 'preparing']) {
   ok(/We nudged the title up a little\./.test(mail?.html || ''), '  carrying what was written');
   ok((mail?.html || '').indexOf('A note from us') < (mail?.html || '').indexOf('personalisation-proof'),
     '  above the proof image');
-  ok(sanityStub.docs.get(EDIT_ID).proofNote === 'We nudged the title up a little.',
+  ok(sanityStub.docs.get(DOC(EDIT_ID)).proofNote === 'We nudged the title up a little.',
     '  and it is stored so the page can show what was sent');
 }
 
@@ -2393,7 +2397,7 @@ for (const status of ['draft', 'paid', 'preparing']) {
   const mail = resendStub.sent.find((m) => m.to === 'buyer@test.local' || (m.to || []).includes?.('buyer@test.local'));
   ok(!/A note from us/i.test(mail?.html || ''),
     'with no note, no note box appears in the email');
-  ok(sanityStub.docs.get(EDIT_ID).proofNote === '',
+  ok(sanityStub.docs.get(DOC(EDIT_ID)).proofNote === '',
     '  and the stored note is cleared rather than left from a previous send');
 }
 

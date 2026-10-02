@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * The styled photograph for one panel:
@@ -69,7 +70,7 @@ export default async (req) => {
   }
 
   try {
-    const doc = await sanity.fetch('*[_id == $id][0]{ photos }', { id });
+    const doc = await sanity.fetch('*[_id == $id][0]{ photos }', { id: docIdFor(id) });
     const row = (doc?.photos || []).find((p) => p.panel === panel);
     if (!row || row.styleStatus !== 'done' || !row.styledKey) {
       // Not an error: this is the normal answer while styling is in flight, and

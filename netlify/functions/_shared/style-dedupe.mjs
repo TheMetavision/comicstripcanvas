@@ -1,3 +1,5 @@
+import { asDocId } from './pp-id.mjs';
+
 /**
  * Reusing a styled photograph across panels.
  *
@@ -44,7 +46,7 @@ export function findStyledTwin(photos, { panel, sha256 }) {
  */
 export async function adoptStyledTwin(sanity, id, panel, twin) {
   await sanity
-    .patch(id)
+    .patch(asDocId(id))
     .set({
       [`photos[panel == "${panel}"].styledKey`]: twin.styledKey,
       [`photos[panel == "${panel}"].styleStatus`]: 'done',

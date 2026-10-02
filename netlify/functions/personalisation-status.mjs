@@ -4,6 +4,7 @@ import { MAX_STYLE_CALLS } from './_shared/style-limits.mjs';
 import { busyMessageFor, styleLimitNotice, familyForTemplate } from './_shared/spend-guard.mjs';
 import { pausedRows, resumeDocument, PAUSED, LIMITED } from './_shared/style-resume.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor, refOf } from './_shared/pp-id.mjs';
 
 /**
  * Styling progress: GET /api/personalisation-status/<id>
@@ -53,7 +54,7 @@ export default async (req) => {
 
   try {
     let doc = await sanity.fetch(
-      '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
+      '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id: docIdFor(id) }
     );
     if (!doc) return notFound();
 
@@ -72,7 +73,7 @@ export default async (req) => {
         const { resumed } = await resumeDocument({ sanity, doc, origin });
         if (resumed) {
           doc = await sanity.fetch(
-            '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
+            '*[_id == $id][0]{ _id, _rev, photos, styleSize, styleCalls, templateId, guardKey, origin }', { id: docIdFor(id) }
           ) || doc;
         }
       } catch (err) {
@@ -132,7 +133,7 @@ export default async (req) => {
          notice carries the wording and a working link to the artwork team, from
          the server for the same reason busyMessage is. */
       limited: photos.filter((p) => p.styleStatus === LIMITED).length,
-      limitNotice: styleLimitNotice(doc._id, familyForTemplate(doc.templateId)),
+      limitNotice: styleLimitNotice(refOf(doc._id), familyForTemplate(doc.templateId)),
       templateId: doc.templateId || null,
       /* Whether a cutout is coming at all. Without this the builder cannot tell
          "not ready yet" from "this deployment has no cutout service", and its

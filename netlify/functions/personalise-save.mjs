@@ -14,6 +14,7 @@ import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artwork-styles.mjs';
 import { moderate, MODERATION_MESSAGE } from './_shared/moderation.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -273,7 +274,7 @@ async function savePhoto(form, file, req, context) {
      against. */
   let existing = null;
   if (!creating) {
-    existing = await sanity.fetch('*[_id == $id][0]{ _rev, status, photoKeys }', { id });
+    existing = await sanity.fetch('*[_id == $id][0]{ _rev, status, photoKeys }', { id: docIdFor(id) });
     if (!existing) return json({ error: 'Unknown personalisation' }, 404);
     /* BEFORE the blob is written, not after. The key is deterministic per
        panel, so a photo stored and then refused would already have overwritten
@@ -325,7 +326,7 @@ async function savePhoto(form, file, req, context) {
   try {
     if (creating) {
       await sanity.create({
-        _id: id,
+        _id: docIdFor(id),
         _type: 'pendingPersonalisation',
         status: 'draft',
         photoKeys: [key],
@@ -363,7 +364,7 @@ async function savePhoto(form, file, req, context) {
          revision the first one had just moved on from. */
       await sanity
         .transaction()
-        .patch(id, (p) => p
+        .patch(docIdFor(id), (p) => p
           .ifRevisionId(existing._rev)
           .setIfMissing({ photoKeys: [], styleCalls: 0 })
           /* setIfMissing, not set: the recipe is the authority on the template
@@ -371,7 +372,7 @@ async function savePhoto(form, file, req, context) {
           .setIfMissing(templateId ? { templateId } : {})
           .unset([`photoKeys[@ == "${key}"]`])
           .append('photoKeys', [key]))
-        .patch(id, (p) => p
+        .patch(docIdFor(id), (p) => p
           .setIfMissing({ photos: [] })
           .unset([`photos[panel == "${panelId}"]`])
           .append('photos', [photoRow({ panel: panelId, rawKey: key, sha256 })]))
@@ -442,7 +443,7 @@ async function triggerStyle({
   guardKey = null, spent = null,
 }) {
   try {
-    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id });
+    const doc = await sanity.fetch('*[_id == $id][0]{ photos, styleCalls, styledKeys }', { id: docIdFor(id) });
     const photos = doc?.photos || [];
 
     // Dedupe before anything is spent -- see _shared/style-dedupe.mjs.
@@ -523,7 +524,7 @@ async function triggerStyle({
 /** Shared by the trigger and the retry endpoint. */
 export async function markFailed(id, panelId, reason) {
   await sanity
-    .patch(id)
+    .patch(docIdFor(id))
     .set({
       [`photos[panel == "${panelId}"].styleStatus`]: 'failed',
       [`photos[panel == "${panelId}"].styleError`]: reason,
@@ -592,7 +593,7 @@ async function saveThumb(form, file) {
     return json({ error: 'Thumbnail is too large' }, 413);
   }
 
-  const existing = await sanity.fetch('*[_id == $id][0]{ _id, status }', { id });
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id, status }', { id: docIdFor(id) });
   if (!existing) return json({ error: 'Unknown personalisation' }, 404);
   /* No design data in a thumbnail, and no patch here at all -- but the key is
      fixed, so this would still replace the picture the Studio and the
@@ -754,7 +755,7 @@ async function saveCustomise(form) {
   const out = recipe.output || {};
   try {
     await sanity.create({
-      _id: id,
+      _id: docIdFor(id),
       _type: 'pendingPersonalisation',
       kind: 'customise',
       status: 'draft',
@@ -815,7 +816,7 @@ async function finalise(form) {
     return json({ error: 'Recipe is missing its template' }, 400);
   }
 
-  const existing = await sanity.fetch('*[_id == $id][0]{ _id, _rev, status, photoKeys, photos }', { id });
+  const existing = await sanity.fetch('*[_id == $id][0]{ _id, _rev, status, photoKeys, photos }', { id: docIdFor(id) });
   if (!existing) return json({ error: 'Unknown personalisation' }, 404);
   /* The whole design in one patch -- recipe, scene, wording, the panel
      arrangement -- so this is the write that mattered: without this check a
@@ -868,7 +869,7 @@ async function finalise(form) {
   // omit rather than send null -- an absent field reads better in the Studio
   if (dpis.length) set.minEffectiveDpi = Math.min(...dpis);
 
-  await sanity.patch(id).ifRevisionId(existing._rev).set(set).commit();
+  await sanity.patch(docIdFor(id)).ifRevisionId(existing._rev).set(set).commit();
   return json({ id });
 }
 

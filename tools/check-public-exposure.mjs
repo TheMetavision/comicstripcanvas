@@ -8,17 +8,17 @@
  *
  *   node tools/check-public-exposure.mjs
  *
- * Exit code 1 if any of DOC_TYPES is visible. WATCH types are reported but
- * don't fail the check (not yet moved to dotted ids).
+ * Exit code 1 if any of DOC_TYPES is visible, or any document anywhere shows
+ * an approveToken.
  */
 const PROJECT = 'lwbwahym';
 const DATASET = 'production';
-const DOC_TYPES = ['order', 'contactSubmission', 'orderCounter'];
-const WATCH = ['pendingPersonalisation'];
+const DOC_TYPES = ['order', 'contactSubmission', 'orderCounter', 'pendingPersonalisation'];
 
 const URL_BASE = `https://${PROJECT}.api.sanity.io/v2024-12-01/data/query/${DATASET}`;
 const query = `{
-  ${[...DOC_TYPES, ...WATCH].map((t) => `"${t}": count(*[_type == "${t}"])`).join(',\n  ')},
+  ${DOC_TYPES.map((t) => `"${t}": count(*[_type == "${t}"])`).join(',\n  ')},
+  "approveToken": count(*[defined(approveToken)]),
   "all": count(*[_type in ${JSON.stringify(DOC_TYPES)}])
 }`;
 
@@ -32,7 +32,7 @@ if (!res.ok) {
   const result = (await res.json()).result;
   console.log(`\n  Anonymous (public API) visibility — ${new Date().toISOString()}\n`);
   for (const t of DOC_TYPES) console.log(`  ${result[t] > 0 ? 'EXPOSED' : 'ok     '}  ${t.padEnd(24)} ${result[t]}`);
-  for (const t of WATCH) console.log(`  ${result[t] > 0 ? 'WARN   ' : 'ok     '}  ${t.padEnd(24)} ${result[t]}   (not migrated yet)`);
+  console.log(`  ${result.approveToken > 0 ? 'EXPOSED' : 'ok     '}  ${'approveToken (any type)'.padEnd(24)} ${result.approveToken}`);
   console.log(`\n  count(*[_type in ${JSON.stringify(DOC_TYPES)}]) = ${result.all}\n`);
-  process.exitCode = result.all > 0 ? 1 : 0;
+  process.exitCode = result.all > 0 || result.approveToken > 0 ? 1 : 0;
 }

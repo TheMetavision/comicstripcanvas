@@ -15,6 +15,7 @@ import {
 import { pausePanel, limitPanel } from './_shared/style-resume.mjs';
 import { notifyBreakerTripped } from './_shared/breaker-email.mjs';
 import { notifyStyleLimit } from './_shared/limit-email.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * Style one photograph.
@@ -175,7 +176,7 @@ async function makeCutout(jpeg) {
 
 async function markFailed(id, panel, reason) {
   try {
-    await sanity.patch(id).set(setPanel(panel, { styleStatus: 'failed', styleError: reason })).commit();
+    await sanity.patch(docIdFor(id)).set(setPanel(panel, { styleStatus: 'failed', styleError: reason })).commit();
   } catch (err) {
     console.error(`style-photo: could not mark ${id} ${panel} failed:`, err.message);
   }
@@ -206,7 +207,7 @@ export default async (req) => {
     }
 
     const doc = await sanity.fetch(
-      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId, guardKey, origin }', { id }
+      '*[_id == $id][0]{ photos, styleSize, styleCalls, templateId, guardKey, origin }', { id: docIdFor(id) }
     );
     if (!doc) {
       console.error(`style-photo: ${id} does not exist`);
@@ -276,7 +277,7 @@ export default async (req) => {
     }
 
     await sanity
-      .patch(id)
+      .patch(docIdFor(id))
       .set(setPanel(panel, { styleStatus: 'styling' }))
       .unset([`photos[panel == "${panel}"].styleError`])
       .commit();
@@ -304,7 +305,7 @@ export default async (req) => {
        generated, and an increment written afterwards would miss exactly the
        kind of call that runs away. Refunded below if it never reached the
        model at all. */
-    await sanity.patch(id).setIfMissing({ styleCalls: 0 }).inc({ styleCalls: 1 }).commit();
+    await sanity.patch(docIdFor(id)).setIfMissing({ styleCalls: 0 }).inc({ styleCalls: 1 }).commit();
     charged = true;   // set only after the increment has committed
 
     /* The spend guards are claimed at the same instant and for the same reason:
@@ -360,7 +361,7 @@ export default async (req) => {
     });
 
     await sanity
-      .patch(id)
+      .patch(docIdFor(id))
       .setIfMissing({ styledKeys: [] })
       .unset([`styledKeys[@ == "${styledKey}"]`, `photos[panel == "${panel}"].styleError`])
       .append('styledKeys', [styledKey])
@@ -395,7 +396,7 @@ export default async (req) => {
           },
         });
         await sanity
-          .patch(id)
+          .patch(docIdFor(id))
           .unset([`photos[panel == "${panel}"].cutoutError`])
           .set(setPanel(panel, {
             cutoutKey, cutoutWidth: cut.width ?? null, cutoutHeight: cut.height ?? null,
@@ -408,7 +409,7 @@ export default async (req) => {
         );
       } else {
         await sanity
-          .patch(id)
+          .patch(docIdFor(id))
           .set(setPanel(panel, { cutoutError: String(cut.reason).slice(0, 200) }))
           .commit();
         console.warn(`style-photo: ${id} ${panel} no cutout — ${cut.reason} (the cover still prints styled)`);
@@ -438,7 +439,7 @@ export default async (req) => {
        this cannot take the count below where it started. */
     if (charged && shouldRefund(err) && isId(id)) {
       try {
-        await sanity.patch(id).dec({ styleCalls: 1 }).commit();
+        await sanity.patch(docIdFor(id)).dec({ styleCalls: 1 }).commit();
         console.warn(`style-photo: ${id} ${panel} refunded its call — status ${err.status} never reached the model`);
       } catch (refundErr) {
         console.error(`style-photo: could not refund the call for ${id} ${panel}:`, refundErr.message);

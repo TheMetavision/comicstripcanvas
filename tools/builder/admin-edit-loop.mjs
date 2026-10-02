@@ -25,6 +25,8 @@ import { createClient } from '@sanity/client';
 
 const BASE = process.env.LOOP_BASE || 'http://localhost:8899';
 const ID = `pp-${'f0'.repeat(16)}`;          // unmistakably not a real build
+// The stub build's document, at the dotted _id the code now reads (netlify/functions/_shared/pp-id.mjs).
+const DOC_ID = `pendingPersonalisation.${ID}`;
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -69,7 +71,7 @@ async function seed() {
   const r = recipeFor(ORIGINAL_TITLE);
   const { svg, ...rest } = r;
   await sanity.createOrReplace({
-    _id: ID,
+    _id: DOC_ID,
     _type: 'pendingPersonalisation',
     status: 'rendered',
     templateId: 'cover',
@@ -89,7 +91,7 @@ async function seed() {
     styleCalls: 0,
     createdAt: new Date().toISOString(),
   });
-  return (await sanity.getDocument(ID))._rev;
+  return (await sanity.getDocument(DOC_ID))._rev;
 }
 
 async function main() {
@@ -142,7 +144,7 @@ async function main() {
   ok(direct.status === 404,
     '/.netlify/functions/personalisation-edit-save refuses too — the function checks the path itself',
     String(direct.status));
-  const stillOriginal = await sanity.getDocument(ID);
+  const stillOriginal = await sanity.getDocument(DOC_ID);
   ok(stillOriginal.sceneSvg.includes(ORIGINAL_TITLE),
     '  and none of that changed the build');
 
@@ -156,7 +158,7 @@ async function main() {
     `${saveRes.status} ${JSON.stringify(saved)}`);
   ok(saved.keptOriginal === true, '  and says it kept the original');
 
-  const after = await sanity.getDocument(ID);
+  const after = await sanity.getDocument(DOC_ID);
   ok(after.sceneSvg.includes(EDITED_TITLE), '  the edited scene is stored');
   ok(JSON.parse(after.recipe).text[0].value === EDITED_TITLE, '  and the edited recipe');
   ok(JSON.parse(after.recipe).panels[0].transform.zoom === CROP.zoom,
@@ -176,8 +178,8 @@ async function main() {
   ok(after.proofUrl === undefined, '  the stale proof url is cleared');
 
   say('\n4. A SECOND SAVE LEAVES THE ORIGINAL ALONE\n');
-  await sanity.patch(ID).set({ status: 'rendered' }).commit();
-  const rev2 = (await sanity.getDocument(ID))._rev;
+  await sanity.patch(DOC_ID).set({ status: 'rendered' }).commit();
+  const rev2 = (await sanity.getDocument(DOC_ID))._rev;
   const res2 = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: ID, rev: rev2, recipe: recipeFor('A THIRD VERSION') }),
@@ -185,7 +187,7 @@ async function main() {
   const body2 = await res2.json().catch(() => ({}));
   ok(res2.status === 200, 'the second save is accepted', String(res2.status));
   ok(body2.keptOriginal === false, '  and kept nothing new');
-  const after2 = await sanity.getDocument(ID);
+  const after2 = await sanity.getDocument(DOC_ID);
   ok(after2.customerOriginal?.sceneSvg?.includes(ORIGINAL_TITLE),
     '  customerOriginal is still the customer’s');
   ok(after2.editCount === 2, '  and the count is 2', String(after2.editCount));
@@ -198,13 +200,13 @@ async function main() {
   const body3 = await res3.json().catch(() => ({}));
   ok(res3.status === 409, 'a save against the revision we just used is refused', String(res3.status));
   ok(body3.conflict === true, '  as a conflict');
-  const after3 = await sanity.getDocument(ID);
+  const after3 = await sanity.getDocument(DOC_ID);
   ok(!after3.sceneSvg.includes('SHOULD NOT LAND'), '  and did not land');
   ok(after3.editCount === 2, '  the count did not move', String(after3.editCount));
 
   say('\n6. AND FROM A STATUS THE CUSTOMER HAS APPROVED\n');
-  await sanity.patch(ID).set({ status: 'in_production' }).commit();
-  const rev4 = (await sanity.getDocument(ID))._rev;
+  await sanity.patch(DOC_ID).set({ status: 'in_production' }).commit();
+  const rev4 = (await sanity.getDocument(DOC_ID))._rev;
   const res4 = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: ID, rev: rev4, recipe: recipeFor('TOO LATE') }),
@@ -226,9 +228,9 @@ try {
   /* Always, including on a throw: a stub build left in the dataset would show up
      in the Studio and be picked up by the render sweep. */
   try {
-    await sanity.delete(ID);
+    await sanity.delete(DOC_ID);
     say(`\nstub build ${ID} deleted`);
-    const gone = await sanity.getDocument(ID);
+    const gone = await sanity.getDocument(DOC_ID);
     say(gone ? 'WARNING: it is still there' : 'confirmed gone');
   } catch (e) {
     say(`\nCOULD NOT DELETE ${ID}: ${e.message} — remove it in the Studio`);

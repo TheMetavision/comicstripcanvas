@@ -35,8 +35,12 @@ import type { DocumentActionComponent, DocumentActionProps } from 'sanity';
 const SITE =
   (import.meta as any).env?.SANITY_STUDIO_SITE_URL || 'https://comicstripcanvas.co.uk';
 
+/* The document is at pendingPersonalisation.<ref>; the admin page is addressed
+   by the ref alone (netlify/functions/_shared/pp-id.mjs). */
+const refOf = (id: string) => id.replace(/^pendingPersonalisation[.]/, '');
+
 const open = (id: string, action: string) => {
-  const url = `${SITE}/admin/personalisation/${encodeURIComponent(id)}?action=${action}`;
+  const url = `${SITE}/admin/personalisation/${encodeURIComponent(refOf(id))}?action=${action}`;
   window.open(url, '_blank', 'noopener,noreferrer');
 };
 

@@ -1,4 +1,5 @@
 import { createClient } from '@sanity/client';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * The customer's Approve link: GET /api/personalisation-approve?id=<id>&t=<token>
@@ -80,7 +81,7 @@ export default async (req, context) => {
   }
 
   try {
-    const doc = await sanity.getDocument(id);
+    const doc = await sanity.getDocument(docIdFor(id));
     if (!doc || !doc.approveToken) return expired();
 
     // Length-checked above, so a plain compare is fine here.
@@ -97,7 +98,7 @@ export default async (req, context) => {
     // Spend the token in the same patch that advances the status, so a double
     // click cannot produce two transitions.
     await sanity
-      .patch(id)
+      .patch(docIdFor(id))
       .set({ status: 'in_production', customerApprovedAt: new Date().toISOString() })
       .unset(['approveToken'])
       .commit();

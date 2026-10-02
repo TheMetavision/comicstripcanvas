@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * A customer's build, in the shape the builder reopens a design from.
@@ -147,7 +148,7 @@ export default async (req) => {
   }
 
   try {
-    const doc = await sanity.getDocument(id);
+    const doc = await sanity.getDocument(docIdFor(id));
     if (!doc || doc._type !== 'pendingPersonalisation') {
       return json({ error: 'Unknown personalisation' }, 404);
     }

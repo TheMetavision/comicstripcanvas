@@ -4,6 +4,7 @@ import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/ren
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { isArtKey } from './_shared/artwork-styles.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
+import { docIdFor } from './_shared/pp-id.mjs';
 
 /**
  * Render a paid personalisation to a print file and a proof.
@@ -77,7 +78,7 @@ export default async (req, context) => {
       return new Response('Bad id', { status: 400 });
     }
 
-    const doc = await sanity.getDocument(id);
+    const doc = await sanity.getDocument(docIdFor(id));
     if (!doc) {
       console.error(`render-personalisation: ${id} does not exist`);
       return new Response('Unknown', { status: 404 });
@@ -100,7 +101,7 @@ export default async (req, context) => {
         // Clear the proof too: an earlier render may have left one, and showing a
         // superseded proof as current is worse than showing none.
         await sanity
-          .patch(id)
+          .patch(docIdFor(id))
           .set({ status: 'on_hold', renderError: String(err.message).slice(0, 2000) })
           .unset(['proofUrl'])
           .commit();
@@ -187,7 +188,7 @@ async function render(id, doc, req) {
     metadata: { id, kind: 'proof', width: proof.width, height: proof.height },
   });
 
-  await sanity.patch(id).set({
+  await sanity.patch(docIdFor(id)).set({
     status: 'rendered',
     proofUrl: `${origin}/api/personalisation-proof/${id}`,
   }).unset(['renderError']).commit();

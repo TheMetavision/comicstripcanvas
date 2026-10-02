@@ -3,7 +3,8 @@ export const prerender = false;
 
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import ProductBuilder from '../../../../components/ProductBuilder.astro';
-import { sanityClient } from '../../../../lib/sanity';
+import { sanityServerClient } from '../../../../lib/sanity-server';
+import { docIdFor } from '../../../../../netlify/functions/_shared/pp-id.mjs';
 
 /**
  * Edit a customer's paid build, then re-render their proof.
@@ -31,15 +32,17 @@ let doc: any = null;
 let loadError: string | null = null;
 if (VALID_ID) {
   try {
-    /* The tokenless client, which works because the production dataset is
+    /* The authenticated server-side client: the document is at a dotted _id
+       (pendingPersonalisation.<ref>), which anonymous reads cannot see. It used
+       to be the tokenless client, which worked because the dataset is
        publicly readable -- the same thing checkout.mjs relies on for the fee.
        This page is behind Basic Auth; the dataset being public is a separate
        fact, recorded in CLAUDE.md. */
-    doc = await sanityClient.fetch(
+    doc = await sanityServerClient.fetch(
       `*[_id == $id][0]{ _id, _type, status, templateId, orderNumber, printSize,
         editCount, editedAt, customerNotes,
         "hasOriginal": defined(customerOriginal.sceneSvg) }`,
-      { id }
+      { id: docIdFor(id) }
     );
   } catch (err: any) {
     loadError = err?.message || 'Could not read this build.';

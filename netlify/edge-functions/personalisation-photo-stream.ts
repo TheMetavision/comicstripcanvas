@@ -2,6 +2,7 @@ import { getStore } from '@netlify/blobs';
 import type { Config, Context } from '@netlify/edge-functions';
 import { sanityQuery } from '../edge-lib/sanity-read.mjs';
 import { PHOTO_STORE, SERVABLE_PHOTO, isPanelId, isPersonalisationId } from '../edge-lib/image-keys.mjs';
+import { docIdFor } from '../functions/_shared/pp-id.mjs';
 
 /**
  * GET /api/personalisation-photo/<id>/<panel>[?variant=cutout]
@@ -35,8 +36,16 @@ import { PHOTO_STORE, SERVABLE_PHOTO, isPanelId, isPersonalisationId } from '../
  *   · the panel is read from the DOCUMENT, never built into a key from the URL
  *   · the same private, no-store, noindex headers
  *
- * The read needs no credentials: pendingPersonalisation is published content in
- * a publicly readable dataset, which is what the id being unguessable is for.
+ * The read needs a token. pendingPersonalisation documents live at
+ * pendingPersonalisation.<ref>, a dotted _id that anonymous reads cannot see, so
+ * this route reads with SANITY_READ_TOKEN (a Viewer token: it can read, never
+ * write). Without it the edge steps aside and the function answers the same
+ * request with its own server-side token -- buffered, so back under the 6 MB
+ * cap described above. Set SANITY_READ_TOKEN before deploying.
+ *
+ * (Before the dotted ids, the read needed no credentials: the documents were
+ * public, and the unguessable id was all that stood in front of them.)
+ *
  * The function it replaces handed SANITY_WRITE_TOKEN to its client to run this
  * same query, so the edge holds strictly less than the function did.
  *
@@ -77,7 +86,10 @@ export default async function handler(req: Request, context: Context): Promise<R
   if (!id || !panel) return context.next();
   if (req.method !== 'GET' && req.method !== 'HEAD') return context.next();
 
-  const doc = await sanityQuery(PHOTO_QUERY, { id });
+  const token = Netlify.env.get('SANITY_READ_TOKEN') || '';
+  if (!token) return context.next();
+
+  const doc = await sanityQuery(PHOTO_QUERY, { id: docIdFor(id) }, { token });
   const row = (doc?.photos || []).find((p: { panel?: string }) => p?.panel === panel);
   if (!row || row.styleStatus !== 'done' || !row.styledKey) {
     /* Not an error: this is the normal answer while styling is in flight, and

@@ -43,6 +43,7 @@ import { sweepGuardCounters } from './_shared/spend-guard.mjs';
  */
 
 import { deleteBuild, listBuildBlobs, PHOTO_STORE, RENDER_STORE } from './_shared/delete-build.mjs';
+import { refOf } from './_shared/pp-id.mjs';
 
 export { PHOTO_STORE, RENDER_STORE };
 
@@ -200,7 +201,8 @@ export async function sweepOrphanBlobs({ dryRun = false, now = new Date(), deps 
   }
 
   const ids = await sanity.fetch('*[_type == "pendingPersonalisation"]._id');
-  const referenced = new Set(ids || []);
+  // Blob paths carry the build ref; the documents are at pendingPersonalisation.<ref>.
+  const referenced = new Set((ids || []).map(refOf));
 
   for (const [id, keys] of byId) {
     if (referenced.has(id)) continue;
@@ -541,7 +543,7 @@ export async function runRetention({ dryRun = false, now = new Date(), deps = {}
   };
 
   for (const { doc, reason, rule } of doomed) {
-    const id = doc._id;
+    const id = refOf(doc._id);   // the build ref, as blob keys and logs use it
     try {
       // List rather than trusting photoKeys: a key that was written but never
       // recorded would otherwise be orphaned by the document's deletion.

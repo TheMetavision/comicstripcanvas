@@ -1,4 +1,5 @@
 import { getStore } from '@netlify/blobs';
+import { asDocId, refOf } from './pp-id.mjs';
 
 /**
  * Deleting a build, in the one order that does not leave litter.
@@ -50,8 +51,10 @@ export const defaultStores = () => ({
  * A legacy id never had blobs under these prefixes, so it is answered without
  * asking the store anything.
  */
-export async function listBuildBlobs(id, stores) {
+export async function listBuildBlobs(idOrRef, stores) {
   const keys = [];
+  // Blob prefixes use the build ref, whichever form the caller holds.
+  const id = refOf(idOrRef);
   if (!isBuildId(id)) return keys;
   for (const [store, prefix] of buildPrefixes(id)) {
     const { blobs } = await stores[store].list({ prefix });
@@ -91,6 +94,6 @@ export async function deleteBuild(id, { sanity, stores, dryRun = false } = {}) {
   if (dryRun) return { id, blobs, deleted: false };
 
   for (const { store, key } of keys) await s[store].delete(key);
-  await sanity.delete(id);
+  await sanity.delete(asDocId(id));
   return { id, blobs, deleted: true };
 }

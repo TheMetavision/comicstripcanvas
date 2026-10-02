@@ -5,6 +5,7 @@ import { emailHeader } from './_shared/email.mjs';
 import { FULL_BLEED, styleOr, styleLabel, styleLabelFor } from './_shared/artwork-styles.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
+import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -92,7 +93,7 @@ export async function settlePersonalisations({ session, orderId, orderNumber, li
   for (const id of ids) {
     try {
       await db
-        .patch(id)
+        .patch(docIdFor(id))
         .set({ status: 'paid', stripeSessionId: session.id, orderId, orderNumber })
         .commit();
     } catch (err) {
@@ -254,7 +255,7 @@ async function fulfilOrder(session) {
         let pending = null;
         if (personalisationRef) {
           try {
-            pending = await sanity.getDocument(personalisationRef);
+            pending = await sanity.getDocument(asDocId(personalisationRef));
           } catch (err) {
             console.error(`Could not fetch pending personalisation ${personalisationRef}:`, err.message);
           }
