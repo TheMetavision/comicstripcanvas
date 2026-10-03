@@ -13,7 +13,9 @@
 // - The choice is stored for ~6 months in a first-party cookie (itself
 //   strictly necessary: it records the choice). After that the banner asks again.
 // - Any element with [data-cookie-settings] reopens the banner. Rejecting after
-//   accepting stops the trackers from the next page load and clears their cookies.
+//   accepting switches the trackers off on the current page, clears their
+//   cookies, and they don't load again. Every page load while the choice is
+//   "rejected" also clears any tracker cookies left behind.
 //
 // Essential storage (sessions, payments, chat history, booking) is not
 // touched by this module.
@@ -113,7 +115,11 @@ function loadTrackers(cfg: Config) {
   if (cfg.gtmId) loadGTM(cfg.gtmId);
 }
 
-/** On withdrawal: remove cookies the trackers set on this site's own domain. */
+/**
+ * Remove tracker cookies set on this site's own domain: host-only and every
+ * parent domain (e.g. .themetavision.co.uk). Used on withdrawal and on every
+ * page load while the choice is "rejected".
+ */
 function clearTrackerCookies() {
   const names = document.cookie
     .split(";")
@@ -127,6 +133,39 @@ function clearTrackerCookies() {
   for (const name of names) {
     for (const d of domains) document.cookie = `${name}=; Max-Age=0; Path=/${d}`;
   }
+}
+
+/**
+ * On withdrawal: switch off trackers already running on this page, so they
+ * can't write their cookies again after we clear them.
+ */
+function stopRunningTrackers(cfg: Config) {
+  // GA4: Google's opt-out flag, per measurement ID. IDs come from the config
+  // and from any _ga_<ID> cookie, which also covers GA4 loaded through GTM.
+  const ids = new Set<string>(cfg.ga4Id ? [cfg.ga4Id] : []);
+  for (const c of document.cookie.split(";")) {
+    const m = c.trim().match(/^_ga_([A-Z0-9]+)=/);
+    if (m) ids.add(`G-${m[1]}`);
+  }
+  for (const id of ids) (window as unknown as Record<string, boolean>)[`ga-disable-${id}`] = true;
+  // Consent Mode: Google tags, including those inside a GTM container, stop
+  // using cookies once storage is denied.
+  if (window.dataLayer) {
+    window.gtag =
+      window.gtag ||
+      function gtag() {
+        // eslint-disable-next-line prefer-rest-params
+        window.dataLayer!.push(arguments);
+      };
+    window.gtag("consent", "update", {
+      analytics_storage: "denied",
+      ad_storage: "denied",
+      ad_user_data: "denied",
+      ad_personalization: "denied",
+    });
+  }
+  // Meta Pixel: stop sending events and setting cookies.
+  if (window.fbq) window.fbq("consent", "revoke");
 }
 
 /* ---------------- banner ---------------- */
@@ -166,7 +205,11 @@ export function initCookieConsent(root: HTMLElement | null = document.getElement
     const previous = readChoice(cfg);
     writeChoice(cfg, choice);
     if (choice === "accepted") loadTrackers(cfg);
-    if (choice === "rejected" && previous === "accepted") clearTrackerCookies();
+    if (choice === "rejected" && previous === "accepted") {
+      stopRunningTrackers(cfg);
+      clearTrackerCookies();
+      setTimeout(clearTrackerCookies, 1500);
+    }
     if (announcer) {
       announcer.textContent =
         choice === "accepted"
@@ -192,5 +235,6 @@ export function initCookieConsent(root: HTMLElement | null = document.getElement
 
   const choice = readChoice(cfg);
   if (choice === "accepted") loadTrackers(cfg);
-  else if (!choice) show(false);
+  else if (choice === "rejected") clearTrackerCookies();
+  else show(false);
 }
