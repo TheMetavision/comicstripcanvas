@@ -2,6 +2,7 @@
 import Navbar from '../components/Navbar.astro';
 import Footer from '../components/Footer.astro';
 import CartPanel from '../components/CartPanel.astro';
+import CookieConsent from '../components/consent/CookieConsent.astro';
 import '../styles/global.css';
 import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
 
@@ -43,14 +44,6 @@ const breadcrumbItems = [
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
-  <!-- Google Tag Manager -->
-  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-  })(window,document,'script','dataLayer','GTM-TLR2F74');</script>
-  <!-- End Google Tag Manager -->
-
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content={noindex ? 'noindex, nofollow' : 'index, follow'} />
@@ -236,10 +229,14 @@ const breadcrumbItems = [
   )}
 </head>
 <body class="min-h-screen flex flex-col">
-  <!-- Google Tag Manager (noscript) -->
-  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TLR2F74"
-  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
-  <!-- End Google Tag Manager (noscript) -->
+  <!-- Google Tag Manager (GTM-TLR2F74) loads from here only after "Accept all".
+       No <noscript> iframe: it cannot wait for consent. -->
+  <CookieConsent
+    gtm="GTM-TLR2F74"
+    policyUrl="/privacy-policy/"
+    cookieName="csc_consent"
+    purpose="We’d like to use Google Tag Manager to load analytics and advertising tags (such as Google Analytics and ad measurement) so we can see how the site is used and measure our ads. They stay off unless you accept. Your basket and checkout work either way."
+  />
 
   <Navbar />
   <main class="flex-1 pt-24 lg:pt-28">
