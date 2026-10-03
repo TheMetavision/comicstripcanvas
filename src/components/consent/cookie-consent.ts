@@ -151,7 +151,7 @@ export function initCookieConsent(root: HTMLElement | null = document.getElement
     if (status) {
       status.hidden = !current;
       status.textContent = current
-        ? `Currently: analytics and advertising cookies are ${current === "accepted" ? "on" : "off"}.`
+        ? `Currently: analytics cookies are ${current === "accepted" ? "on" : "off"}.`
         : "";
     }
     root.hidden = false;
@@ -170,8 +170,8 @@ export function initCookieConsent(root: HTMLElement | null = document.getElement
     if (announcer) {
       announcer.textContent =
         choice === "accepted"
-          ? "Saved: analytics and advertising cookies are on."
-          : "Saved: analytics and advertising cookies are off.";
+          ? "Saved: analytics cookies are on."
+          : "Saved: analytics cookies are off.";
     }
     hide();
   };
