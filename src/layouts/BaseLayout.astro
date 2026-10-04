@@ -6,6 +6,7 @@ import CookieConsent from '../components/consent/CookieConsent.astro';
 import '../styles/global.css';
 import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
 import { organizationSchema } from '../lib/schema';
+import { SITE, canonicalUrl } from '../lib/url';
 
 interface Props {
   title: string;
@@ -25,8 +26,9 @@ const {
   noindex = false,
 } = Astro.props;
 
-const siteUrl = 'https://comicstripcanvas.co.uk';
-const pageUrl = canonical || `${siteUrl}${Astro.url.pathname}`;
+const siteUrl = SITE;
+// Apex host, trailing slash: the address Netlify actually serves.
+const pageUrl = canonicalUrl(canonical || Astro.url.pathname);
 const fullTitle = `${title} | Comic Strip Canvas`;
 
 // Breadcrumb from URL path
@@ -93,18 +95,14 @@ const breadcrumbItems = [
     })}></script>
   )}
 
-  <!-- WebSite Schema for sitelinks search -->
+  <!-- WebSite schema. No SearchAction: the store ignores ?q=. -->
   {Astro.url.pathname === '/' && (
     <script type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
       "@type": "WebSite",
       "name": "Comic Strip Canvas",
-      "url": siteUrl,
-      "potentialAction": {
-        "@type": "SearchAction",
-        "target": `${siteUrl}/store/?q={search_term_string}`,
-        "query-input": "required name=search_term_string",
-      },
+      "url": canonicalUrl('/'),
+      "publisher": { "@id": canonicalUrl('/') + '#organization' },
     })}></script>
   )}
 

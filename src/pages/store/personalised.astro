@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import { canonicalUrl } from '../../lib/url';
 import { createClient } from '@sanity/client';
 import { personalisationFees, feeSentence, feeAddPhrase, feeEachPhrase } from '../../lib/personalisation-fee';
 
@@ -202,12 +203,12 @@ const fees = await personalisationFees();
     "@type": "CollectionPage",
     "name": "Personalised Comic Art UK",
     "description": "Transform your photo into personalised comic art — Comic Book Covers, Icons, and Strips. Bespoke comic art, made to order in the UK.",
-    "url": "https://www.comicstripcanvas.co.uk/store/personalised",
+    "url": canonicalUrl('/store/personalised/'),
     "breadcrumb": {
       "@type": "BreadcrumbList",
       "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.comicstripcanvas.co.uk" },
-        { "@type": "ListItem", "position": 2, "name": "Personalised", "item": "https://www.comicstripcanvas.co.uk/store/personalised" }
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": canonicalUrl('/') },
+        { "@type": "ListItem", "position": 2, "name": "Personalised", "item": canonicalUrl('/store/personalised/') }
       ]
     }
   })} />
