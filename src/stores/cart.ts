@@ -2,6 +2,7 @@ import { atom, computed } from 'nanostores';
 import { persistentAtom } from '@nanostores/persistent';
 import type { ArtworkStyle, ProductFormat, ProductSize } from '../data/products';
 import { PRICES } from '../data/products';
+import { track } from '../components/consent/cookie-consent';
 
 export interface CartItem {
   id: string;
@@ -77,7 +78,30 @@ export const amountToFreeShipping = computed(cartTotal, (total) =>
   Math.max(0, FREE_SHIPPING_THRESHOLD - total)
 );
 
+/**
+ * A basket line as a GA4 item. item_id and item_category match what the webhook
+ * sends with the purchase (netlify/functions/_shared/ga4-mp.mjs), so the
+ * funnel joins up in reports.
+ */
+export function gaItem(item: Omit<CartItem, 'id'>, quantity = item.quantity) {
+  const variant = [item.format, item.size, item.artworkStyle].filter(Boolean).join(' / ');
+  return {
+    item_id: item.slug || item.productId,
+    item_name: item.title,
+    ...(variant ? { item_variant: variant } : {}),
+    item_category: item.personalisationId ? 'personalised' : 'stock',
+    price: Math.round(item.unitPrice * 100) / 100,
+    quantity,
+  };
+}
+
 export function addToCart(item: Omit<CartItem, 'id'>) {
+  // Does nothing unless the visitor accepted analytics.
+  track('add_to_cart', {
+    currency: 'GBP',
+    value: Math.round(item.unitPrice * item.quantity * 100) / 100,
+    items: [gaItem(item)],
+  });
   const current = cartItems.get();
   // Every personalised build is unique -- two covers at the same size and format
   // are different artwork -- so those lines must never merge into one another.

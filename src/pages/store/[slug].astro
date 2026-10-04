@@ -527,9 +527,13 @@ const relatedProducts = product.relatedProducts || [];
     data-product-image={mainImageUrl || ''}
     data-orientation={orientation}
     data-style-images={hasStyleChoice ? JSON.stringify(styleImages) : ''}
+    data-personalised={product.isPersonalised ? 'true' : undefined}
+    data-from-price={product.isPersonalised && personalisedFrom !== undefined ? personalisedFrom.toFixed(2) : undefined}
   ></div>
 
   <script>
+    import { track } from '../../components/consent/cookie-consent';
+
     const PRICES = {
       poster: { small: 9.99, medium: 12.99, large: 16.99 },
       'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
@@ -696,6 +700,31 @@ const relatedProducts = product.relatedProducts || [];
     // products have neither -- the builder owns pricing -- so it must not run and
     // overwrite the rendered "from" copy with a flat figure.
     if (formatBtns.length && sizeBtns.length) updatePrice();
+
+    /* GA4 view_item (a no-op unless the visitor accepted analytics). A stock
+       print at the selected format and size -- which ?format=&size= may have
+       preselected -- and a personalised product at its "from" price, since the
+       builder has not priced anything yet. */
+    (function viewItem() {
+      const personalised = dataEl?.dataset.personalised === 'true';
+      const price = personalised
+        ? Number(dataEl?.dataset.fromPrice)
+        : (PRICES[selectedFormat]?.[selectedSize] || 9.99);
+      if (!Number.isFinite(price) || price <= 0) return;
+      const variant = personalised ? '' : [selectedFormat, selectedSize, selectedStyle].filter(Boolean).join(' / ');
+      track('view_item', {
+        currency: 'GBP',
+        value: price,
+        items: [{
+          item_id: productSlug || productId,
+          item_name: productTitle,
+          ...(variant ? { item_variant: variant } : {}),
+          item_category: personalised ? 'personalised' : 'stock',
+          price,
+          quantity: 1,
+        }],
+      });
+    })();
 
     document.getElementById('add-to-cart')?.addEventListener('click', async () => {
       const { addToCart } = await import('../../stores/cart');

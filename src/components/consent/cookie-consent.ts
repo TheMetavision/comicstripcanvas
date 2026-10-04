@@ -3,8 +3,8 @@
 // Self-contained cookie consent (UK PECR / ICO), no third-party platform and
 // no dependencies. Reusable: copy the consent/ folder to another site and set
 // the attributes on <CookieConsent /> (tracker ids, policy link, cookie name).
-// Comic Strip Canvas uses the Google Tag Manager container (data-gtm); every
-// tag inside it (analytics, ads) therefore only runs after consent.
+// Comic Strip Canvas loads Google Analytics 4 directly (data-ga4), only after
+// consent, and sends shopping events through track() below.
 //
 // Rules it enforces:
 // - Nothing non-essential loads until the visitor clicks "Accept all".
@@ -39,6 +39,8 @@ declare global {
     gtag?: (...args: unknown[]) => void;
     fbq?: any;
     _fbq?: any;
+    /** The GA4 id while analytics is running with consent; unset otherwise. */
+    __ga4Active?: string;
   }
 }
 
@@ -63,6 +65,24 @@ function writeChoice(cfg: Config, choice: Choice) {
 
 let trackersLoaded = false;
 
+/**
+ * A URL with its query string and hash removed when it carries something that
+ * should not reach Google: the Stripe session id on /order-confirmation, or a
+ * personalisation reference (pp-<hex>). Anything else is returned unchanged.
+ */
+function cleanUrl(href: string): string {
+  try {
+    const u = new URL(href);
+    if (u.origin !== location.origin) return href;
+    if (u.pathname.startsWith("/order-confirmation") || /pp-[0-9a-f]{32}/i.test(u.search + u.hash)) {
+      return u.origin + u.pathname;
+    }
+    return href;
+  } catch {
+    return href;
+  }
+}
+
 function loadGA4(id: string) {
   const s = document.createElement("script");
   s.async = true;
@@ -73,8 +93,30 @@ function loadGA4(id: string) {
     // eslint-disable-next-line prefer-rest-params
     window.dataLayer!.push(arguments);
   };
+  // Before js/config: analytics only, never advertising.
+  window.gtag("consent", "default", {
+    analytics_storage: "granted",
+    ad_storage: "denied",
+    ad_user_data: "denied",
+    ad_personalization: "denied",
+  });
   window.gtag("js", new Date());
-  window.gtag("config", id);
+  const params: Record<string, string> = {};
+  const loc = cleanUrl(location.href);
+  if (loc !== location.href) params.page_location = loc;
+  if (document.referrer) {
+    const ref = cleanUrl(document.referrer);
+    if (ref !== document.referrer) params.page_referrer = ref;
+  }
+  window.gtag("config", id, params);
+  window.__ga4Active = id;
+}
+
+/** Accepting again on a page where the visitor had just withdrawn. */
+function resumeGA4(id: string) {
+  (window as unknown as Record<string, boolean>)[`ga-disable-${id}`] = false;
+  window.gtag?.("consent", "update", { analytics_storage: "granted" });
+  window.__ga4Active = id;
 }
 
 function loadMetaPixel(id: string) {
@@ -108,7 +150,10 @@ function loadGTM(id: string) {
 }
 
 function loadTrackers(cfg: Config) {
-  if (trackersLoaded) return;
+  if (trackersLoaded) {
+    if (cfg.ga4Id && !window.__ga4Active) resumeGA4(cfg.ga4Id);
+    return;
+  }
   trackersLoaded = true;
   if (cfg.ga4Id) loadGA4(cfg.ga4Id);
   if (cfg.metaPixelId) loadMetaPixel(cfg.metaPixelId);
@@ -140,9 +185,11 @@ function clearTrackerCookies() {
  * can't write their cookies again after we clear them.
  */
 function stopRunningTrackers(cfg: Config) {
-  // GA4: Google's opt-out flag, per measurement ID. IDs come from the config
-  // and from any _ga_<ID> cookie, which also covers GA4 loaded through GTM.
-  const ids = new Set<string>(cfg.ga4Id ? [cfg.ga4Id] : []);
+  // GA4: Google's opt-out flag, per measurement ID. The configured id always,
+  // plus any from a _ga_<ID> cookie (e.g. one left by GA4 loaded through GTM).
+  window.__ga4Active = undefined;
+  const ids = new Set<string>();
+  if (cfg.ga4Id) ids.add(cfg.ga4Id);
   for (const c of document.cookie.split(";")) {
     const m = c.trim().match(/^_ga_([A-Z0-9]+)=/);
     if (m) ids.add(`G-${m[1]}`);
@@ -166,6 +213,56 @@ function stopRunningTrackers(cfg: Config) {
   }
   // Meta Pixel: stop sending events and setting cookies.
   if (window.fbq) window.fbq("consent", "revoke");
+}
+
+/* ---------------- events (no-ops without consent) ---------------- */
+
+/** Pages and builder modes that are ours, not a shopper's. */
+function staffContext(): boolean {
+  if (location.pathname.startsWith("/admin")) return true;
+  const mode = document.getElementById("csc-builder-root")?.dataset.mode;
+  return mode === "studio" || mode === "admin";
+}
+
+/**
+ * Send a GA4 event. Does nothing unless the visitor accepted analytics and
+ * gtag is loaded; never queues to dataLayer ahead of consent, because a queue
+ * would be sent on a later "Accept all". Never fires in staff contexts.
+ */
+export function track(name: string, params: Record<string, unknown> = {}) {
+  try {
+    if (!window.__ga4Active || typeof window.gtag !== "function" || staffContext()) return;
+    window.gtag("event", name, params);
+  } catch {
+    /* analytics never breaks the page */
+  }
+}
+
+/**
+ * The GA4 client id and session id, asked for together under one deadline:
+ * whatever gtag has answered by timeoutMs is returned, and anything it has not
+ * is left undefined. Both undefined when analytics is off. Used at checkout so
+ * the server can send the purchase into the visitor's own session.
+ */
+export function getGaIds(timeoutMs = 500): Promise<{ clientId?: string; sessionId?: string }> {
+  const id = window.__ga4Active;
+  if (!id || typeof window.gtag !== "function" || staffContext()) return Promise.resolve({});
+  return new Promise((resolve) => {
+    const ids: { clientId?: string; sessionId?: string } = {};
+    let pending = 2;
+    const done = () => { clearTimeout(timer); resolve(ids); };
+    const timer = setTimeout(() => resolve({ ...ids }), timeoutMs);
+    const answer = (key: "clientId" | "sessionId") => (value: unknown) => {
+      if (value !== undefined && value !== null && String(value)) ids[key] = String(value);
+      if (--pending === 0) done();
+    };
+    try {
+      window.gtag!("get", id, "client_id", answer("clientId"));
+      window.gtag!("get", id, "session_id", answer("sessionId"));
+    } catch {
+      done();
+    }
+  });
 }
 
 /* ---------------- banner ---------------- */

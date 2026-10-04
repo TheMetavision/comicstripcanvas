@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { docIdFor, refOf } from './_shared/pp-id.mjs';
 import { PRICES } from './_shared/catalog.mjs';
+import { GA_CLIENT_ID_RE, GA_SESSION_ID_RE } from './_shared/ga4-mp.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import {
   CLASSIC, FULL_BLEED, isStyle, styleLabel, styleLabelFor, resolveCustomiseFee,
@@ -76,7 +77,7 @@ export default async (req, context) => {
   }
 
   try {
-    const { items } = await req.json();
+    const { items, gaClientId, gaSessionId } = await req.json();
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return new Response(JSON.stringify({ error: 'Cart is empty' }), {
@@ -332,6 +333,21 @@ export default async (req, context) => {
           },
         },
       ],
+      /* The visitor's GA4 client id and session id, sent by the basket only if
+         they accepted analytics. The webhook reads them back to send the
+         purchase to GA4 from the server, in the visit's own session. Anything
+         not in the expected shape ("123.456", digits) is dropped rather than
+         stored, and a session id is never kept without a client id. */
+      ...(typeof gaClientId === 'string' && GA_CLIENT_ID_RE.test(gaClientId)
+        ? {
+          metadata: {
+            ga_client_id: gaClientId,
+            ...(typeof gaSessionId === 'string' && GA_SESSION_ID_RE.test(gaSessionId)
+              ? { ga_session_id: gaSessionId }
+              : {}),
+          },
+        }
+        : {}),
       success_url: `${siteUrl}/order-confirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/store`,
     });

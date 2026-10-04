@@ -112,8 +112,10 @@
     removeFromCart,
     updateQuantity,
     clearCart,
+    gaItem,
   } from '../stores/cart';
   import type { CartItem } from '../stores/cart';
+  import { track, getGaIds } from './consent/cookie-consent';
   import { sizeLabel, sizeLabelFor } from '../../netlify/functions/_shared/sizes.mjs';
 
   const panel = document.getElementById('cart-panel');
@@ -381,10 +383,23 @@
     if (checkoutError) checkoutError.classList.add('hidden');
 
     try {
+      // Both no-ops unless the visitor accepted analytics. The client and
+      // session ids let the webhook send the purchase to GA4, in this visit's
+      // session, once Stripe confirms payment; gtag gets 500 ms for both and
+      // checkout never waits longer.
+      track('begin_checkout', {
+        currency: 'GBP',
+        value: Math.round(cartTotal.get() * 100) / 100,
+        items: items.map((item) => gaItem(item)),
+      });
+      const { clientId: gaClientId, sessionId: gaSessionId } = await getGaIds(500);
+
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...(gaClientId ? { gaClientId } : {}),
+          ...(gaClientId && gaSessionId ? { gaSessionId } : {}),
           items: items.map((item) => ({
             productId: item.productId,
             slug: item.slug,

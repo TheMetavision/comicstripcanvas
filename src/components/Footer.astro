@@ -1,5 +1,10 @@
 ---
 import { localImg } from '../lib/sanityImage';
+interface Props {
+  /** Off where there is no cookie banner to reopen (staff pages). */
+  cookieSettings?: boolean;
+}
+const { cookieSettings = true } = Astro.props;
 const year = new Date().getFullYear();
 ---
 
@@ -38,12 +43,14 @@ const year = new Date().getFullYear();
               </a>
             </li>
           ))}
-          <li>
-            <button type="button" data-cookie-settings
-                    class="font-source text-gray-400 hover:text-comic-yellow transition-colors text-sm text-left">
-              Cookie Settings
-            </button>
-          </li>
+          {cookieSettings && (
+            <li>
+              <button type="button" data-cookie-settings
+                      class="font-source text-gray-400 hover:text-comic-yellow transition-colors text-sm text-left">
+                Cookie Settings
+              </button>
+            </li>
+          )}
         </ul>
       </div>
 

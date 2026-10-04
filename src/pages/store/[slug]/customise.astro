@@ -17,6 +17,7 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import ProductBuilder from '../../../components/ProductBuilder.astro';
 import { sanityClient, urlFor } from '../../../lib/sanity';
 import { CUSTOMISE_FEE_DEFAULT } from '../../../../netlify/functions/_shared/artwork-styles.mjs';
+import { PRICES } from '../../../data/products';
 
 export async function getStaticPaths() {
   /* Only products with a scene. A hand-curated catalogue product has artwork
@@ -49,6 +50,9 @@ const fee = typeof product.customiseFee === 'number' && product.customiseFee > 0
 const hasClassic = !!product.classicSceneId;
 const hasFullBleed = !!product.fullBleedSceneId;
 const imageUrl = product.image?.asset?.url || '';
+/* The cheapest way to buy this design customised: the smallest poster plus the
+   fee. Only the GA4 view_item below reads it; the builder prices the real line. */
+const fromPrice = PRICES.poster.small + fee / 100;
 
 /* The cover templates are the only ones a stock design is drawn on today, and
    the builder replaces this the moment the scene arrives -- it loads the
@@ -122,5 +126,28 @@ const template = 'cover' as const;
     data-product-title={product.title}
     data-product-accent={product.accentColor || '#EC008C'}
     data-product-image={imageUrl ? urlFor(product.image).width(800).url() : ''}
+    data-from-price={fromPrice.toFixed(2)}
   ></div>
+
+  <script>
+    import { track } from '../../../components/consent/cookie-consent';
+
+    // GA4 view_item at the "from" price; a no-op unless analytics was accepted.
+    const ds = document.getElementById('product-data')?.dataset || {};
+    const price = Number(ds.fromPrice);
+    if (Number.isFinite(price) && price > 0) {
+      track('view_item', {
+        currency: 'GBP',
+        value: price,
+        items: [{
+          item_id: ds.productSlug || ds.productId,
+          item_name: ds.productTitle,
+          item_category: 'personalised',
+          item_category2: 'customise',
+          price,
+          quantity: 1,
+        }],
+      });
+    }
+  </script>
 </BaseLayout>

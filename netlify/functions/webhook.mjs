@@ -6,6 +6,7 @@ import { FULL_BLEED, styleOr, styleLabel, styleLabelFor } from './_shared/artwor
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
 import { asDocId, docIdFor } from './_shared/pp-id.mjs';
+import { sendPurchase } from './_shared/ga4-mp.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -552,8 +553,9 @@ async function fulfilOrder(session) {
 
       // Builder-made lines: mark each build paid and start its render. Runs after
       // the order is persisted so a retry can never render against no order.
+      let paidLines = null;
       try {
-        const paidLines = await stripe.checkout.sessions.listLineItems(session.id, {
+        paidLines = await stripe.checkout.sessions.listLineItems(session.id, {
           expand: ['data.price.product'],
           limit: 100,
         });
@@ -567,6 +569,15 @@ async function fulfilOrder(session) {
       } catch (err) {
         console.error('Could not settle personalisations for', session.id, err.message);
       }
+
+      // GA4 purchase, server-side. After the order is committed, so a retry
+      // stops at the idempotency guard and never counts it twice. Only for a
+      // visitor who accepted analytics (ga_client_id on the session); never
+      // fails the order -- sendPurchase does not throw.
+      const ga = await sendPurchase({ session, orderNumber, lineItems: paidLines?.data });
+      if (ga.sent) console.log(`GA4 purchase sent for ${orderNumber} (£${ga.value.toFixed(2)})`);
+      else if (ga.error) console.error(`GA4 purchase for ${orderNumber} not sent: ${ga.error}`);
+      else console.log(`GA4 purchase for ${orderNumber} skipped: ${ga.skipped}`);
 
       // ── Email templates ──────────────────────────────────────
       const emailFooter = `
