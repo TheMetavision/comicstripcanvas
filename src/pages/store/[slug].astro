@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
+import { sanityDims } from '../../lib/sanityImage';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
 import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
 import { sizeLabelFor, orientationFromAspect } from '../../../netlify/functions/_shared/sizes.mjs';
@@ -14,6 +15,9 @@ import type { ProductFormat, ProductSize } from '../../data/products';
 
 export async function getStaticPaths() {
   const products = await sanityClient.fetch(allProductSlugsQuery);
+  // An empty catalogue means Sanity failed us: fail the build (Netlify keeps
+  // the live deploy) rather than publish a shop with no product pages.
+  if (!products?.length) throw new Error('[store/[slug]] Sanity returned no products');
   return products.map((product: any) => ({
     params: { slug: product.slug },
   }));
@@ -51,6 +55,11 @@ const orientation = orientationFromAspect(product.images?.[0]?.aspectRatio);
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
+// What the page shows (WebP/AVIF where supported); the cart keeps mainImageUrl.
+const mainDisplayUrl = hasImages && product.images[0]?.asset
+  ? urlFor(product.images[0]).width(800).auto('format').quality(80).url()
+  : null;
+const mainDims = mainImageUrl ? sanityDims(product.images[0].asset?.url || mainImageUrl, 800) : {};
 
 /* A SECOND artwork style, when the product has one.
 
@@ -220,11 +229,29 @@ const offers = FORMAT_KEYS.flatMap((format) =>
     "shippingDetails": shippingDetails,
   }))
 );
+const seoTitle = product.seo?.metaTitle || product.title;
+/* Description: the product's own SEO text when it fits in 155 characters,
+   otherwise one built from its fields (58 products have none, and the
+   generated Sanity text runs to 180). Named by the product's actual style. */
+const STYLE_WORDS: Record<string, string> = {
+  'comic-book-covers': 'comic book cover',
+  'comic-book-icons': 'comic book icon',
+  'comic-book-strips': 'comic strip',
+  personalised: 'personalised comic',
+};
+const generatedDesc = `${product.title} in bold ${STYLE_WORDS[product.category] || 'comic book'} art: a canvas or poster print in 3 sizes from £${(personalisedFrom ?? PRICES.poster.small).toFixed(2)}. Made to order in the UK.`;
+const ownDesc = (product.seo?.metaDescription || product.description || '').trim();
+const seoDesc = ownDesc && ownDesc.length <= 155 ? ownDesc : generatedDesc;
+
+// Social card: the product's own SEO image if set, else its artwork as a JPEG.
+const ogSource = product.seo?.ogImage?.asset ? product.seo.ogImage : (hasImages ? product.images[0] : null);
+const ogImageUrl = ogSource ? urlFor(ogSource).width(1200).format('jpg').quality(85).url() : undefined;
+
 const productSchema = {
   "@context": "https://schema.org",
   "@type": "Product",
   "name": product.title,
-  "description": product.seo?.metaDescription || product.description,
+  "description": seoDesc,
   "image": mainImageUrl || undefined,
   "sku": product.slug,
   "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
@@ -232,14 +259,13 @@ const productSchema = {
 };
 
 const relatedProducts = product.relatedProducts || [];
-const seoTitle = product.seo?.metaTitle || product.title;
-const seoDesc = product.seo?.metaDescription || product.description;
 ---
 
 <BaseLayout
   title={seoTitle}
   description={seoDesc}
   ogType="product"
+  ogImage={ogImageUrl}
 >
   <section class="relative bg-charcoal py-8">
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
@@ -264,7 +290,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
                style="box-shadow: 6px 6px 0 #000000; min-height: 400px; max-height: 600px;">
             {mainImageUrl ? (
               <img
-                src={mainImageUrl}
+                src={mainDisplayUrl}
+                {...mainDims}
+                fetchpriority="high"
                 alt={product.images[0]?.alt || product.title}
                 class="max-w-full max-h-[580px] object-contain"
                 id="main-product-img"
@@ -276,14 +304,14 @@ const seoDesc = product.seo?.metaDescription || product.description;
           {hasImages && product.images.length > 1 && (
             <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
               {product.images.map((img: any, i: number) => {
-                const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).url() : null;
+                const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).auto('format').quality(70).url() : null;
                 return thumbUrl ? (
                   <button
                     class="w-20 h-16 flex-shrink-0 border-2 border-gray-700 cursor-pointer hover:border-comic-yellow transition-colors overflow-hidden bg-mid-grey flex items-center justify-center thumb-btn"
-                    data-full={urlFor(img).width(1200).url()}
+                    data-full={urlFor(img).width(1200).auto('format').quality(80).url()}
                     data-alt={img.alt || product.title}
                   >
-                    <img src={thumbUrl} alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
+                    <img src={thumbUrl} width="160" height="128" alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
                   </button>
                 ) : null;
               })}
@@ -467,12 +495,12 @@ const seoDesc = product.seo?.metaDescription || product.description;
         <h2 class="section-heading mb-8">YOU MIGHT ALSO LIKE</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {relatedProducts.map((p: any) => {
-            const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).url() : null;
+            const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).auto('format').quality(75).url() : null;
             return (
               <a href={`/store/${p.slug}/`} class="product-card group block">
                 <div class="aspect-[3/2] overflow-hidden bg-mid-grey flex items-center justify-center">
                   {relImgUrl ? (
-                    <img src={relImgUrl} alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                    <img src={relImgUrl} width="600" height="400" alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />
                   ) : (
                     <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
                   )}

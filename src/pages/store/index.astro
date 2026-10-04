@@ -8,6 +8,7 @@ import { allProductsQuery } from '../../lib/queries';
 import { PRICES } from '../../data/products';
 
 const products = await sanityClient.fetch(allProductsQuery);
+if (!products?.length) throw new Error('[store] Sanity returned no products'); // fail the build, not ship an empty listing
 
 const categories = [
   { value: 'all', label: 'All' },

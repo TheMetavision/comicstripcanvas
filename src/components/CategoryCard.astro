@@ -1,4 +1,5 @@
 ---
+import { sanityImg, sanitySrcset, sanityDims } from '../lib/sanityImage';
 interface Props {
   title: string;
   href: string;
@@ -27,7 +28,10 @@ const hasMultiple = images.length > 1;
     {images.length > 0 ? (
       images.map((img, i) => (
         <img
-          src={img}
+          src={sanityImg(img, 400)}
+          srcset={sanitySrcset(img, 360)}
+          sizes="(min-width: 1280px) 360px, (min-width: 768px) 28vw, 100vw"
+          {...sanityDims(img, 400)}
           alt={`${title} artwork ${i + 1}`}
           class={`carousel-img absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`}
           loading="lazy"
@@ -68,7 +72,7 @@ const hasMultiple = images.length > 1;
       let paused = false;
 
       function cycle() {
-        if (paused) return;
+        if (paused || document.documentElement.dataset.rotation === 'paused') return;
         const next = (current + 1) % imgs.length;
         imgs[current].classList.remove('opacity-100');
         imgs[current].classList.add('opacity-0');
@@ -77,10 +81,14 @@ const hasMultiple = images.length > 1;
         current = next;
       }
 
-      const interval = setInterval(cycle, 3000);
+      // Reduced motion: show the first image and stay still.
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      setInterval(cycle, 3000);
 
       container.closest('a')?.addEventListener('mouseenter', () => { paused = true; });
       container.closest('a')?.addEventListener('mouseleave', () => { paused = false; });
+      container.closest('a')?.addEventListener('focusin', () => { paused = true; });
+      container.closest('a')?.addEventListener('focusout', () => { paused = false; });
     })();
   </script>
 )}

@@ -24,10 +24,11 @@ const { testimonials = [] } = Astro.props;
     </div>
   </div>
 
-  <div class="relative">
+  <div class="relative testimonial-viewport">
     <div id="testimonial-track" class="flex gap-6 testimonial-scroll" style="width: max-content;">
       {[...testimonials, ...testimonials].map((t, i) => (
-        <div class="w-80 flex-shrink-0 bg-panel-dark border-4 border-black p-6"
+        <div class={`w-80 flex-shrink-0 bg-panel-dark border-4 border-black p-6 ${i >= testimonials.length ? 'testimonial-dup' : ''}`}
+             aria-hidden={i >= testimonials.length ? 'true' : undefined}
              style="box-shadow: 4px 4px 0 #000000;">
           <div class="flex gap-1 mb-4">
             {Array(t.rating).fill(null).map(() => (
@@ -47,15 +48,41 @@ const { testimonials = [] } = Astro.props;
       ))}
     </div>
   </div>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 text-center testimonial-controls">
+    <button type="button" id="testimonial-pause" class="font-russo text-xs uppercase tracking-wider text-gray-400 hover:text-comic-yellow border-2 border-gray-700 px-3 py-1.5" aria-pressed="false">
+      Pause scrolling
+    </button>
+  </div>
 </section>
+
+<script>
+  // The marquee runs for more than 5 seconds, so it gets a pause control.
+  const btn = document.getElementById('testimonial-pause');
+  const track = document.getElementById('testimonial-track');
+  btn?.addEventListener('click', () => {
+    const paused = track?.classList.toggle('is-paused') ?? false;
+    btn.setAttribute('aria-pressed', String(paused));
+    btn.textContent = paused ? 'Resume scrolling' : 'Pause scrolling';
+  });
+</script>
 
 <style>
   .testimonial-scroll {
     animation: scroll-left 30s linear infinite;
   }
 
-  .testimonial-scroll:hover {
+  .testimonial-scroll:hover,
+  .testimonial-scroll:focus-within,
+  .testimonial-scroll.is-paused {
     animation-play-state: paused;
+  }
+
+  /* Reduced motion: no marquee. The cards sit in a row you can scroll. */
+  @media (prefers-reduced-motion: reduce) {
+    .testimonial-scroll { animation: none; }
+    .testimonial-dup { display: none; }
+    .testimonial-viewport { overflow-x: auto; padding: 0 1rem; }
+    .testimonial-controls { display: none; }
   }
 
   @keyframes scroll-left {

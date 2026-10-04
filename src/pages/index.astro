@@ -1,4 +1,5 @@
 ---
+import { sanityImg, sanitySrcset, sanityDims, localImg, localSrcset } from '../lib/sanityImage';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import CategoryCard from '../components/CategoryCard.astro';
 import TestimonialCarousel from '../components/TestimonialCarousel.astro';
@@ -8,6 +9,14 @@ import { testimonialsQuery } from '../lib/queries';
 
 const testimonials = await sanityClient.fetch(testimonialsQuery);
 
+// Personalised examples sit in half of a 7xl row (about 600px wide).
+const pic = (url: string) => ({
+  src: sanityImg(url, 600),
+  srcset: sanitySrcset(url, 600),
+  sizes: '(min-width: 1024px) 600px, 100vw',
+  ...sanityDims(url, 600),
+});
+
 // Fetch product images for category card carousels (6 per category)
 const categoryImages = await sanityClient.fetch(`{
   "covers": *[_type == "product" && category == "comic-book-covers" && count(images) > 0] | order(sortOrder asc)[0..5].images[0],
@@ -15,9 +24,11 @@ const categoryImages = await sanityClient.fetch(`{
   "strips": *[_type == "product" && category == "comic-book-strips" && count(images) > 0] | order(sortOrder asc)[0..5].images[0]
 }`);
 
-const coverImages = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
-const iconImages = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
-const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
+// Plain asset URLs; CategoryCard sizes them (sanityImg / sanitySrcset).
+const cardImages = (list: any[]) => (list || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).url());
+const coverImages = cardImages(categoryImages.covers);
+const iconImages = cardImages(categoryImages.icons);
+const stripImages = cardImages(categoryImages.strips);
 ---
 
 <BaseLayout
@@ -87,6 +98,7 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
         <p class="font-source text-gray-400 text-lg max-w-xl mx-auto">
           Three distinct comic art styles — each bold, vibrant, and perfect for any wall.
         </p>
+        <div class="mt-4"><button type="button" data-rotation-toggle aria-pressed="false" class="rotation-toggle font-russo text-xs uppercase tracking-wider text-gray-400 hover:text-comic-yellow border-2 border-gray-700 px-3 py-1.5">Pause image rotation</button></div>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="reveal stagger-1">
@@ -152,7 +164,7 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
         </div>
         <div class="reveal stagger-2">
           <div class="aspect-[4/3] border-4 border-black overflow-hidden" style="box-shadow: 8px 8px 0 #000000;">
-            <img src="/studio-hero.png" alt="Comic Strip Canvas print studio with Epson large format printer" class="w-full h-full object-cover" loading="lazy" />
+            <img src={localImg('/studio-hero.png', 600)} srcset={localSrcset('/studio-hero.png', 600, 2752)} sizes="(min-width: 1024px) 600px, 100vw" width="2752" height="1536" alt="Comic Strip Canvas print studio with Epson large format printer" class="w-full h-full object-cover" loading="lazy" />
           </div>
         </div>
       </div>
@@ -174,7 +186,7 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center reveal stagger-1">
           <div>
             <div class="aspect-video border-4 border-comic-red overflow-hidden" style="box-shadow: 6px 6px 0 #000000;">
-              <img src="https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg" alt="Personalised comic book cover example — wedding KA-POW canvas on wall" class="w-full h-full object-cover" loading="lazy" />
+              <img {...pic('https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg')} alt="Personalised comic book cover example — wedding KA-POW canvas on wall" class="w-full h-full object-cover" loading="lazy" />
             </div>
           </div>
           <div>
@@ -198,7 +210,7 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
           </div>
           <div class="order-1 lg:order-2">
             <div class="aspect-video border-4 border-comic-yellow overflow-hidden" style="box-shadow: 6px 6px 0 #000000;">
-              <img src="https://cdn.sanity.io/images/lwbwahym/production/a30bbbcbffdf8289dd7b3def522f2075abe2e50d-2752x1536.jpg" alt="Personalised comic icon example — Mia friendships canvas on wall" class="w-full h-full object-cover" loading="lazy" />
+              <img {...pic('https://cdn.sanity.io/images/lwbwahym/production/a30bbbcbffdf8289dd7b3def522f2075abe2e50d-2752x1536.jpg')} alt="Personalised comic icon example — Mia friendships canvas on wall" class="w-full h-full object-cover" loading="lazy" />
             </div>
           </div>
         </div>
@@ -206,7 +218,7 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center reveal stagger-3">
           <div>
             <div class="aspect-video border-4 border-comic-cyan overflow-hidden" style="box-shadow: 6px 6px 0 #000000;">
-              <img src="https://cdn.sanity.io/images/lwbwahym/production/5895d21b1e695781263a08dc0acf608cdc8c098f-1248x832.jpg" alt="Personalised comic strip example — graduation story canvas on wall" class="w-full h-full object-cover" loading="lazy" />
+              <img {...pic('https://cdn.sanity.io/images/lwbwahym/production/5895d21b1e695781263a08dc0acf608cdc8c098f-1248x832.jpg')} alt="Personalised comic strip example — graduation story canvas on wall" class="w-full h-full object-cover" loading="lazy" />
             </div>
           </div>
           <div>
@@ -251,3 +263,5 @@ const stripImages = (categoryImages.strips || []).filter((img: any) => img?.asse
     })),
   })}></script>
 </BaseLayout>
+
+<script src="../scripts/rotation-toggle.js"></script>

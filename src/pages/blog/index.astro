@@ -31,13 +31,13 @@ const blogPosts = await sanityClient.fetch(allBlogPostsQuery);
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
       {blogPosts.map((post: any) => {
-        const postImgUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(700).height(394).url() : null;
+        const postImgUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(700).height(394).auto('format').quality(75).url() : null;
         return (
         <article class="bg-panel-dark border-4 border-black overflow-hidden group transition-all duration-300 hover:-translate-y-1"
                  style="box-shadow: 4px 4px 0 #000000;">
           <div class="aspect-video relative overflow-hidden">
             {postImgUrl ? (
-              <img src={postImgUrl} alt={post.mainImage?.alt || post.title} class="w-full h-full object-cover" loading="lazy" />
+              <img src={postImgUrl} width="700" height="394" alt={post.mainImage?.alt || post.title} class="w-full h-full object-cover" loading="lazy" />
             ) : (
               <div class="w-full h-full img-placeholder flex items-center justify-center">
                 <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">BLOG IMAGE</span>

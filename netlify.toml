@@ -313,3 +313,14 @@
   to = "/.netlify/functions/:splat"
   status = 200
   force = true
+
+# ── Security headers ─────────────────────────────────────────────────────────
+# The builder takes photos through a file picker; nothing uses the camera.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(self \"https://js.stripe.com\")"
+    # Report-only for now: violations appear in the browser console; nothing is blocked.
+    Content-Security-Policy-Report-Only = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.sanity.io https://*.google-analytics.com https://*.googletagmanager.com; font-src 'self'; connect-src 'self' https://cdn.sanity.io https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; media-src 'self' https://cdn.sanity.io; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"

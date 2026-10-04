@@ -1,4 +1,6 @@
 ---
+import { localImg } from '../lib/sanityImage';
+const year = new Date().getFullYear();
 ---
 
 <footer class="bg-black border-t-4 border-comic-red mt-16">
@@ -7,7 +9,10 @@
       <div class="flex flex-col items-center text-center">
         <a href="/" class="mb-4">
           <img
-            src="/logo.png"
+            src={localImg('/logo.png', 170)}
+          srcset={`${localImg('/logo.png', 170)} 1x, ${localImg('/logo.png', 341)} 2x`}
+          width="170"
+          height="96"
             alt="Comic Strip Canvas"
             class="h-24 w-auto object-contain"
           />
@@ -82,10 +87,14 @@
 
   <div class="border-t-2 border-gray-800">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-      <p class="font-bangers text-gray-500 tracking-widest text-sm uppercase">
-        &copy; 2026 COMIC STRIP CANVAS. All rights reserved.
+      <p class="font-source text-gray-500 text-xs leading-relaxed max-w-3xl">
+        &copy; {year} Comic Strip Canvas is a trading name of The Metavision Multimedia Limited.
+        Registered in England &amp; Wales, company no. 16282479.
+        Registered office: 167-169 Great Portland Street, 5th Floor, London, W1W 5PF.
+        VAT no. GB 503 7530 17.
+        <a href="mailto:contact@comicstripcanvas.co.uk" class="hover:text-comic-yellow transition-colors">contact@comicstripcanvas.co.uk</a>
       </p>
-      <p class="font-source text-gray-600 text-xs">Made with passion in the UK</p>
+      <p class="font-source text-gray-600 text-xs flex-shrink-0">Made with passion in the UK</p>
     </div>
   </div>
 </footer>

@@ -18,7 +18,10 @@ const categoryLabels: Record<string, string> = {
 
 const basePrice = PRICES.poster.small;
 const hasImage = product.images && product.images.length > 0 && product.images[0]?.asset;
-const imageUrl = hasImage ? urlFor(product.images[0]).width(600).height(750).url() : null;
+// 4:5 card, up to ~300px wide in the store grid.
+const cardAt = (w: number) => urlFor(product.images[0]).width(w).height(Math.round(w * 1.25)).auto('format').quality(75).url();
+const imageUrl = hasImage ? cardAt(480) : null;
+const imageSrcset = hasImage ? [320, 480, 640].map((w) => `${cardAt(w)} ${w}w`).join(', ') : undefined;
 ---
 
 <article class="product-card group relative flex flex-col overflow-hidden">
@@ -27,6 +30,10 @@ const imageUrl = hasImage ? urlFor(product.images[0]).width(600).height(750).url
       {imageUrl ? (
         <img
           src={imageUrl}
+          srcset={imageSrcset}
+          sizes="(min-width: 1280px) 300px, (min-width: 768px) 33vw, 50vw"
+          width="480"
+          height="600"
           alt={product.images[0]?.alt || product.title}
           class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110"
           loading="lazy"
