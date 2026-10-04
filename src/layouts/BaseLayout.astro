@@ -5,6 +5,7 @@ import CartPanel from '../components/CartPanel.astro';
 import CookieConsent from '../components/consent/CookieConsent.astro';
 import '../styles/global.css';
 import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
+import { organizationSchema } from '../lib/schema';
 
 interface Props {
   title: string;
@@ -75,55 +76,8 @@ const breadcrumbItems = [
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/site.webmanifest" />
 
-  <!-- Organization + LocalBusiness Schema -->
-  <script type="application/ld+json" set:html={JSON.stringify({
-    "@context": "https://schema.org",
-    "@type": ["Organization", "LocalBusiness"],
-    "name": "Comic Strip Canvas",
-    "alternateName": "CSC",
-    "description": "UK-based pop culture wall art brand. Bold comic-book style canvas prints, framed prints, and posters. Personalised artwork from your own photos.",
-    "url": siteUrl,
-    "logo": ogImage,
-    "image": ogImage,
-    "priceRange": "£9.99 - £46.99",
-    "currenciesAccepted": "GBP",
-    "paymentAccepted": "Credit Card, Debit Card",
-    "address": {
-      "@type": "PostalAddress",
-      "addressCountry": "GB",
-    },
-    "areaServed": {
-      "@type": "Country",
-      "name": "United Kingdom",
-    },
-    "hasOfferCatalog": {
-      "@type": "OfferCatalog",
-      "name": "Comic Strip Canvas Products",
-      "itemListElement": [
-        {
-          "@type": "OfferCatalog",
-          "name": "Comic Book Covers",
-          "url": `${siteUrl}/store/comic-book-covers/`,
-        },
-        {
-          "@type": "OfferCatalog",
-          "name": "Comic Book Icons",
-          "url": `${siteUrl}/store/comic-book-icons/`,
-        },
-        {
-          "@type": "OfferCatalog",
-          "name": "Comic Book Strips",
-          "url": `${siteUrl}/store/comic-book-strips/`,
-        },
-        {
-          "@type": "OfferCatalog",
-          "name": "Personalised Products",
-          "url": `${siteUrl}/store/personalised/`,
-        },
-      ],
-    },
-    "sameAs": [],
-  })}></script>
+  <!-- Organization schema: the real trader (src/lib/schema.ts) -->
+  <script type="application/ld+json" set:html={JSON.stringify(organizationSchema(`${siteUrl}/web-app-manifest-512x512.png`))}></script>
 
   <!-- BreadcrumbList Schema (all pages) -->
   {breadcrumbItems.length > 1 && (
