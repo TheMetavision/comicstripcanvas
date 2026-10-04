@@ -226,11 +226,25 @@ const offers = FORMAT_KEYS.flatMap((format) =>
     "shippingDetails": shippingDetails,
   }))
 );
+const seoTitle = product.seo?.metaTitle || product.title;
+/* Description: the product's own SEO text when it fits in 155 characters,
+   otherwise one built from its fields (58 products have none, and the
+   generated Sanity text runs to 180). Named by the product's actual style. */
+const STYLE_WORDS: Record<string, string> = {
+  'comic-book-covers': 'comic book cover',
+  'comic-book-icons': 'comic book icon',
+  'comic-book-strips': 'comic strip',
+  personalised: 'personalised comic',
+};
+const generatedDesc = `${product.title} in bold ${STYLE_WORDS[product.category] || 'comic book'} art: a canvas or poster print in 3 sizes from £${(personalisedFrom ?? PRICES.poster.small).toFixed(2)}. Made to order in the UK.`;
+const ownDesc = (product.seo?.metaDescription || product.description || '').trim();
+const seoDesc = ownDesc && ownDesc.length <= 155 ? ownDesc : generatedDesc;
+
 const productSchema = {
   "@context": "https://schema.org",
   "@type": "Product",
   "name": product.title,
-  "description": product.seo?.metaDescription || product.description,
+  "description": seoDesc,
   "image": mainImageUrl || undefined,
   "sku": product.slug,
   "brand": { "@type": "Brand", "name": "Comic Strip Canvas" },
@@ -238,8 +252,6 @@ const productSchema = {
 };
 
 const relatedProducts = product.relatedProducts || [];
-const seoTitle = product.seo?.metaTitle || product.title;
-const seoDesc = product.seo?.metaDescription || product.description;
 ---
 
 <BaseLayout

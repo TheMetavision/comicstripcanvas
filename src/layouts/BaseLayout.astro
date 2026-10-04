@@ -19,7 +19,7 @@ interface Props {
 
 const {
   title,
-  description = 'Comic Strip Canvas — UK-based pop culture wall art. Bold comic-book style canvas prints, framed prints, and posters. Personalised options available. FREE UK P&P on orders of £50 and over.',
+  description,
   ogImage = 'https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg?w=1200',
   ogType = 'website',
   canonical,
@@ -29,7 +29,21 @@ const {
 const siteUrl = SITE;
 // Apex host, trailing slash: the address Netlify actually serves.
 const pageUrl = canonicalUrl(canonical || Astro.url.pathname);
-const fullTitle = `${title} | Comic Strip Canvas`;
+// Titles stay within 60 characters: the brand suffix is dropped before the
+// page's own words are. Descriptions over 155 are trimmed at a word boundary
+// (a safety net; templates should fit) and never left empty.
+const TITLE_MAX = 60;
+const DESC_MAX = 155;
+const DEFAULT_DESCRIPTION = 'Bold comic-book style wall art: canvas prints and posters of film, music and sport legends, or personalised from your own photos. Made to order in the UK.';
+const bareTitle = title.replace(/\s*\|\s*Comic Strip Canvas\s*$/, '');
+const fullTitle = `${bareTitle} | Comic Strip Canvas`.length <= TITLE_MAX ? `${bareTitle} | Comic Strip Canvas` : bareTitle;
+function fitDescription(d: string): string {
+  const clean = d.replace(/\s+/g, ' ').trim();
+  if (clean.length <= DESC_MAX) return clean;
+  const cut = clean.slice(0, DESC_MAX - 1);
+  return cut.slice(0, cut.lastIndexOf(' ')).replace(/[\s,;:—–-]+$/, '') + '…';
+}
+const metaDescription = fitDescription(description || DEFAULT_DESCRIPTION);
 
 // Breadcrumb from URL path
 const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
@@ -51,7 +65,7 @@ const breadcrumbItems = [
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content={noindex ? 'noindex, nofollow' : 'index, follow'} />
   <title>{fullTitle}</title>
-  <meta name="description" content={description} />
+  <meta name="description" content={metaDescription} />
   <link rel="canonical" href={pageUrl} />
   <meta name="author" content="Comic Strip Canvas" />
   <meta name="geo.region" content="GB" />
@@ -60,7 +74,7 @@ const breadcrumbItems = [
   <!-- Open Graph -->
   <meta property="og:type" content={ogType} />
   <meta property="og:title" content={fullTitle} />
-  <meta property="og:description" content={description} />
+  <meta property="og:description" content={metaDescription} />
   <meta property="og:image" content={ogImage} />
   <meta property="og:url" content={pageUrl} />
   <meta property="og:site_name" content="Comic Strip Canvas" />
@@ -69,7 +83,7 @@ const breadcrumbItems = [
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content={fullTitle} />
-  <meta name="twitter:description" content={description} />
+  <meta name="twitter:description" content={metaDescription} />
   <meta name="twitter:image" content={ogImage} />
 
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
