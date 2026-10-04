@@ -161,45 +161,35 @@ export const GET: APIRoute = async () => {
         ? truncate(product.description, 4900)
         : `${category} — bold pop culture wall art from Comic Strip Canvas`;
 
-      // Generate 9 variants: 3 formats × 3 sizes
-      for (const format of FORMATS) {
-        for (const size of SIZES) {
-          const price = PRICES[format][size] + fee;
-          const formatLabel = FORMAT_LABELS[format];
-          const sizeLabel = SIZE_LABELS[size];
-
-          // Short codes for ID to stay under Google's 50-char limit
-          // poster=p, canvas-standard=cs, canvas-gallery=cg | small=s, medium=m, large=l
-          const formatCode = format === 'poster' ? 'p' : format === 'canvas-standard' ? 'cs' : 'cg';
-          const sizeCode = size === 'small' ? 's' : size === 'medium' ? 'm' : 'l';
-
-          // Truncate slug if needed — 50 char limit minus "-XX-X" = ~44 chars max for slug
-          const slugForId = product.slug.length > 44 ? product.slug.substring(0, 44) : product.slug;
-          const itemId = `${slugForId}-${formatCode}-${sizeCode}`;
-
-          const itemGroupId = product.slug;
-          const variantTitle = `${product.title} — ${formatLabel} (${sizeLabel})`;
-
-          items.push(`
+      /* One <item>, in the feed's shape. The variant-only lines (item_group_id,
+         size, and the format/size custom labels) are written only when given, so
+         a personalised item can leave them out without a second copy of the
+         rest. Each optional line carries its own leading newline and indent, so
+         a stock item comes out byte for byte as it did when this was one
+         template. */
+      const itemXml = (f: {
+        id: string; title: string; link: string; price: number;
+        groupId?: string; size?: string; formatLabel?: string; sizeLabel?: string;
+      }) => `
     <item>
-      <g:id>${xmlEscape(itemId)}</g:id>
-      <g:item_group_id>${xmlEscape(itemGroupId)}</g:item_group_id>
-      <g:title>${xmlEscape(truncate(variantTitle, 150))}</g:title>
+      <g:id>${xmlEscape(f.id)}</g:id>${f.groupId ? `
+      <g:item_group_id>${xmlEscape(f.groupId)}</g:item_group_id>` : ''}
+      <g:title>${xmlEscape(truncate(f.title, 150))}</g:title>
       <g:description>${xmlEscape(description)}</g:description>
-      <g:link>${xmlEscape(productUrl)}?format=${format}&amp;size=${size}</g:link>
+      <g:link>${f.link}</g:link>
       <g:image_link>${xmlEscape(optimisedImage)}</g:image_link>
       <g:availability>in stock</g:availability>
-      <g:price>${price.toFixed(2)} GBP</g:price>
+      <g:price>${f.price.toFixed(2)} GBP</g:price>
       <g:brand>${xmlEscape(BRAND)}</g:brand>
       <g:condition>new</g:condition>
-      <g:identifier_exists>no</g:identifier_exists>
-      <g:size>${xmlEscape(sizeAttr(size, orientation))}</g:size>
+      <g:identifier_exists>no</g:identifier_exists>${f.size ? `
+      <g:size>${xmlEscape(f.size)}</g:size>` : ''}
       <g:return_policy_label>${returnsLabel}</g:return_policy_label>
       <g:product_type>${xmlEscape(`Home & Garden > Decor > Artwork > Posters, Prints, & Visual Artwork > ${category}`)}</g:product_type>
       <g:google_product_category>500044</g:google_product_category>
-      <g:custom_label_0>${xmlEscape(category)}</g:custom_label_0>
-      <g:custom_label_1>${xmlEscape(formatLabel)}</g:custom_label_1>
-      <g:custom_label_2>${xmlEscape(sizeLabel)}</g:custom_label_2>
+      <g:custom_label_0>${xmlEscape(category)}</g:custom_label_0>${f.formatLabel ? `
+      <g:custom_label_1>${xmlEscape(f.formatLabel)}</g:custom_label_1>` : ''}${f.sizeLabel ? `
+      <g:custom_label_2>${xmlEscape(f.sizeLabel)}</g:custom_label_2>` : ''}
       <g:custom_label_3>${product.isPersonalised ? 'personalised' : 'standard'}</g:custom_label_3>
       <g:custom_label_4>${product.featured ? 'featured' : 'catalogue'}</g:custom_label_4>
       <g:shipping>
@@ -212,7 +202,53 @@ export const GET: APIRoute = async () => {
         <g:price_threshold>50.00 GBP</g:price_threshold>
       </g:free_shipping_threshold>
       <g:shipping_weight>0.5 kg</g:shipping_weight>
-    </item>`);
+    </item>`;
+
+      /* A PERSONALISED product is one item, not nine. Its page has no format or
+         size buttons -- the builder owns both and does not read ?format=&size=
+         -- so a variant link landed on "From GBP x" whatever variant it named,
+         and eight of the nine prices disagreed with their landing page. One
+         item at the page's own "From" price (poster/small plus the fee), linked
+         to the bare product page, says what the page says. No item_group_id and
+         no size: there is no group, and no size has been chosen.
+         It keeps the id its poster/small variant always had, so Merchant Center
+         carries that item's history over rather than starting a new one. */
+      // Truncate slug if needed — 50 char limit minus "-XX-X" = ~44 chars max for slug
+      const slugForId = product.slug.length > 44 ? product.slug.substring(0, 44) : product.slug;
+      if (product.isPersonalised) {
+        items.push(itemXml({
+          id: `${slugForId}-p-s`,
+          title: product.title,
+          link: xmlEscape(productUrl),
+          price: PRICES.poster.small + fee,
+        }));
+        continue;
+      }
+
+      // Generate 9 variants: 3 formats × 3 sizes
+      for (const format of FORMATS) {
+        for (const size of SIZES) {
+          const price = PRICES[format][size] + fee;
+          const formatLabel = FORMAT_LABELS[format];
+          const sizeLabel = SIZE_LABELS[size];
+
+          // Short codes for ID to stay under Google's 50-char limit
+          // poster=p, canvas-standard=cs, canvas-gallery=cg | small=s, medium=m, large=l
+          const formatCode = format === 'poster' ? 'p' : format === 'canvas-standard' ? 'cs' : 'cg';
+          const sizeCode = size === 'small' ? 's' : size === 'medium' ? 'm' : 'l';
+
+          const itemId = `${slugForId}-${formatCode}-${sizeCode}`;
+
+          items.push(itemXml({
+            id: itemId,
+            groupId: product.slug,
+            title: `${product.title} — ${formatLabel} (${sizeLabel})`,
+            link: `${xmlEscape(productUrl)}?format=${format}&amp;size=${size}`,
+            price,
+            size: sizeAttr(size, orientation),
+            formatLabel,
+            sizeLabel,
+          }));
         }
       }
     }

@@ -154,7 +154,7 @@ const personalisedFrom =
  * fee is not optional, and an aggregate gives Google no URL to send anybody to.
  *
  * Each offer carries the ?format=&size= link the shopping feed uses, and the
- * page now reads those back (see preselectFromQuery), so the price in the
+ * page now reads those back (the selected-variant state in the script), so the price in the
  * schema, the price in the feed and the price on the landing page are one
  * number arrived at three ways rather than three numbers that agree today.
  */
@@ -214,21 +214,30 @@ const shippingDetails = {
   },
 };
 
-const offers = FORMAT_KEYS.flatMap((format) =>
-  SIZE_KEYS.map((size) => ({
-    "@type": "Offer",
-    "name": `${FORMAT_LABELS[format]} — ${sizeLabelFor(size, orientation, 'x')}`,
-    "url": `${SITE_URL}/store/${product.slug}/?format=${format}&size=${size}`,
-    "price": (PRICES[format][size] + feeForSchema).toFixed(2),
-    "priceCurrency": "GBP",
-    "availability": "https://schema.org/InStock",
-    "itemCondition": "https://schema.org/NewCondition",
-    "priceValidUntil": priceValidUntil,
-    "seller": { "@type": "Organization", "name": "Comic Strip Canvas" },
-    "hasMerchantReturnPolicy": returnPolicy,
-    "shippingDetails": shippingDetails,
-  }))
-);
+/* A personalised product is ONE offer at its "From" price, linked to the bare
+   page -- the same single item the shopping feed lists for it. Its page has no
+   format or size buttons (the builder owns both) and ignores ?format=&size=,
+   so a per-variant offer would name a price the landing page never shows. */
+const variantKeys: [ProductFormat, ProductSize][] = product.isPersonalised && personalisedFrom !== undefined
+  ? [['poster', 'small']]
+  : FORMAT_KEYS.flatMap((format) => SIZE_KEYS.map((size) => [format, size] as [ProductFormat, ProductSize]));
+const singleOffer = variantKeys.length === 1;
+
+const offers = variantKeys.map(([format, size]) => ({
+  "@type": "Offer",
+  ...(singleOffer ? {} : { "name": `${FORMAT_LABELS[format]} — ${sizeLabelFor(size, orientation, 'x')}` }),
+  "url": singleOffer
+    ? `${SITE_URL}/store/${product.slug}/`
+    : `${SITE_URL}/store/${product.slug}/?format=${format}&size=${size}`,
+  "price": (PRICES[format][size] + feeForSchema).toFixed(2),
+  "priceCurrency": "GBP",
+  "availability": "https://schema.org/InStock",
+  "itemCondition": "https://schema.org/NewCondition",
+  "priceValidUntil": priceValidUntil,
+  "seller": { "@type": "Organization", "name": "Comic Strip Canvas" },
+  "hasMerchantReturnPolicy": returnPolicy,
+  "shippingDetails": shippingDetails,
+}));
 const seoTitle = product.seo?.metaTitle || product.title;
 /* Description: the product's own SEO text when it fits in 155 characters,
    otherwise one built from its fields (58 products have none, and the
@@ -344,7 +353,7 @@ const relatedProducts = product.relatedProducts || [];
             <Fragment>
               {/* The builder owns format, size and the artwork fee here, so this is a
                   static "from" price. Deliberately no id="current-price": that is the
-                  hook updatePrice() writes to, and it must not flatten this copy. */}
+                  hook render() writes the price to, and it must not flatten this copy. */}
               <div class="price-tag text-3xl mb-1">From £{personalisedFrom.toFixed(2)}</div>
               <p class="font-source text-gray-400 text-sm mb-4">
                 Posters from £{PRICES.poster.small.toFixed(2)}, canvas from £{PRICES['canvas-standard'].small.toFixed(2)},
@@ -533,12 +542,9 @@ const relatedProducts = product.relatedProducts || [];
 
   <script>
     import { track } from '../../components/consent/cookie-consent';
-
-    const PRICES = {
-      poster: { small: 9.99, medium: 12.99, large: 16.99 },
-      'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
-      'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
-    };
+    /* The same table the frontmatter, the schema offers and the shopping feed
+       price from, rather than a copy of it typed out again here. */
+    import { PRICES } from '../../data/products';
 
     const dataEl = document.getElementById('product-data');
     const productId = dataEl?.dataset.productId || '';
@@ -548,8 +554,27 @@ const relatedProducts = product.relatedProducts || [];
     const productImage = dataEl?.dataset.productImage || '';
     const productOrientation = dataEl?.dataset.orientation === 'landscape' ? 'landscape' : 'portrait';
 
-    let selectedFormat = 'poster';
-    let selectedSize = 'small';
+    const formatBtns = document.querySelectorAll('.format-btn');
+    const sizeBtns = document.querySelectorAll('.size-btn');
+    const styleBtns = document.querySelectorAll('.style-btn');
+
+    /* THE SELECTED VARIANT, decided once and read by everything: the button
+       highlight, the price, view_item and the basket line.
+
+       ?format= and ?size= are how the shopping feed and the Product schema link
+       to a particular variant, so they seed it. The buttons are what is valid: a
+       value with no button (missing, misspelled, a format we stopped selling)
+       falls back to the first one, which is poster/small. Before this the query
+       set the price and then a later "highlight the first button" line repainted
+       poster/small over it, so a feed link for a large gallery canvas showed
+       GBP 46.99 beside a highlighted Poster / Small. */
+    const pick = (btns: NodeListOf<Element>, key: string, want: string | null) => {
+      const all = [...btns] as HTMLElement[];
+      return all.find(b => want && b.dataset[key] === want)?.dataset[key] || all[0]?.dataset[key] || '';
+    };
+    const query = new URLSearchParams(location.search);
+    let selectedFormat = pick(formatBtns, 'format', query.get('format')) || 'poster';
+    let selectedSize = pick(sizeBtns, 'size', query.get('size')) || 'small';
     let quantity = 1;
 
     /* Which artwork style is showing. Empty when the product has only one, and
@@ -564,68 +589,48 @@ const relatedProducts = product.relatedProducts || [];
 
     const priceEl = document.getElementById('current-price');
     const qtyDisplay = document.getElementById('qty-display');
-    const formatBtns = document.querySelectorAll('.format-btn');
-    const sizeBtns = document.querySelectorAll('.size-btn');
-    const styleBtns = document.querySelectorAll('.style-btn');
 
-    function updatePrice() {
-      const price = PRICES[selectedFormat]?.[selectedSize] || 9.99;
-      if (priceEl) priceEl.textContent = `£${(price * quantity).toFixed(2)}`;
+    const unitPriceOf = () => PRICES[selectedFormat]?.[selectedSize] || PRICES.poster.small;
+
+    /* Paints one button group from the state: the highlight classes and
+       aria-pressed, so a screen reader hears the same selection a sighted
+       customer sees. */
+    function highlight(btns: NodeListOf<Element>, key: string, value: string) {
+      btns.forEach(b => {
+        const on = (b as HTMLElement).dataset[key] === value;
+        b.classList.toggle('border-comic-yellow', on);
+        b.classList.toggle('text-off-white', on);
+        b.classList.toggle('border-black', !on);
+        b.classList.toggle('text-gray-300', !on);
+        b.setAttribute('aria-pressed', String(on));
+      });
     }
 
-    function activateBtn(btns, activeEl, borderClass) {
-      btns.forEach(b => {
-        b.classList.remove(borderClass, 'text-off-white');
-        b.classList.add('border-black', 'text-gray-300');
-      });
-      activeEl.classList.add(borderClass, 'text-off-white');
-      activeEl.classList.remove('border-black', 'text-gray-300');
+    /* Everything the selection shows, from the selection. Personalised products
+       render no format or size buttons -- the builder owns pricing there -- and
+       must keep their rendered "from" copy, so the price is left alone. */
+    function render() {
+      highlight(formatBtns, 'format', selectedFormat);
+      highlight(sizeBtns, 'size', selectedSize);
+      if (selectedStyle) highlight(styleBtns, 'style', selectedStyle);
+      if (priceEl && formatBtns.length && sizeBtns.length) {
+        priceEl.textContent = `£${(unitPriceOf() * quantity).toFixed(2)}`;
+      }
     }
 
     formatBtns.forEach(btn => {
       btn.addEventListener('click', () => {
-        selectedFormat = (btn as HTMLElement).dataset.format || 'poster';
-        activateBtn(formatBtns, btn, 'border-comic-yellow');
-        updatePrice();
+        selectedFormat = (btn as HTMLElement).dataset.format || selectedFormat;
+        render();
       });
     });
 
     sizeBtns.forEach(btn => {
       btn.addEventListener('click', () => {
-        selectedSize = (btn as HTMLElement).dataset.size || 'small';
-        activateBtn(sizeBtns, btn, 'border-comic-yellow');
-        updatePrice();
+        selectedSize = (btn as HTMLElement).dataset.size || selectedSize;
+        render();
       });
     });
-
-    /* ?format= and ?size=, which is how the shopping feed and the Product
-       schema link to a particular variant.
-       Until this existed every one of those links opened on poster/small, so an
-       ad for a large gallery canvas landed on a page reading GBP 9.99 -- the
-       price mismatch Google disapproves items for, and a customer being shown
-       one price after clicking another. The buttons are the source of truth for
-       what is valid: an unknown value simply finds no button and leaves the
-       default alone. */
-    (function preselectFromQuery() {
-      const q = new URLSearchParams(location.search);
-      const wantFormat = q.get('format');
-      const wantSize = q.get('size');
-      if (wantFormat) {
-        const btn = [...formatBtns].find(b => (b as HTMLElement).dataset.format === wantFormat);
-        if (btn) {
-          selectedFormat = wantFormat;
-          activateBtn(formatBtns, btn, 'border-comic-yellow');
-        }
-      }
-      if (wantSize) {
-        const btn = [...sizeBtns].find(b => (b as HTMLElement).dataset.size === wantSize);
-        if (btn) {
-          selectedSize = wantSize;
-          activateBtn(sizeBtns, btn, 'border-comic-yellow');
-        }
-      }
-      updatePrice();
-    })();
 
     /* Switching styles swaps the MAIN image and nothing else. The thumbnails
        below it are the gallery -- lifestyle mockups, detail shots, whatever
@@ -638,7 +643,7 @@ const relatedProducts = product.relatedProducts || [];
         const shot = styleImages?.[key];
         if (!shot?.url) return;
         selectedStyle = key;
-        activateBtn(styleBtns, btn, 'border-comic-yellow');
+        render();
         syncCustomiseLink();
         const mainImg = document.querySelector('#main-product-img') as HTMLImageElement;
         if (mainImg) { mainImg.src = shot.url; mainImg.alt = shot.alt || ''; }
@@ -651,14 +656,14 @@ const relatedProducts = product.relatedProducts || [];
       if (quantity > 1) {
         quantity--;
         if (qtyDisplay) qtyDisplay.textContent = String(quantity);
-        updatePrice();
+        render();
       }
     });
 
     document.getElementById('qty-inc')?.addEventListener('click', () => {
       quantity++;
       if (qtyDisplay) qtyDisplay.textContent = String(quantity);
-      updatePrice();
+      render();
     });
 
     /* The Customise link follows the style being shown: the two styles are two
@@ -693,13 +698,7 @@ const relatedProducts = product.relatedProducts || [];
     }
     syncCustomiseLink();
 
-    if (styleBtns[0]) activateBtn(styleBtns, styleBtns[0], 'border-comic-yellow');
-    if (formatBtns[0]) activateBtn(formatBtns, formatBtns[0], 'border-comic-yellow');
-    if (sizeBtns[0]) activateBtn(sizeBtns, sizeBtns[0], 'border-comic-yellow');
-    // updatePrice() exists to reflect the selected format and size. Personalised
-    // products have neither -- the builder owns pricing -- so it must not run and
-    // overwrite the rendered "from" copy with a flat figure.
-    if (formatBtns.length && sizeBtns.length) updatePrice();
+    render();
 
     /* GA4 view_item (a no-op unless the visitor accepted analytics). A stock
        print at the selected format and size -- which ?format=&size= may have
@@ -709,7 +708,7 @@ const relatedProducts = product.relatedProducts || [];
       const personalised = dataEl?.dataset.personalised === 'true';
       const price = personalised
         ? Number(dataEl?.dataset.fromPrice)
-        : (PRICES[selectedFormat]?.[selectedSize] || 9.99);
+        : unitPriceOf();
       if (!Number.isFinite(price) || price <= 0) return;
       const variant = personalised ? '' : [selectedFormat, selectedSize, selectedStyle].filter(Boolean).join(' / ');
       track('view_item', {
@@ -728,7 +727,7 @@ const relatedProducts = product.relatedProducts || [];
 
     document.getElementById('add-to-cart')?.addEventListener('click', async () => {
       const { addToCart } = await import('../../stores/cart');
-      const unitPrice = PRICES[selectedFormat]?.[selectedSize] || 9.99;
+      const unitPrice = unitPriceOf();
       addToCart({
         productId,
         slug: productSlug,
