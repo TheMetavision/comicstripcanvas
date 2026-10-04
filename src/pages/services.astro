@@ -101,7 +101,10 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
 
     <!-- Our Styles -->
     <section class="mb-20 reveal">
-      <h2 class="section-heading mb-10">OUR STYLES</h2>
+      <div class="flex flex-wrap items-end justify-between gap-4 mb-10">
+        <h2 class="section-heading">OUR STYLES</h2>
+        <button type="button" data-rotation-toggle aria-pressed="false" class="rotation-toggle font-russo text-xs uppercase tracking-wider text-gray-400 hover:text-comic-yellow border-2 border-gray-700 px-3 py-1.5">Pause image rotation</button>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
           { title: 'Comic Book Covers', accent: 'border-comic-red', accentText: 'text-comic-red', desc: 'Bold, dramatic artwork inspired by the golden and silver ages of comic books. Perfect for fans of classic superhero aesthetics, with vibrant colour palettes and dynamic compositions.', fee: feeFor('personalised-book-covers'), imgs: coverImgs, id: 'style-covers' },
@@ -128,6 +131,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
       </div>
     </section>
 
+    <script src="../scripts/rotation-toggle.js"></script>
     <script>
       ['style-covers', 'style-icons', 'style-strips'].forEach((id) => {
         const container = document.getElementById(id);
@@ -137,7 +141,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
         let current = 0;
         let paused = false;
         function cycle() {
-          if (paused) return;
+          if (paused || document.documentElement.dataset.rotation === 'paused') return;
           const next = (current + 1) % imgs.length;
           imgs[current].classList.remove('opacity-100');
           imgs[current].classList.add('opacity-0');
@@ -145,6 +149,8 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
           imgs[next].classList.add('opacity-100');
           current = next;
         }
+        // Reduced motion: show the first image and stay still.
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
         setInterval(cycle, 3000);
         container.addEventListener('mouseenter', () => { paused = true; });
         container.addEventListener('mouseleave', () => { paused = false; });

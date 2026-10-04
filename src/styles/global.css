@@ -187,3 +187,15 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #FFF200;
 }
+
+
+/* Reduced motion: content simply shows; nothing slides or rotates. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal.visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .rotation-toggle { display: none; }
+}

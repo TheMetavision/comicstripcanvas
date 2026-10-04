@@ -98,6 +98,7 @@ const stripImages = cardImages(categoryImages.strips);
         <p class="font-source text-gray-400 text-lg max-w-xl mx-auto">
           Three distinct comic art styles — each bold, vibrant, and perfect for any wall.
         </p>
+        <div class="mt-4"><button type="button" data-rotation-toggle aria-pressed="false" class="rotation-toggle font-russo text-xs uppercase tracking-wider text-gray-400 hover:text-comic-yellow border-2 border-gray-700 px-3 py-1.5">Pause image rotation</button></div>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="reveal stagger-1">
@@ -262,3 +263,5 @@ const stripImages = cardImages(categoryImages.strips);
     })),
   })}></script>
 </BaseLayout>
+
+<script src="../scripts/rotation-toggle.js"></script>
