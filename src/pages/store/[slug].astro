@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
+import { sanityDims } from '../../lib/sanityImage';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
 import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
 import { sizeLabelFor, orientationFromAspect } from '../../../netlify/functions/_shared/sizes.mjs';
@@ -51,6 +52,11 @@ const orientation = orientationFromAspect(product.images?.[0]?.aspectRatio);
 const mainImageUrl = hasImages && product.images[0]?.asset
   ? urlFor(product.images[0]).width(800).url()
   : null;
+// What the page shows (WebP/AVIF where supported); the cart keeps mainImageUrl.
+const mainDisplayUrl = hasImages && product.images[0]?.asset
+  ? urlFor(product.images[0]).width(800).auto('format').quality(80).url()
+  : null;
+const mainDims = mainImageUrl ? sanityDims(product.images[0].asset?.url || mainImageUrl, 800) : {};
 
 /* A SECOND artwork style, when the product has one.
 
@@ -264,7 +270,9 @@ const seoDesc = product.seo?.metaDescription || product.description;
                style="box-shadow: 6px 6px 0 #000000; min-height: 400px; max-height: 600px;">
             {mainImageUrl ? (
               <img
-                src={mainImageUrl}
+                src={mainDisplayUrl}
+                {...mainDims}
+                fetchpriority="high"
                 alt={product.images[0]?.alt || product.title}
                 class="max-w-full max-h-[580px] object-contain"
                 id="main-product-img"
@@ -276,14 +284,14 @@ const seoDesc = product.seo?.metaDescription || product.description;
           {hasImages && product.images.length > 1 && (
             <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
               {product.images.map((img: any, i: number) => {
-                const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).url() : null;
+                const thumbUrl = img?.asset ? urlFor(img).width(160).height(128).auto('format').quality(70).url() : null;
                 return thumbUrl ? (
                   <button
                     class="w-20 h-16 flex-shrink-0 border-2 border-gray-700 cursor-pointer hover:border-comic-yellow transition-colors overflow-hidden bg-mid-grey flex items-center justify-center thumb-btn"
-                    data-full={urlFor(img).width(1200).url()}
+                    data-full={urlFor(img).width(1200).auto('format').quality(80).url()}
                     data-alt={img.alt || product.title}
                   >
-                    <img src={thumbUrl} alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
+                    <img src={thumbUrl} width="160" height="128" alt={img.alt || `${product.title} view ${i + 1}`} class="max-w-full max-h-full object-contain" />
                   </button>
                 ) : null;
               })}
@@ -467,12 +475,12 @@ const seoDesc = product.seo?.metaDescription || product.description;
         <h2 class="section-heading mb-8">YOU MIGHT ALSO LIKE</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {relatedProducts.map((p: any) => {
-            const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).url() : null;
+            const relImgUrl = p.images?.[0]?.asset ? urlFor(p.images[0]).width(600).height(400).auto('format').quality(75).url() : null;
             return (
               <a href={`/store/${p.slug}/`} class="product-card group block">
                 <div class="aspect-[3/2] overflow-hidden bg-mid-grey flex items-center justify-center">
                   {relImgUrl ? (
-                    <img src={relImgUrl} alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                    <img src={relImgUrl} width="600" height="400" alt={p.images[0]?.alt || p.title} class="w-full h-full object-contain transition-transform duration-500 group-hover:scale-110" loading="lazy" />
                   ) : (
                     <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
                   )}

@@ -1,4 +1,6 @@
 ---
+import { sanityImg, sanitySrcset, sanityDims, localImg, localSrcset } from '../lib/sanityImage';
+const WORKSHOP = 'https://cdn.sanity.io/images/lwbwahym/production/07bd5f64e7e480d35301b835de2539be009d4b1c-2752x1536.jpg';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import FAQAccordion from '../components/FAQAccordion.astro';
 import PricingGrid from '../components/PricingGrid.astro';
@@ -23,9 +25,9 @@ const categoryImages = await sanityClient.fetch(`{
   "strips": *[_type == "product" && category == "comic-book-strips" && count(images) > 0] | order(sortOrder asc)[0..5].images[0]
 }`);
 
-const coverImgs = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
-const iconImgs = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
-const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).width(600).url());
+const coverImgs = (categoryImages.covers || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).url());
+const iconImgs = (categoryImages.icons || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).url());
+const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset).map((img: any) => urlFor(img).url());
 ---
 
 <BaseLayout
@@ -71,7 +73,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
           </div>
         </div>
         <div class="aspect-[4/3] border-4 border-comic-red overflow-hidden" style="box-shadow: 6px 6px 0 #000;">
-          <img src="https://cdn.sanity.io/images/lwbwahym/production/07bd5f64e7e480d35301b835de2539be009d4b1c-2752x1536.jpg?w=1600&auto=format" alt="Comic Strip Canvas workshop — canvas being framed" class="w-full h-full object-cover" loading="lazy" />
+          <img src={sanityImg(WORKSHOP, 600)} srcset={sanitySrcset(WORKSHOP, 600)} sizes="(min-width: 1024px) 600px, 100vw" {...sanityDims(WORKSHOP, 600)} alt="Comic Strip Canvas workshop — canvas being framed" class="w-full h-full object-cover" loading="lazy" />
         </div>
       </div>
     </section>
@@ -110,7 +112,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
             <div class="aspect-square bg-mid-grey mb-5 overflow-hidden relative" id={item.id}>
               {item.imgs.length > 0 ? (
                 item.imgs.map((img: string, i: number) => (
-                  <img src={img} alt={`${item.title} artwork ${i + 1}`} class={`style-carousel-img absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`} loading="lazy" data-index={i} />
+                  <img src={sanityImg(img, 400)} srcset={sanitySrcset(img, 360)} sizes="(min-width: 1280px) 360px, (min-width: 768px) 28vw, 100vw" {...sanityDims(img, 400)} alt={`${item.title} artwork ${i + 1}`} class={`style-carousel-img absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ${i === 0 ? 'opacity-100' : 'opacity-0'}`} loading="lazy" data-index={i} />
                 ))
               ) : (
                 <div class="w-full h-full flex items-center justify-center">
@@ -164,7 +166,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
             Printed on premium <strong class="text-off-white">260gsm photo paper</strong> with a semi-gloss finish that makes colours sing. Sharp, detailed, and vibrant — our poster prints are rolled and shipped in protective tubes to arrive in perfect condition.
           </p>
           <div class="mt-4 overflow-hidden rounded border-2 border-gray-700">
-            <img src="/poster-prints-hero.png" alt="Comic Strip Canvas poster print rolled in branded postal tube" class="w-full h-auto" />
+            <img src={localImg('/poster-prints-hero.png', 600)} srcset={localSrcset('/poster-prints-hero.png', 600, 2752)} sizes="(min-width: 768px) 600px, 100vw" width="2752" height="1536" loading="lazy" alt="Comic Strip Canvas poster print rolled in branded postal tube" class="w-full h-auto" />
           </div>
         </div>
         <div class="bg-panel-dark border-4 border-comic-yellow p-6" style="box-shadow: 4px 4px 0 rgba(255,242,0,0.2);">
@@ -178,7 +180,7 @@ const stripImgs = (categoryImages.strips || []).filter((img: any) => img?.asset)
             Printed on <strong class="text-off-white">410gsm water-resistant canvas</strong> and stretched over a solid wooden frame. Available in Standard Frame (lightweight, perfect for most walls) or Gallery Frame (deeper, more premium presentation). Ready to hang.
           </p>
           <div class="mt-4 overflow-hidden rounded border-2 border-gray-700">
-            <img src="/canvas-prints-hero.png" alt="Comic Strip Canvas standard and gallery frame comparison" class="w-full h-auto" />
+            <img src={localImg('/canvas-prints-hero.png', 600)} srcset={localSrcset('/canvas-prints-hero.png', 600, 2752)} sizes="(min-width: 768px) 600px, 100vw" width="2752" height="1536" loading="lazy" alt="Comic Strip Canvas standard and gallery frame comparison" class="w-full h-auto" />
           </div>
         </div>
       </div>

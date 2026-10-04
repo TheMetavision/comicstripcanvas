@@ -1,4 +1,5 @@
 ---
+import { sanityImg, sanityDims } from '../../lib/sanityImage';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { allBlogPostsQuery, blogPostBySlugQuery } from '../../lib/queries';
@@ -18,7 +19,7 @@ if (!post) {
 }
 
 const relatedPosts = post.relatedPosts || [];
-const mainImageUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(1200).height(675).url() : null;
+const mainImageUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(1200).height(675).auto('format').quality(75).url() : null;
 const seoTitle = post.seo?.metaTitle || post.title;
 const seoDesc = post.seo?.metaDescription || post.excerpt;
 
@@ -27,10 +28,11 @@ function renderBody(blocks: any[]): string {
   if (!blocks) return '';
   return blocks.map((block: any) => {
     if (block._type === 'image') {
-      const imgUrl = block.asset?.url || '';
+      const imgUrl = sanityImg(block.asset?.url, 832);
+      const dims = sanityDims(block.asset?.url, 832) as { width?: number; height?: number };
       const alt = block.alt || '';
       const caption = block.caption || '';
-      return `<figure class="my-8"><img src="${imgUrl}" alt="${alt}" class="w-full border-4 border-black" style="box-shadow: 4px 4px 0 #000;" loading="lazy" />${caption ? `<figcaption class="font-source text-gray-500 text-sm mt-2 text-center">${caption}</figcaption>` : ''}</figure>`;
+      return `<figure class="my-8"><img src="${imgUrl}"${dims.width ? ` width="${dims.width}" height="${dims.height}"` : ''} alt="${alt}" class="w-full border-4 border-black" style="box-shadow: 4px 4px 0 #000;" loading="lazy" />${caption ? `<figcaption class="font-source text-gray-500 text-sm mt-2 text-center">${caption}</figcaption>` : ''}</figure>`;
     }
 
     if (block._type !== 'block') return '';
@@ -114,6 +116,9 @@ const bodyHtml = renderBody(post.body);
       <div class="mb-10">
         <img
           src={mainImageUrl}
+          width="1200"
+          height="675"
+          fetchpriority="high"
           alt={post.mainImage?.alt || post.title}
           class="w-full border-4 border-black"
           style="box-shadow: 6px 6px 0 #000000;"
@@ -140,12 +145,12 @@ const bodyHtml = renderBody(post.body);
         <h2 class="section-heading mb-8">MORE FROM THE BLOG</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {relatedPosts.map((rp: any) => {
-            const rpImgUrl = rp.mainImage?.asset ? urlFor(rp.mainImage).width(600).height(338).url() : null;
+            const rpImgUrl = rp.mainImage?.asset ? urlFor(rp.mainImage).width(600).height(338).auto('format').quality(75).url() : null;
             return (
               <a href={`/blog/${rp.slug}/`} class="product-card group block overflow-hidden">
                 <div class="aspect-video overflow-hidden">
                   {rpImgUrl ? (
-                    <img src={rpImgUrl} alt={rp.mainImage?.alt || rp.title} class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                    <img src={rpImgUrl} width="600" height="338" alt={rp.mainImage?.alt || rp.title} class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
                   ) : (
                     <div class="w-full h-full img-placeholder flex items-center justify-center">
                       <span class="text-gray-500 font-russo tracking-widest text-xs uppercase">IMAGE</span>
