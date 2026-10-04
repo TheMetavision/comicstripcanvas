@@ -27,12 +27,12 @@
 /index.php/products/*  /  301
 
 # STATIC PAGES
-/page/pricing  /services  301
-/page/faqs  /services  301
-/page/how-we-do-it  /services  301
-/page/what-we-do  /services  301
-/index.php/page/how-we-do-it  /services  301
-/index.php/page/what-we-do  /services  301
+/page/pricing  /services/  301
+/page/faqs  /services/  301
+/page/how-we-do-it  /services/  301
+/page/what-we-do  /services/  301
+/index.php/page/how-we-do-it  /services/  301
+/index.php/page/what-we-do  /services/  301
 
 # ZYRO SUFFIX URLS — PLACEHOLDER ARTWORK NAMES
 /artwork-name-comic-book-cover-art-available-in-3-formats-and-3-different-sizes  /store/comic-book-covers/  301
@@ -122,8 +122,8 @@
 # lands on /order-confirmation instead. These keep old links, and any legacy
 # Stripe session still in flight, off a 404. Netlify carries the original
 # query string (?session_id=...) through, which is harmless here.
-/personalise-confirmation  /personalise  301
-/personalise-confirmation/  /personalise  301
+/personalise-confirmation  /personalise/  301
+/personalise-confirmation/  /personalise/  301
 
 # SLUG CASING FIX — nine products reached production with a capital first letter,
 # which collided case-insensitively with their lower-case twin and left one of

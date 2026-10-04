@@ -15,6 +15,9 @@ import type { ProductFormat, ProductSize } from '../../data/products';
 
 export async function getStaticPaths() {
   const products = await sanityClient.fetch(allProductSlugsQuery);
+  // An empty catalogue means Sanity failed us: fail the build (Netlify keeps
+  // the live deploy) rather than publish a shop with no product pages.
+  if (!products?.length) throw new Error('[store/[slug]] Sanity returned no products');
   return products.map((product: any) => ({
     params: { slug: product.slug },
   }));
@@ -240,6 +243,10 @@ const generatedDesc = `${product.title} in bold ${STYLE_WORDS[product.category] 
 const ownDesc = (product.seo?.metaDescription || product.description || '').trim();
 const seoDesc = ownDesc && ownDesc.length <= 155 ? ownDesc : generatedDesc;
 
+// Social card: the product's own SEO image if set, else its artwork as a JPEG.
+const ogSource = product.seo?.ogImage?.asset ? product.seo.ogImage : (hasImages ? product.images[0] : null);
+const ogImageUrl = ogSource ? urlFor(ogSource).width(1200).format('jpg').quality(85).url() : undefined;
+
 const productSchema = {
   "@context": "https://schema.org",
   "@type": "Product",
@@ -258,6 +265,7 @@ const relatedProducts = product.relatedProducts || [];
   title={seoTitle}
   description={seoDesc}
   ogType="product"
+  ogImage={ogImageUrl}
 >
   <section class="relative bg-charcoal py-8">
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>

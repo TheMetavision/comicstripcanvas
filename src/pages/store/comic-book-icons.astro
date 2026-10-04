@@ -7,6 +7,7 @@ import { sanityClient } from '../../lib/sanity';
 import { productsByCategoryQuery } from '../../lib/queries';
 
 const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'comic-book-icons' });
+if (!products?.length) throw new Error('[store] Sanity returned no products'); // fail the build, not ship an empty listing
 ---
 
 <BaseLayout
