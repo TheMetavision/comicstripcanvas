@@ -20,7 +20,7 @@
  * find it.
  */
 import { draftTargetFor, recordSceneError } from '../../netlify/functions/studio-render-background.mjs';
-import { sceneRevOf } from '../../netlify/functions/_shared/order-print.mjs';
+import { sceneRevOf } from '../../netlify/functions/_shared/scene-rev.mjs';
 import { classify } from './render-sweep.mjs';
 
 let pass = 0, fail = 0;

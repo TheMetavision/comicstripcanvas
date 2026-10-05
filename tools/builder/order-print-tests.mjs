@@ -199,5 +199,54 @@ say('\n7. NOTHING TO GO ON\n');
   ok(!fee.product, 'and the artwork fee matches no product', fee.error);
 }
 
+/* ═════════ the Studio bundles this file for the browser */
+
+say('\nTHE STUDIO CAN STILL BUILD\n');
+{
+  /* Everything the Studio imports from outside studio/, followed through its
+     relative imports. One node:crypto import in order-print.mjs failed every
+     `sanity build` from 24 September 2026 -- and with the build failing, the
+     deployed Studio simply stopped changing, which nobody noticed for eleven
+     days. A Node built-in anywhere in this graph is that again. */
+  const studioDir = path.join(ROOT, 'studio');
+  const roots = [];
+  const walkDir = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.name === 'node_modules' || ent.name === 'dist' || ent.name.startsWith('.')) continue;
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkDir(p);
+      else if (/\.(t|j)sx?$|\.mjs$/.test(ent.name)) roots.push(p);
+    }
+  };
+  walkDir(studioDir);
+
+  const IMPORT = /(?:^|\n)\s*(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const BUILTINS = new Set(['fs', 'path', 'os', 'crypto', 'url', 'util', 'stream', 'buffer', 'child_process', 'zlib', 'http', 'https', 'net']);
+  const seen = new Set();
+  const offenders = [];
+  const visit = (file, fromStudio) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(IMPORT)) {
+      const spec = m[1] || m[2];
+      if (spec.startsWith('node:') || BUILTINS.has(spec)) {
+        offenders.push(`${path.relative(ROOT, file)} imports ${spec}`);
+      } else if (spec.startsWith('.')) {
+        const target = path.resolve(path.dirname(file), spec);
+        /* Only what leaves studio/ -- the Studio's own files are checked by the
+           Studio build itself; the shared server modules are what drift. */
+        if (fromStudio && target.startsWith(studioDir)) continue;
+        if (fs.existsSync(target) && fs.statSync(target).isFile()) visit(target, false);
+      }
+    }
+  };
+  for (const r of roots) visit(r, true);
+  const shared = [...seen].filter((f) => !f.startsWith(studioDir));
+  ok(shared.some((f) => f.endsWith('order-print.mjs')), 'the walk reaches order-print.mjs through the Print Files panel',
+    `${shared.length} shared module(s)`);
+  ok(offenders.length === 0, 'no Node built-in in anything the Studio bundles', offenders.join('; '));
+}
+
 say(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);

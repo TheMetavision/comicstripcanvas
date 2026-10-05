@@ -59,7 +59,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { getStore } from '@netlify/blobs';
 import { parseArgs, printTable, humanMs, pool } from './_cli.mjs';
-import { sceneRevOf } from '../../netlify/functions/_shared/order-print.mjs';
+import { sceneRevOf } from '../../netlify/functions/_shared/scene-rev.mjs';
 
 const SPEC = {
   all: 'boolean', json: 'boolean', out: 'string',

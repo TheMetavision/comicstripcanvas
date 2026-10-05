@@ -1,5 +1,6 @@
 import { defineType, defineField } from 'sanity';
 import ProofPanel from '../components/ProofPanel';
+import CustomerOriginalPanel from '../components/CustomerOriginalPanel';
 
 /**
  * pendingPersonalisation
@@ -47,6 +48,14 @@ export default defineType({
   name: 'pendingPersonalisation',
   title: 'Pending Personalisation',
   type: 'document',
+  fieldsets: [
+    {
+      name: 'adminEditHistory',
+      title: 'Admin edit history',
+      description: 'What we changed on the customer’s behalf, and what we told them.',
+      options: { collapsible: true, collapsed: true },
+    },
+  ],
   fields: [
     // Read-only: the proof, then the state it is in. First in the list so a
     // reviewer sees the artwork and whether it is approvable without scrolling.
@@ -186,6 +195,13 @@ export default defineType({
       readOnly: true,
       description: 'The order document this build was paid for on.',
     }),
+    defineField({
+      name: 'orderNumber',
+      title: 'Order Number',
+      type: 'string',
+      readOnly: true,
+      description: 'The human order reference (CSC-…), stamped by the Stripe webhook alongside Order.',
+    }),
 
     // ── set by the Studio document actions ────────────────────────────────
     defineField({
@@ -225,6 +241,7 @@ export default defineType({
       type: 'text',
       rows: 3,
       readOnly: true,
+      fieldset: 'adminEditHistory',
       description:
         'What the reviewer wrote to the customer in the proof email, if anything. Kept so the '
         + 'admin page can show what was actually sent rather than only that something was.',
@@ -242,9 +259,13 @@ export default defineType({
       title: 'The Customer\'s Own Design',
       type: 'object',
       readOnly: true,
+      fieldset: 'adminEditHistory',
       description:
         'The recipe and scene exactly as the customer saved them, stored the FIRST time we edit '
         + 'this build and never overwritten afterwards.',
+      /* Shown as when it was kept and a link to their proof. The recipe and
+         scene below are declared so the Studio knows them, and never drawn. */
+      components: { input: CustomerOriginalPanel },
       fields: [
         defineField({ name: 'recipe', title: 'Recipe (JSON)', type: 'text', rows: 4, readOnly: true }),
         defineField({ name: 'sceneSvg', title: 'Scene SVG', type: 'text', rows: 4, readOnly: true }),
@@ -256,6 +277,7 @@ export default defineType({
       title: 'Last Edited By Us',
       type: 'datetime',
       readOnly: true,
+      fieldset: 'adminEditHistory',
       description: 'When we last changed this design on the customer\'s behalf.',
     }),
     defineField({
@@ -263,8 +285,13 @@ export default defineType({
       title: 'Times Edited By Us',
       type: 'number',
       readOnly: true,
+      fieldset: 'adminEditHistory',
       description: 'How many times this design has been saved from the admin editor.',
     }),
+    /* The pre-migration _id, written by tools/migrate-private-personalisation.mjs
+       when the build moved to its dotted id. Hidden, as on the order: it is
+       there to trace a document back, not to read. */
+    defineField({ name: 'legacyId', title: 'Legacy ID', type: 'string', readOnly: true, hidden: true }),
 
     defineField({
       name: 'photoKeys',

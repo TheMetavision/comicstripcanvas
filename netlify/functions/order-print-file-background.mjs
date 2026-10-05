@@ -7,8 +7,9 @@ import { faceFor, renderFromScene, fitFlatMaster, readDpi } from './_shared/prin
 import { dataUri } from './_shared/scene.mjs';
 import {
   PRINT_STORE, keysFromLine, printKeyFor, sourceId, downloadName,
-  sceneIdFor, orientationFor, resolveLineProduct, openPrintStore, sceneRevOf,
+  sceneIdFor, orientationFor, resolveLineProduct, openPrintStore,
 } from './_shared/order-print.mjs';
+import { sceneRevOf } from './_shared/scene-rev.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
 
 /**

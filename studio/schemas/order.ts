@@ -122,6 +122,14 @@ export default defineType({
               type: 'reference',
               to: [{ type: 'product' }],
             },
+            /* The machine half of the line, written by the webhook since the
+               September 2026 stamping. The labels above are for a human and
+               have changed once already; anything that has to MAKE something
+               from this line -- the print-file renderer -- reads these. */
+            { name: 'productSlug', type: 'string', title: 'Product Slug', readOnly: true },
+            { name: 'sizeKey', type: 'string', title: 'Size Key', readOnly: true },
+            { name: 'formatKey', type: 'string', title: 'Format Key', readOnly: true },
+            { name: 'orientation', type: 'string', title: 'Orientation', readOnly: true },
           ],
           preview: {
             select: {
@@ -276,6 +284,16 @@ export default defineType({
           type: 'array',
           of: [{ type: 'url' }],
           description: 'URLs to customer-uploaded images',
+        },
+        /* From the old proofing workflow, removed in C2. Twelve orders from
+           before then still carry it; declared so the Studio knows the field,
+           read-only so nothing restarts a workflow that no longer exists. */
+        {
+          name: 'proofStatus',
+          type: 'string',
+          title: 'Proof Status (old workflow)',
+          readOnly: true,
+          hidden: ({ value }: any) => !value,
         },
       ],
       options: { collapsible: true, collapsed: false },

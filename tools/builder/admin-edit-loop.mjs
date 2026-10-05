@@ -43,6 +43,23 @@ const ok = (c, l, e = '') => {
 };
 const say = console.log.bind(console);
 
+/* /admin is behind the Basic Auth edge function, under netlify dev as in
+   production, so every request here carries the same credentials a reviewer
+   types -- read from .env, which is where netlify dev reads them too. Without
+   them each /admin call is a 401 and the loop cannot run unattended.
+   Sent on the public and direct-function addresses as well: those must refuse
+   a caller who IS authenticated, which is the stronger thing to prove. */
+if (!process.env.ADMIN_BASIC_USER || !process.env.ADMIN_BASIC_PASS) {
+  say('\nADMIN_BASIC_USER and ADMIN_BASIC_PASS must be set — run with --env-file=.env\n');
+  process.exit(2);
+}
+const AUTH = {
+  Authorization: `Basic ${Buffer.from(
+    `${process.env.ADMIN_BASIC_USER}:${process.env.ADMIN_BASIC_PASS}`
+  ).toString('base64')}`,
+};
+const JSON_AUTH = { 'Content-Type': 'application/json', ...AUTH };
+
 const ORIGINAL_TITLE = 'WHAT THE CUSTOMER TYPED';
 const EDITED_TITLE = 'WHAT WE TIDIED IT TO';
 const CROP = { zoom: 1.7, offsetX: -88, offsetY: 42 };
@@ -94,6 +111,17 @@ async function seed() {
   return (await sanity.getDocument(DOC_ID))._rev;
 }
 
+/** Wait for the render a save started to finish, either way. */
+async function settled(limitMs = 90_000) {
+  const until = Date.now() + limitMs;
+  while (Date.now() < until) {
+    const doc = await sanity.getDocument(DOC_ID);
+    if (doc?.status !== 'preparing') return doc?.status;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error(`the build was still preparing after ${limitMs / 1000}s`);
+}
+
 async function main() {
   say(`\nnetlify dev at ${BASE}\n`);
 
@@ -111,7 +139,7 @@ async function main() {
   say(`stub build ${ID} created in Sanity at ${rev}\n`);
 
   say('1. THE GUARDED ROUTE REACHES THE FUNCTION\n');
-  const sceneRes = await fetch(`${BASE}/admin/api/personalisation-scene/${ID}`);
+  const sceneRes = await fetch(`${BASE}/admin/api/personalisation-scene/${ID}`, { headers: AUTH });
   const scene = await sceneRes.json().catch(() => ({}));
   ok(sceneRes.status === 200, 'GET /admin/api/personalisation-scene/<id> is 200',
     `${sceneRes.status} ${JSON.stringify(scene).slice(0, 90)}`);
@@ -131,14 +159,14 @@ async function main() {
   ]) {
     const res = await fetch(`${BASE}${path}`, {
       method: path.includes('edit-save') ? 'POST' : 'GET',
-      headers: { 'Content-Type': 'application/json' },
+      headers: JSON_AUTH,
       body: path.includes('edit-save') ? JSON.stringify({ id: ID, recipe: recipeFor('X') }) : undefined,
     });
     ok(res.status === 404, `${path} is 404`, String(res.status));
   }
   /* And the function's own address, which no redirect covers. */
   const direct = await fetch(`${BASE}/.netlify/functions/personalisation-edit-save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: JSON_AUTH,
     body: JSON.stringify({ id: ID, recipe: recipeFor('X'), rev: scene.rev }),
   });
   ok(direct.status === 404,
@@ -150,7 +178,7 @@ async function main() {
 
   say('\n3. THE SAVE\n');
   const saveRes = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: JSON_AUTH,
     body: JSON.stringify({ id: ID, rev: scene.rev, recipe: recipeFor(EDITED_TITLE) }),
   });
   const saved = await saveRes.json().catch(() => ({}));
@@ -181,7 +209,7 @@ async function main() {
   await sanity.patch(DOC_ID).set({ status: 'rendered' }).commit();
   const rev2 = (await sanity.getDocument(DOC_ID))._rev;
   const res2 = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: JSON_AUTH,
     body: JSON.stringify({ id: ID, rev: rev2, recipe: recipeFor('A THIRD VERSION') }),
   });
   const body2 = await res2.json().catch(() => ({}));
@@ -193,8 +221,15 @@ async function main() {
   ok(after2.editCount === 2, '  and the count is 2', String(after2.editCount));
 
   say('\n5. A STALE REVISION IS REFUSED\n');
+  /* The second save started a render. Until that render finishes the build is
+     `preparing`, which edit-save refuses on STATUS -- a 409 for the wrong
+     reason, and only some of the time, depending on how quickly the render
+     fails without its blobs. Wait for it, then put the build back somewhere
+     editable. rev2 is staler still after that patch, which is the point. */
+  await settled();
+  await sanity.patch(DOC_ID).set({ status: 'rendered' }).commit();
   const res3 = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: JSON_AUTH,
     body: JSON.stringify({ id: ID, rev: rev2, recipe: recipeFor('SHOULD NOT LAND') }),
   });
   const body3 = await res3.json().catch(() => ({}));
@@ -208,13 +243,13 @@ async function main() {
   await sanity.patch(DOC_ID).set({ status: 'in_production' }).commit();
   const rev4 = (await sanity.getDocument(DOC_ID))._rev;
   const res4 = await fetch(`${BASE}/admin/api/personalisation-edit-save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: JSON_AUTH,
     body: JSON.stringify({ id: ID, rev: rev4, recipe: recipeFor('TOO LATE') }),
   });
   const body4 = await res4.json().catch(() => ({}));
   ok(res4.status === 409, 'in_production is refused', String(res4.status));
   ok(/already approved/i.test(body4.error || ''), '  saying why', (body4.error || '').slice(0, 54));
-  const sceneRes4 = await fetch(`${BASE}/admin/api/personalisation-scene/${ID}`);
+  const sceneRes4 = await fetch(`${BASE}/admin/api/personalisation-scene/${ID}`, { headers: AUTH });
   const scene4 = await sceneRes4.json().catch(() => ({}));
   ok(scene4.editable === false, '  and the editor will not open it either');
 }

@@ -9,7 +9,7 @@ import {
   sceneKey, printKey, prevPrintKey, listingKey, legacySceneKey, legacyPrintKey,
   artKey, artWebKey, isArtKey, ART_WEB_SIDE, CUSTOMISE_FEE_DEFAULT,
 } from './_shared/artwork-styles.mjs';
-import { sceneRevOf } from './_shared/order-print.mjs';
+import { sceneRevOf } from './_shared/scene-rev.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
 
 /**
