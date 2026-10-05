@@ -247,7 +247,6 @@ const stripImages = cardImages(categoryImages.strips);
     "url": "https://comicstripcanvas.co.uk",
     "logo": "https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg?w=1200",
     "description": "UK-based pop culture wall art. Bold comic-book style canvas prints, framed prints, and posters.",
-    "address": { "@type": "PostalAddress", "addressCountry": "GB" },
     "aggregateRating": testimonials.length > 0 ? {
       "@type": "AggregateRating",
       "ratingValue": (testimonials.reduce((sum: number, t: any) => sum + (t.rating || 5), 0) / testimonials.length).toFixed(1),
