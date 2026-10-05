@@ -1,0 +1,24 @@
+---
+/* Site-wide announcement, switched on and edited in Sanity
+   (Site Settings > Announcement Bar). Read at build time, so a change goes
+   live with the next Netlify build. */
+import { sanityClient } from '../lib/sanity';
+import { siteSettingsQuery } from '../lib/queries';
+
+let bar: { enabled?: boolean; text?: string; linkUrl?: string } | undefined;
+try {
+  bar = (await sanityClient.fetch(siteSettingsQuery))?.announcementBar;
+} catch {
+  bar = undefined; // never fail a build over the banner
+}
+const show = !!(bar?.enabled && bar?.text?.trim());
+---
+{show && (
+  <div class="bg-comic-yellow border-b-4 border-black text-black text-center px-4 py-2" role="region" aria-label="Announcement">
+    {bar!.linkUrl ? (
+      <a href={bar!.linkUrl} class="font-russo text-xs sm:text-sm tracking-wide hover:underline">{bar!.text}</a>
+    ) : (
+      <p class="font-russo text-xs sm:text-sm tracking-wide">{bar!.text}</p>
+    )}
+  </div>
+)}

@@ -1,0 +1,18 @@
+---
+/* A titled FAQ block plus its FAQPage JSON-LD. Renders nothing when there are
+   no FAQs, so a page can include it before the Sanity documents exist. */
+import FAQAccordion from './FAQAccordion.astro';
+import { faqPageSchema, type Faq } from '../lib/faqs';
+
+interface Props { faqs: Faq[]; heading?: string; bg?: string }
+const { faqs = [], heading = 'FREQUENTLY ASKED QUESTIONS', bg = 'bg-charcoal' } = Astro.props;
+---
+{faqs.length > 0 && (
+  <section class={`${bg} border-t-4 border-black py-16`}>
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <h2 class="section-heading text-center mb-10">{heading}</h2>
+      <FAQAccordion faqs={faqs as any} />
+    </div>
+    <script type="application/ld+json" set:html={JSON.stringify(faqPageSchema(faqs))}></script>
+  </section>
+)}

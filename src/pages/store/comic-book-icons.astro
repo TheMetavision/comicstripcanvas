@@ -5,8 +5,11 @@ import ProductSearch from '../../components/ProductSearch.astro';
 import ProductNoResults from '../../components/ProductNoResults.astro';
 import { sanityClient } from '../../lib/sanity';
 import { productsByCategoryQuery } from '../../lib/queries';
+import FAQSection from '../../components/FAQSection.astro';
+import { faqsFor } from '../../lib/faqs';
 
 const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'comic-book-icons' });
+const faqs = await faqsFor('comic-book-icons');
 if (!products?.length) throw new Error('[store] Sanity returned no products'); // fail the build, not ship an empty listing
 ---
 
@@ -66,7 +69,7 @@ if (!products?.length) throw new Error('[store] Sanity returned no products'); /
           Some people are simply iconic. They don't need a story spread across panels — they need a single frame that captures exactly why they matter, rendered in bold comic book style with the colour and intensity their legend deserves. That's what the Comic Strip Canvas Comic Book Icon collection is built to deliver.
         </p>
         <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
-          Each piece in the range takes a legendary figure from film, music, or sport and transforms them into a high-impact, single-figure comic art print — complete with their most defining visual elements and the graphic energy of the comic book format at its best. Kill Bill's Bride. Juice Wrld's artistry. Diego Maradona's footballing genius. Cristiano Ronaldo's CR7 swagger. Leo Messi in one impossibly decorated career. ZZ Top's unmistakable cool, and a roster of pop culture icon canvas pieces that spans era, genre, and legend.
+          Each piece in the range takes a legendary figure from film, music, or sport and transforms them into a high-impact, single-figure comic art print — complete with their most defining visual elements and the graphic energy of the comic book format at its best. Kill Bill's Bride. Juice Wrld's artistry. Diego Maradona's footballing genius. Leo Messi in one impossibly decorated career. ZZ Top's unmistakable cool, and a roster of pop culture icon canvas pieces that spans era, genre, and legend.
         </p>
         <p class="font-source text-gray-300 text-lg leading-relaxed mb-4">
           Every piece is available in three formats — canvas print, framed print, and poster — and in three sizes. All made to order, dispatched from the UK, and built to occupy wall space with authority. Comic art prints UK buyers can genuinely be proud to display.
@@ -77,6 +80,8 @@ if (!products?.length) throw new Error('[store] Sanity returned no products'); /
       </div>
     </div>
   </section>
+
+  <FAQSection faqs={faqs} />
 
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",

@@ -5,8 +5,11 @@ import ProductSearch from '../../components/ProductSearch.astro';
 import ProductNoResults from '../../components/ProductNoResults.astro';
 import { sanityClient } from '../../lib/sanity';
 import { productsByCategoryQuery } from '../../lib/queries';
+import FAQSection from '../../components/FAQSection.astro';
+import { faqsFor } from '../../lib/faqs';
 
 const products = await sanityClient.fetch(productsByCategoryQuery, { category: 'comic-book-covers' });
+const faqs = await faqsFor('comic-book-covers');
 if (!products?.length) throw new Error('[store] Sanity returned no products'); // fail the build, not ship an empty listing
 ---
 
@@ -77,6 +80,8 @@ if (!products?.length) throw new Error('[store] Sanity returned no products'); /
       </div>
     </div>
   </section>
+
+  <FAQSection faqs={faqs} />
 
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",

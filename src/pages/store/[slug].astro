@@ -11,6 +11,8 @@ import { sizeLabelFor, orientationFromAspect } from '../../../netlify/functions/
    come to disagree. */
 import { CUSTOMISE_FEE_DEFAULT } from '../../../netlify/functions/_shared/artwork-styles.mjs';
 import ProductBuilder from '../../components/ProductBuilder.astro';
+import FAQSection from '../../components/FAQSection.astro';
+import { faqsFor } from '../../lib/faqs';
 import type { ProductFormat, ProductSize } from '../../data/products';
 
 export async function getStaticPaths() {
@@ -268,6 +270,7 @@ const productSchema = {
 };
 
 const relatedProducts = product.relatedProducts || [];
+const productFaqs = product.isPersonalised ? [] : await faqsFor('product', { title: product.title });
 ---
 
 <BaseLayout
@@ -496,6 +499,8 @@ const relatedProducts = product.relatedProducts || [];
       )}
     </div>
   </section>
+
+  <FAQSection faqs={productFaqs} bg="bg-charcoal" />
 
   <!-- Related Products -->
   {relatedProducts.length > 0 && (

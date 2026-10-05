@@ -202,6 +202,16 @@ export const faqsByPageQuery = `
   }
 `;
 
+// Exact page match: product and category FAQs must not pick up "both".
+export const faqsExactPageQuery = `
+  *[_type == "faq" && page == $page] | order(sortOrder asc) {
+    _id,
+    question,
+    answer,
+    sortOrder
+  }
+`;
+
 // ─── Site Settings ───────────────────────────────────────────
 
 export const siteSettingsQuery = `
