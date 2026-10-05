@@ -206,7 +206,15 @@ async function main() {
   const cd = got.res.headers.get('content-disposition') || '';
   okEdge(cd === `attachment; filename="${EXPECTED_NAME}"`, `  named ${EXPECTED_NAME}`, cd);
   okEdge(got.buf.equals(stored1), '  and the bytes are exactly the stored print', `${got.buf.length} B`);
-  okEdge(got.res.headers.get('content-length') === String(stored1.length), '  with a Content-Length that agrees');
+  /* "If present, agrees" -- the route's own rule. It sets Content-Length from
+     the recorded size, but netlify dev's local edge runtime drops it from a
+     streamed body (the response arrives chunked, with none), so presence
+     cannot be asserted here. A WRONG length can: it truncates or hangs the
+     download. Whether production keeps the header is checked against the live
+     site, not here. */
+  const cl = got.res.headers.get('content-length');
+  okEdge(cl === null || cl === String(stored1.length), '  with no Content-Length that disagrees',
+    cl === null ? `none sent (${got.res.headers.get('transfer-encoding') || 'no transfer-encoding'})` : cl);
   if (EDGE_READS) {
     const meta = await sharp(got.buf).metadata().catch(() => ({}));
     ok(meta.width === 2400 && meta.height === 3600, '  2400 × 3600 px, as recorded', `${meta.width} × ${meta.height}`);
@@ -250,7 +258,15 @@ async function main() {
     `mean ${channels.slice(0, 3).map((c) => Math.round(c.mean)).join(',')}`);
   ok(after.printFile?.fingerprint && after.printFile.fingerprint !== rendered.printFile.fingerprint,
     '  and the build records the new fingerprint');
-  ok((await adminPage()).includes('DOWNLOAD PRINT FILE'), 'the admin page offers the download again');
+  /* Retried for a few seconds: the wait above reads the document endpoint,
+     the page reads through the query API, and the query API can lag a moment
+     behind a write. Failed once on exactly that, then passed. */
+  let offered = false;
+  for (let i = 0; i < 8 && !offered; i++) {
+    offered = (await adminPage()).includes('DOWNLOAD PRINT FILE');
+    if (!offered) await new Promise((r) => setTimeout(r, 1000));
+  }
+  ok(offered, 'the admin page offers the download again');
 
   say('\n6. NOTHING ELSE ANSWERS\n');
   const other = await fetch(`${BASE}/admin/personalisation/pp-${'0'.repeat(32)}/print`, { headers: AUTH });
