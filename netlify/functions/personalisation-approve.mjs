@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { docIdFor } from './_shared/pp-id.mjs';
+import { notifyProofApproved } from './_shared/approval-email.mjs';
 
 /**
  * The customer's Approve link: GET /api/personalisation-approve?id=<id>&t=<token>
@@ -64,6 +65,29 @@ const expired = () =>
         we sent you and we&rsquo;ll sort it out.</p>
      <p><a href="https://comicstripcanvas.co.uk">comicstripcanvas.co.uk</a></p>`);
 
+/** The most the customer's thank-you page waits for the team email. */
+const NOTICE_TIMEOUT_MS = 5000;
+
+async function teamNotice(id, approvedAt) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ sent: false, reason: 'timed out' }), NOTICE_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([notifyProofApproved({ sanity, id, approvedAt }), timeout]);
+    if (result.reason === 'timed out') {
+      console.warn(`personalisation-approve: WARN team email for ${id} did not finish in ${NOTICE_TIMEOUT_MS} ms`);
+    }
+    return result;
+  } catch (err) {
+    // notifyProofApproved never throws; this catch is insurance, not a path.
+    console.warn(`personalisation-approve: WARN team email for ${id} failed: ${err.message}`);
+    return { sent: false, reason: err.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async (req, context) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return page(405, 'This link has expired', '<p>Nothing to see here.</p>');
@@ -97,13 +121,23 @@ export default async (req, context) => {
 
     // Spend the token in the same patch that advances the status, so a double
     // click cannot produce two transitions.
+    const approvedAt = new Date().toISOString();
     await sanity
       .patch(docIdFor(id))
-      .set({ status: 'in_production', customerApprovedAt: new Date().toISOString() })
+      .set({ status: 'in_production', customerApprovedAt: approvedAt })
       .unset(['approveToken'])
       .commit();
 
     console.log(`personalisation-approve: ${id} approved by the customer — in production`);
+
+    /* Tell the team. AFTER the commit, so only a click that actually moved the
+       build sends anything -- the spent token is what makes it once. Awaited,
+       because a function's work stops when it returns, but bounded: the
+       customer is waiting on this page, and a slow Resend must not become a
+       slow thank-you. notifyProofApproved never throws; the race's own timeout
+       is the only thing that can end it early, and that is logged too. */
+    await teamNotice(id, approvedAt);
+
     return page(200, 'Thank you — that&rsquo;s approved',
       `<p>Your artwork is approved and going into production.</p>
        <p>We&rsquo;ll email you again when it&rsquo;s on its way.</p>
