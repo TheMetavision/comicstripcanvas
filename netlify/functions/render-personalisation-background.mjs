@@ -1,5 +1,6 @@
 import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
+import { THUMB_MAX_SIDE, THUMB_QUALITY, replaceThumb } from './_shared/thumb.mjs';
 import { DPI, dataUri, memoryNote, prepareScene, rasterise } from './_shared/render.mjs';
 import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { isArtKey } from './_shared/artwork-styles.mjs';
@@ -188,6 +189,33 @@ async function render(id, doc, req) {
     metadata: { id, kind: 'proof', width: proof.width, height: proof.height },
   });
 
+  /* A build we edited gets a new basket thumbnail from the new proof, or the
+     basket and the order line go on picturing the design we replaced. Only an
+     edited one: otherwise thumb.jpg is the customer's own snapshot of what they
+     made, and nothing here has a better picture of it. Before the status flips,
+     so whoever is waiting on `rendered` sees the new one; best-effort, because a
+     stale thumbnail is not a reason to hold a print.
+
+     sharp is imported HERE, not at the top. A native module that fails to load
+     at the top takes the whole render down with it, print and proof included --
+     which is exactly what happened under netlify dev on Windows, where the CLI's
+     own sharp is already in the process and a second libvips will not load. */
+  let thumbNote = '';
+  if (doc.editedAt) {
+    try {
+      const { default: sharp } = await import('sharp');
+      const jpeg = await sharp(proofPng)
+        .resize({ width: THUMB_MAX_SIDE, height: THUMB_MAX_SIDE, fit: 'inside', withoutEnlargement: true })
+        .flatten({ background: '#FFFFFF' })
+        .jpeg({ quality: THUMB_QUALITY })
+        .toBuffer();
+      thumbNote = `, thumb ${await replaceThumb(photos, id, jpeg, new Date().toISOString())}`;
+    } catch (err) {
+      console.error(`render-personalisation: could not regenerate the thumbnail for ${id}:`, err.message);
+      thumbNote = ', thumb NOT regenerated';
+    }
+  }
+
   await sanity.patch(docIdFor(id)).set({
     status: 'rendered',
     proofUrl: `${origin}/api/personalisation-proof/${id}`,
@@ -199,7 +227,7 @@ async function render(id, doc, req) {
     `render-personalisation: ${id} ${customising ? '[customise] ' : ''}${scene.template} ` +
     `${scene.fileInches[0]} x ${scene.fileInches[1]} in @ ${DPI}dpi -> ` +
     `print ${print.width} x ${print.height} px (${printPng.length} B), ` +
-    `proof ${proof.width} x ${proof.height} px`
+    `proof ${proof.width} x ${proof.height} px${thumbNote}`
   );
 }
 

@@ -2,6 +2,7 @@ import { createClient } from '@sanity/client';
 import { getStore } from '@netlify/blobs';
 import { internalOrigin } from './_shared/origin.mjs';
 import { docIdFor } from './_shared/pp-id.mjs';
+import { PHOTO_STORE, keepOriginalThumb } from './_shared/thumb.mjs';
 
 /**
  * Save a build we have edited on the customer's behalf, and re-render it.
@@ -200,6 +201,19 @@ export default async (req) => {
     }
   }
 
+  /* And their basket thumbnail, which the re-render replaces with one of the
+     edited design. Not tied to keepingOriginal: a build first edited before
+     thumbnails were regenerated still holds the customer's own snapshot, and
+     keepOriginalThumb only ever copies when no copy exists yet. Best-effort for
+     the same reason as the proof -- and if it fails here the renderer tries
+     again, and will not replace thumb.jpg until a copy is safe. */
+  let originalThumbKept = false;
+  try {
+    originalThumbKept = (await keepOriginalThumb(getStore(PHOTO_STORE), id, now)) === 'kept';
+  } catch (err) {
+    console.error(`personalisation-edit-save: could not keep the customer's thumbnail for ${id}:`, err.message);
+  }
+
   try {
     let patch = sanity.patch(docIdFor(id));
     /* ifRevisionID, because the renderer patches these same documents and the
@@ -269,6 +283,7 @@ export default async (req) => {
     tokenRevoked,
     keptOriginal: keepingOriginal,
     originalProofKept,
+    originalThumbKept,
   });
 };
 

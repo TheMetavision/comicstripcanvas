@@ -105,7 +105,8 @@
 # and read "m" for the function. 1024 means it was dropped again.
 [functions."render-personalisation-background"]
   memory = "3gb"
-  external_node_modules = ["@resvg/resvg-js"]
+  # sharp: an edited build's basket thumbnail is re-encoded from its new proof.
+  external_node_modules = ["@resvg/resvg-js", "sharp"]
 
 # The studio print master is the same size job, for the same reason -- and it
 # makes every other picture too, so sharp joins resvg here. Both ship a native
