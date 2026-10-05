@@ -1,7 +1,9 @@
 import { defineConfig } from 'sanity';
 import { structureTool } from 'sanity/structure';
 import { schemaTypes } from './schemas';
-import { personalisationActions } from './actions/personalisationActions';
+import { BUILD_ACTIONS } from './actions/personalisationActions';
+import { OrderPublishAction } from './actions/OrderPublishAction';
+import { resolveDocumentActions } from './actions/resolve-actions.mjs';
 
 // A personalisation group: one workflow stage, newest first.
 const personalisations = (S: any, title: string, filter: string, params?: any) => {
@@ -195,8 +197,10 @@ export default defineConfig({
     types: schemaTypes,
   },
   document: {
-    // Approve / Hold / Re-render are appended to the standard actions for
-    // pendingPersonalisation; nothing standard is removed.
-    actions: personalisationActions,
+    /* Orders publish through the guarded action; builds lose every action
+       that could create or publish a draft and gain Approve / Hold /
+       Re-render. The list per type, and why, is in actions/resolve-actions.mjs. */
+    actions: (prev, context) =>
+      resolveDocumentActions(prev, context, { OrderPublishAction, buildExtras: BUILD_ACTIONS }),
   },
 });

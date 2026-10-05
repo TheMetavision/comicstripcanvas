@@ -48,6 +48,15 @@ export default defineType({
   name: 'pendingPersonalisation',
   title: 'Pending Personalisation',
   type: 'document',
+  /* EVERY field is read-only, at the document level so a field added later is
+     too. Every state change on a build goes through the server -- Approve,
+     Hold, Re-render and Edit all open the admin page -- and a Studio edit would
+     make a draft that, published, rolls back whatever the server wrote since:
+     a spent approve link live again, a status reverted, an edit count undone.
+     With nothing editable, no draft of a build can be started from this form.
+     The document actions that could still make or publish one are removed in
+     actions/resolve-actions.mjs. */
+  readOnly: true,
   fieldsets: [
     {
       name: 'adminEditHistory',
@@ -152,7 +161,8 @@ export default defineType({
       name: 'proofUrl',
       title: 'Proof URL',
       type: 'url',
-      description: 'Rendered proof sent to the customer for approval.',
+      readOnly: true,
+      description: 'Rendered proof sent to the customer for approval. Written by the render job.',
     }),
     defineField({
       name: 'minEffectiveDpi',
@@ -176,6 +186,8 @@ export default defineType({
       title: 'Status',
       type: 'string',
       initialValue: 'draft',
+      readOnly: true,
+      description: 'Moved by the server only: payment, render, Approve / Hold / Re-render, the customer\'s approval.',
       options: {
         list: STATUSES,
         layout: 'dropdown',

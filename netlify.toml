@@ -161,6 +161,11 @@
 [functions."retention"]
   schedule = "@daily"
 
+# Studio drafts of orders and builds left untouched for over 24 hours, emailed
+# to TEAM_EMAIL. Silent on a day with none. See _shared/stale-drafts.mjs.
+[functions."stale-drafts"]
+  schedule = "@daily"
+
 # Photos the circuit breaker paused, restarted once an hour. The status poll
 # already restarts a build the customer still has open; this is for the tab that
 # was closed before midnight. Hourly rather than daily because STYLE_DAILY_MAX

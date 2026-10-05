@@ -267,11 +267,13 @@ export default defineType({
       title: 'Personalised Order',
       type: 'boolean',
       initialValue: false,
+      readOnly: true,
     }),
     defineField({
       name: 'personalisationDetails',
       title: 'Personalisation Details',
       type: 'object',
+      readOnly: true,
       hidden: ({ document }) => !document?.isPersonalised,
       fields: [
         { name: 'style', type: 'string', title: 'Style Chosen' },

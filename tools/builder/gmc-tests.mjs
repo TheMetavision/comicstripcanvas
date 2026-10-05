@@ -136,11 +136,13 @@ const PRICES = {
   'canvas-standard': { small: 26.99, medium: 31.99, large: 44.99 },
   'canvas-gallery': { small: 28.99, medium: 33.99, large: 46.99 },
 };
+/* A stock product -- any one; they all share the price table. Sections 3 and 5
+   both need one, because only stock products link per variant. */
+const STOCK_SLUG = fs.readdirSync(path.join(DIST, 'store'), { withFileTypes: true })
+  .filter((d) => d.isDirectory() && !d.name.startsWith('personalised'))
+  .map((d) => d.name)[0];
 {
-  const dirs = fs.readdirSync(path.join(DIST, 'store'), { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('personalised'))
-    .map((d) => d.name);
-  const slug = dirs[0];
+  const slug = STOCK_SLUG;
   const d = productSchema(read(`store/${slug}/index.html`));
   ok(!!d, `${slug}: there is a Product schema`);
   ok(d.offers.length === 9, '  nine offers, one per variant', String(d.offers.length));
@@ -179,30 +181,34 @@ const PRICES = {
 
 say('\n4. THE SCHEMA ON A PERSONALISED PRODUCT\n');
 {
-  const d = productSchema(read('store/personalised-strips/index.html'));
+  const html = read('store/personalised-strips/index.html');
+  const d = productSchema(html);
   ok(!!d, 'personalised-strips: there is a Product schema');
-  const byUrl = Object.fromEntries(d.offers.map((o) => [o.url.split('?')[1], o]));
 
-  /* The fee is the difference between every offer and the plain print price,
-     and it has to be the SAME difference on all nine -- one fee, not a markup
-     that drifts by variant. */
-  const gaps = new Set();
-  for (const [format, sizes] of Object.entries(PRICES)) {
-    for (const [size, price] of Object.entries(sizes)) {
-      const o = byUrl[`format=${format}&size=${size}`];
-      if (o) gaps.add(Number((Number(o.price) - price).toFixed(2)));
-    }
-  }
-  ok(gaps.size === 1, 'one fee, added to every variant alike', [...gaps].join(', '));
-  const fee = [...gaps][0];
-  ok(fee > 0, 'and it is actually added', `£${fee}`);
+  /* ONE offer since 2966fd0, at the "From" price, linked to the bare page --
+     the same single item the shopping feed lists. The page has no format or
+     size buttons (the builder owns both) and ignores ?format=&size=, so nine
+     per-variant offers named prices the landing page never showed. */
+  ok(Array.isArray(d.offers) && d.offers.length === 1, 'exactly one offer', String(d.offers?.length));
+  const offer = d.offers[0] || {};
+  ok(offer.url === `${new URL(offer.url || 'https://x/').origin}/store/personalised-strips/`,
+    '  linked to the bare page, no ?format=&size=', offer.url);
+  ok(!('name' in offer), '  with no per-variant name');
 
-  /* The number Alan named. */
-  const large = byUrl['format=poster&size=large'];
-  ok(Number(large.price) === 26.99,
-    'the Large strip poster is 26.99, not 16.99', large.price);
+  /* The fee is not optional, so the one price must include it. The page states
+     the fee in words ("plus £N personalisation") and the From price as data;
+     the offer has to be the cheapest print plus exactly that fee, and the same
+     number the page shows. */
+  const feeOnPage = Number((text(html).match(/plus £(\d+(?:\.\d+)?) personalisation/) || [])[1]);
+  ok(feeOnPage > 0, 'the page states a personalisation fee', `£${feeOnPage}`);
+  ok(Number(offer.price) === Number((PRICES.poster.small + feeOnPage).toFixed(2)),
+    '  the offer is the smallest poster plus that fee, not the bare 9.99',
+    `${offer.price} = ${PRICES.poster.small} + ${feeOnPage}`);
+  const fromOnPage = (html.match(/data-from-price="([\d.]+)"/) || [])[1];
+  ok(fromOnPage && Number(offer.price) === Number(fromOnPage),
+    '  and the same "From" price the page shows', `${offer.price} vs ${fromOnPage}`);
 
-  const rp = d.offers[0].hasMerchantReturnPolicy;
+  const rp = offer.hasMerchantReturnPolicy;
   ok(rp && rp.returnPolicyCategory.endsWith('MerchantReturnNotPermitted'),
     'a personalised product takes no change-of-mind return',
     rp && rp.returnPolicyCategory.split('/').pop());
@@ -215,14 +221,20 @@ say('\n4. THE SCHEMA ON A PERSONALISED PRODUCT\n');
 say('\n5. THE PAGE OPENS ON THE VARIANT IT WAS LINKED TO\n');
 {
   const src = fs.readFileSync(path.join(SRC, 'pages/store/[slug].astro'), 'utf8');
-  ok(/preselectFromQuery/.test(src), 'the page reads format and size off the query');
-  ok(/q\.get\('format'\)/.test(src) && /q\.get\('size'\)/.test(src), '  both of them');
+  /* Since 2966fd0 the selected variant is decided once, by pick(), seeded from
+     the query -- the shape changed, the behaviour did not. */
+  ok(/new URLSearchParams\(location\.search\)/.test(src), 'the page reads the query');
+  ok(/pick\(formatBtns, 'format', \w+\.get\('format'\)\)/.test(src)
+    && /pick\(sizeBtns, 'size', \w+\.get\('size'\)\)/.test(src),
+    '  and seeds both format and size from it');
   /* The reason this matters, asserted rather than trusted: the feed and the
      schema both link this way, and until this existed every such link opened on
      poster/small and showed £9.99 whatever had been advertised. */
-  const built = read('store/personalised-strips/index.html');
-  ok(/format=poster&(amp;)?size=large/.test(built) || /format=poster&size=large/.test(built),
-    '  and the schema really does link that way');
+  /* A STOCK page: since 2966fd0 only stock products link per variant -- a
+     personalised one links to its bare page (section 4). */
+  const built = read(`store/${STOCK_SLUG}/index.html`);
+  ok(/format=poster&(amp;)?size=large/.test(built),
+    `  and the schema really does link that way (${STOCK_SLUG})`);
 }
 
 /* ═════════ 6. the feed source, for the two faults that were in it */
@@ -237,7 +249,15 @@ say('\n6. THE FEED\n');
     'product_type no longer double-escapes its ampersands');
   ok(/xmlEscape\(`Home & Garden/.test(feed), '  it passes a real ampersand to the escaper once');
 
-  ok(/<g:size>\$\{xmlEscape\(sizeAttr\(/.test(feed), 'every item carries g:size');
+  /* g:size on every STOCK item. Since 2966fd0 a personalised product is one
+     item with no size chosen yet, so the template writes g:size only when it
+     is given one -- and every stock variant is. */
+  ok(/<g:size>\$\{xmlEscape\(f\.size\)\}<\/g:size>/.test(feed), 'the item template writes g:size when given one');
+  ok(/size: sizeAttr\(size, orientation\)/.test(feed), '  and every stock variant is given one');
+  const personalisedItem = feed.slice(feed.indexOf('if (product.isPersonalised) {'),
+    feed.indexOf('continue;', feed.indexOf('if (product.isPersonalised) {')));
+  ok(personalisedItem && !/size:|groupId:/.test(personalisedItem),
+    '  while a personalised item has neither a size nor a variant group');
   ok(/<g:return_policy_label>\$\{returnsLabel\}/.test(feed), 'and g:return_policy_label');
   ok(/const returnsLabel = product\.isPersonalised \? 'personalised' : 'standard'/.test(feed),
     '  which is personalised only for what is actually made to order');

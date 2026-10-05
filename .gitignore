@@ -45,6 +45,10 @@ tools/builder/web-out/
 tools/builder/mockup-backup-*.json
 tools/previous-slugs-backup-*.json
 
+# Copies of documents taken before deleting or discarding them. They hold
+# customer data (names, addresses), so never in the repository.
+tools/backups/
+
 artwork/
 photos/
 

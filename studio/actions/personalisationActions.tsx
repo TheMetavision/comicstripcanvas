@@ -91,8 +91,5 @@ export const RerenderAction: DocumentActionComponent = (props) => {
   };
 };
 
-/** Added alongside the standard actions, never replacing them. */
-export const personalisationActions = (prev: DocumentActionComponent[], context: any) =>
-  context.schemaType === 'pendingPersonalisation'
-    ? [...prev, ApproveAction, HoldAction, RerenderAction]
-    : prev;
+/** Added to a build's actions by ./resolve-actions.mjs. */
+export const BUILD_ACTIONS: DocumentActionComponent[] = [ApproveAction, HoldAction, RerenderAction];
