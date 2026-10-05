@@ -4,6 +4,12 @@ import { useClient, useFormValue } from 'sanity';
 import {
   isFeeLine, isLegacyBuildLine, isStockLine, resolveLineProduct,
 } from '../../netlify/functions/_shared/order-print.mjs';
+import { buildForLine } from '../../netlify/functions/_shared/personalised-print.mjs';
+import PersonalisedPrintButton, { type PrintBuild } from './PersonalisedPrintButton';
+
+/** What a built line's button needs from its build. */
+const BUILD_FIELDS = '_id, status, recipe, sceneSvg, editedAt, editCount, printFile, printError, '
+  + 'printSize, templateId, outputFormat, orderNumber';
 
 /**
  * "Download print file" for every line on this order.
@@ -46,6 +52,8 @@ type Line = {
   quantity?: number;
   printFile?: string;
   buildKind?: string;
+  personalisationId?: string;
+  formatKey?: string;
   artworkStyle?: string;
   artworkStyleLabel?: string;
 };
@@ -127,6 +135,23 @@ export default function PrintFileLinks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needingKeys, client]);
 
+  /* The builds paid for on this order, for its built lines. One read for the
+     whole order: a line names its build only if it was stamped after
+     personalisationId was added to order lines, so older ones are matched
+     among these by buildForLine -- which refuses rather than guesses. */
+  const hasBuiltLine = lines.some((l) => Boolean(l.buildKind));
+  const [builds, setBuilds] = useState<PrintBuild[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!orderId || !hasBuiltLine) return undefined;
+    client.fetch(
+      `*[_type == "pendingPersonalisation" && orderId == $orderId]{ ${BUILD_FIELDS} }`,
+      { orderId },
+    ).then((rows: PrintBuild[]) => { if (live) setBuilds(rows || []); })
+      .catch(() => { if (live) setBuilds([]); });
+    return () => { live = false; };
+  }, [orderId, hasBuiltLine, client]);
+
   if (!orderId || lines.length === 0) {
     return (
       <Card padding={3} radius={2} tone="transparent">
@@ -165,9 +190,7 @@ export default function PrintFileLinks() {
               </Box>
 
               {built ? (
-                <Text size={1} muted>
-                  Built by the customer — printed from the proof on its Personalisations entry.
-                </Text>
+                <BuiltLinePrint line={line} builds={builds} legacy={!line.buildKind} />
               ) : fee ? (
                 <Text size={1} muted>Not a printable line.</Text>
               ) : (
@@ -191,6 +214,27 @@ export default function PrintFileLinks() {
       })}
     </Stack>
   );
+}
+
+/**
+ * A line the customer built: its build's own print file.
+ *
+ * A legacy build line -- from the old five-step form, before the builder --
+ * has no build document and no rendered print; it was made by hand, and says
+ * so rather than offering a button that could only refuse.
+ */
+function BuiltLinePrint({ line, builds, legacy }: { line: Line; builds: PrintBuild[] | null; legacy: boolean }) {
+  if (legacy) {
+    return <Text size={1} muted>Made with the old personalisation form — no rendered print file.</Text>;
+  }
+  if (!builds) {
+    return (
+      <Flex align="center" gap={2}><Spinner muted /><Text size={1} muted>Finding the build…</Text></Flex>
+    );
+  }
+  const found = buildForLine(line, builds);
+  if (!found.build) return <Text size={1} style={{ color: '#f03e2f' }}>{found.why}</Text>;
+  return <PersonalisedPrintButton build={found.build} />;
 }
 
 /**

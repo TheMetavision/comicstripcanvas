@@ -3,6 +3,7 @@ import { Resend } from 'resend';
 import { EMAIL_BRAND, emailHeader, button } from './_shared/email.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
 import { docIdFor } from './_shared/pp-id.mjs';
+import { DOWNLOAD_STATUSES } from './_shared/personalised-print.mjs';
 
 /**
  * Studio document actions that need to reach outside Sanity.
@@ -114,6 +115,7 @@ export default async (req) => {
     if (action === 'approve') return await approve(doc, id, origin, body.note);
     if (action === 'hold') return await hold(doc, id, body.note);
     if (action === 'rerender') return await rerender(doc, id, origin);
+    if (action === 'rerender-print') return await rerenderPrint(doc, id, origin);
     return json({ ok: false, error: `Unknown action "${action}"` }, 400);
   } catch (err) {
     console.error(`personalisation-action: ${action} on ${id} failed:`, err.message);
@@ -225,6 +227,34 @@ async function rerender(doc, id, origin) {
   }
   console.log(`personalisation-action: ${id} queued for re-render`);
   return json({ ok: true, status: 'preparing' });
+}
+
+/* --------------------------------------------------- re-render the print --- */
+/* For a build the customer has APPROVED whose print is stale or missing. Unlike
+   rerender above it changes no status, makes no new proof and sends nothing:
+   the approval stands, and the design cannot have changed since it was given
+   (see PRINT_ONLY_STATUSES in render-personalisation-background.mjs). */
+async function rerenderPrint(doc, id, origin) {
+  if (!DOWNLOAD_STATUSES.includes(doc.status)) {
+    return json({
+      ok: false,
+      error: `Only an approved build's print is re-rendered on its own (this is "${doc.status}"). `
+        + 'Before approval, use Re-render, which makes a new proof as well.',
+    }, 409);
+  }
+  await sanity.patch(docIdFor(id)).unset(['printError']).commit();
+  const res = await fetch(`${origin}/api/render-personalisation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, printOnly: true }),
+  });
+  if (!res.ok) {
+    const msg = `The render job would not start (${res.status})`;
+    await sanity.patch(docIdFor(id)).set({ printError: msg }).commit();
+    return json({ ok: false, error: msg }, 502);
+  }
+  console.log(`personalisation-action: ${id} queued for a print-only re-render (status stays "${doc.status}")`);
+  return json({ ok: true, status: doc.status, printOnly: true });
 }
 
 /* ------------------------------------------------------------------ email --- */

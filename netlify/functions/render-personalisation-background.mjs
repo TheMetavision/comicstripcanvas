@@ -6,6 +6,7 @@ import { STUDIO_STORE } from './_shared/studio-uploads.mjs';
 import { isArtKey } from './_shared/artwork-styles.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
 import { docIdFor } from './_shared/pp-id.mjs';
+import { DOWNLOAD_STATUSES, printFingerprint, printKey } from './_shared/personalised-print.mjs';
 
 /**
  * Render a paid personalisation to a print file and a proof.
@@ -44,6 +45,15 @@ const PROOF_WIDTH = 1200;
 // not redo work; "draft"/"awaiting_payment" because nothing has been paid for.
 const RENDERABLE = new Set(['paid', 'preparing', 'on_hold']);
 
+/* { printOnly: true } re-makes the PRINT of a build the customer has already
+   approved, and nothing else: no proof, no thumbnail, no status change. It is
+   how a print found stale at download time is fixed without undoing the
+   approval. It is safe because the design cannot change past approval --
+   personalisation-edit-save refuses in_production and dispatched, and
+   personalise-save refuses anything that is not a draft -- so the recipe it
+   renders from is the one the customer approved. */
+const PRINT_ONLY_STATUSES = new Set(DOWNLOAD_STATUSES);
+
 const isId = (s) => typeof s === 'string' && /^pp-[0-9a-f]{32}$/.test(s);
 
 /* A panel that has not been styled is not a broken render, it is a render asked
@@ -63,9 +73,11 @@ class UnstyledPanel extends Error {
 
 export default async (req, context) => {
   let id = null;
+  let printOnly = false;
   try {
     const body = await req.json().catch(() => ({}));
     id = body.id;
+    printOnly = body.printOnly === true;
     /* First line, before anything can fail, and it carries the memory this
        container actually got. A 7200 x 4800 print is a 132 MB surface before
        the template artwork it composites is decoded, and the studio renderer
@@ -84,6 +96,15 @@ export default async (req, context) => {
       console.error(`render-personalisation: ${id} does not exist`);
       return new Response('Unknown', { status: 404 });
     }
+    if (printOnly) {
+      if (!PRINT_ONLY_STATUSES.has(doc.status)) {
+        console.log(`render-personalisation: print-only skipped for ${id} — status is "${doc.status}", ` +
+          `only ${[...PRINT_ONLY_STATUSES].join(', ')} get a print-only re-render.`);
+        return new Response('Not print-only renderable', { status: 200 });
+      }
+      await render(id, doc, req, { printOnly: true });
+      return new Response('Print rendered', { status: 200 });
+    }
     if (!RENDERABLE.has(doc.status)) {
       // Not an error: a repeat webhook delivery, or a build that was never paid
       // for. Say which so it is obvious in the logs why nothing happened.
@@ -95,7 +116,17 @@ export default async (req, context) => {
     await render(id, doc, req);
     return new Response('Rendered', { status: 200 });
   } catch (err) {
-    console.error(`render-personalisation: ${id} failed:`, err.message);
+    console.error(`render-personalisation: ${id} ${printOnly ? 'print-only ' : ''}failed:`, err.message);
+    /* A print-only failure must NOT touch the status: the build is approved and
+       stays approved. It is recorded where the print panels read it. */
+    if (printOnly && isId(id)) {
+      try {
+        await sanity.patch(docIdFor(id)).set({ printError: String(err.message).slice(0, 2000) }).commit();
+      } catch (patchErr) {
+        console.error(`render-personalisation: could not record the print error on ${id}:`, patchErr.message);
+      }
+      return new Response('Failed', { status: 500 });
+    }
     // Park it for a human rather than leaving it looking paid-and-forgotten.
     if (isId(id)) {
       try {
@@ -114,8 +145,12 @@ export default async (req, context) => {
   }
 };
 
-async function render(id, doc, req) {
+async function render(id, doc, req, { printOnly = false } = {}) {
   const recipe = JSON.parse(doc.recipe || '{}');
+  /* What this print is made FROM, taken from the same document the render
+     reads -- so the download can tell, later, whether the design has moved on
+     since (_shared/personalised-print.mjs). */
+  const fingerprint = await printFingerprint(doc);
   const origin = internalOrigin(req);
 
   /* Every panel renders from its STYLED photo. There is deliberately no
@@ -177,14 +212,36 @@ async function render(id, doc, req) {
   // Both are produced before anything is written, so a failure never leaves a
   // half-written print file behind.
   const print = rasterise(scene.svg, scene.fontFiles, scene.printWidth);
-  const proof = rasterise(scene.svg, scene.fontFiles, PROOF_WIDTH);
+  const proof = printOnly ? null : rasterise(scene.svg, scene.fontFiles, PROOF_WIDTH);
   const printPng = print.asPng();
-  const proofPng = proof.asPng();
+  const proofPng = proof ? proof.asPng() : null;
 
+  /* Recorded with the print and, below, on the document: the blob's copy is
+     what the download checks (it describes the bytes actually stored); the
+     document's is what the Studio and the admin page show, since neither can
+     read the blob store. */
+  const printFile = {
+    width: print.width,
+    height: print.height,
+    dpi: DPI,
+    bytes: printPng.length,
+    fileInches: scene.fileInches,
+    fingerprint,
+    renderedAt: new Date().toISOString(),
+  };
   const renders = getStore(RENDER_STORE);
-  await renders.set(`renders/${id}/print.png`, printPng, {
-    metadata: { id, kind: 'print', width: print.width, height: print.height, dpi: DPI },
-  });
+  await renders.set(printKey(id), printPng, { metadata: { id, kind: 'print', ...printFile } });
+
+  if (printOnly) {
+    await sanity.patch(docIdFor(id)).set({ printFile }).unset(['printError']).commit();
+    scene.cleanup();
+    console.log(
+      `render-personalisation: ${id} print-only re-render (status stays "${doc.status}") -> ` +
+      `print ${print.width} x ${print.height} px (${printPng.length} B), fingerprint ${fingerprint}`
+    );
+    return;
+  }
+
   await renders.set(`renders/${id}/proof.png`, proofPng, {
     metadata: { id, kind: 'proof', width: proof.width, height: proof.height },
   });
@@ -219,7 +276,8 @@ async function render(id, doc, req) {
   await sanity.patch(docIdFor(id)).set({
     status: 'rendered',
     proofUrl: `${origin}/api/personalisation-proof/${id}`,
-  }).unset(['renderError']).commit();
+    printFile,
+  }).unset(['renderError', 'printError']).commit();
 
   scene.cleanup();
 

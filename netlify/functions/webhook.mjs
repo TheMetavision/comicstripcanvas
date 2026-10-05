@@ -452,6 +452,11 @@ async function fulfilOrder(session) {
               }
               : {}),
             ...(item.buildKind ? { buildKind: item.buildKind } : {}),
+            /* Which build this line is. Without it an order with two
+               personalised items cannot say which print belongs to which line
+               -- the Print Files panel has to match by size and finish, and
+               refuses when two builds look alike. */
+            ...(item.personalisationId ? { personalisationId: item.personalisationId } : {}),
           };
         });
 

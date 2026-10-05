@@ -130,6 +130,9 @@ export default defineType({
             { name: 'sizeKey', type: 'string', title: 'Size Key', readOnly: true },
             { name: 'formatKey', type: 'string', title: 'Format Key', readOnly: true },
             { name: 'orientation', type: 'string', title: 'Orientation', readOnly: true },
+            /* The build a personalised or customised line was for, stamped by the
+               webhook since October 2026. Its print is downloaded from Print Files. */
+            { name: 'personalisationId', type: 'string', title: 'Build', readOnly: true },
           ],
           preview: {
             select: {

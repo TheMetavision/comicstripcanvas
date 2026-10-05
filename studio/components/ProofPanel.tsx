@@ -1,6 +1,7 @@
 import React from 'react';
 import { Badge, Box, Card, Flex, Inline, Stack, Text } from '@sanity/ui';
 import { useFormValue } from 'sanity';
+import PersonalisedPrintButton, { type PrintBuild } from './PersonalisedPrintButton';
 
 /**
  * Read-only summary at the top of a pendingPersonalisation: the rendered proof,
@@ -64,6 +65,21 @@ export default function ProofPanel() {
   const photos = (useFormValue(['photos']) as PhotoRow[] | undefined) || [];
   const styleSize = useFormValue(['styleSize']) as string | undefined;
   const styleCalls = useFormValue(['styleCalls']) as number | undefined;
+  /* Everything the print button decides by (_shared/personalised-print.mjs). */
+  const build: PrintBuild = {
+    _id: useFormValue(['_id']) as string | undefined,
+    status,
+    recipe: useFormValue(['recipe']) as string | undefined,
+    sceneSvg: useFormValue(['sceneSvg']) as string | undefined,
+    editedAt: useFormValue(['editedAt']) as string | undefined,
+    editCount: useFormValue(['editCount']) as number | undefined,
+    printFile: useFormValue(['printFile']) as Record<string, any> | undefined,
+    printError: useFormValue(['printError']) as string | undefined,
+    printSize,
+    templateId,
+    outputFormat: useFormValue(['outputFormat']) as string | undefined,
+    orderNumber: useFormValue(['orderNumber']) as string | undefined,
+  };
 
   const done = photos.filter((p) => p.styleStatus === 'done').length;
   const failed = photos.filter((p) => p.styleStatus === 'failed');
@@ -105,6 +121,13 @@ export default function ProofPanel() {
           </Inline>
         )}
       </Flex>
+
+      <Card padding={3} radius={2} shadow={1}>
+        <Stack space={3}>
+          <Text size={1} weight="semibold">Print file</Text>
+          <PersonalisedPrintButton build={build} />
+        </Stack>
+      </Card>
 
       {photos.length > 0 && (
         <Card padding={3} radius={2} shadow={1} tone={failed.length ? 'critical' : 'transparent'}>

@@ -164,6 +164,34 @@ export default defineType({
       readOnly: true,
       description: 'Rendered proof sent to the customer for approval. Written by the render job.',
     }),
+    /* What the last render recorded about the print it made. The download
+       checks the copy stored with the file itself; this copy is what the
+       Studio and the admin page show beside the button, since neither can read
+       the blob store. See netlify/functions/_shared/personalised-print.mjs. */
+    defineField({
+      name: 'printFile',
+      title: 'Print File',
+      type: 'object',
+      readOnly: true,
+      hidden: true,
+      fields: [
+        defineField({ name: 'width', title: 'Width (px)', type: 'number' }),
+        defineField({ name: 'height', title: 'Height (px)', type: 'number' }),
+        defineField({ name: 'dpi', title: 'DPI', type: 'number' }),
+        defineField({ name: 'bytes', title: 'Bytes', type: 'number' }),
+        defineField({ name: 'fileInches', title: 'File Size (in)', type: 'array', of: [{ type: 'number' }] }),
+        defineField({ name: 'fingerprint', title: 'Design Fingerprint', type: 'string' }),
+        defineField({ name: 'renderedAt', title: 'Rendered At', type: 'datetime' }),
+      ],
+    }),
+    defineField({
+      name: 'printError',
+      title: 'Print Re-render Error',
+      type: 'text',
+      rows: 2,
+      readOnly: true,
+      description: 'Why the last print-only re-render failed. The build\'s status is not changed by it.',
+    }),
     defineField({
       name: 'minEffectiveDpi',
       title: 'Lowest Effective DPI',

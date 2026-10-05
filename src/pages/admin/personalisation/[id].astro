@@ -4,6 +4,7 @@ export const prerender = false;
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { sanityServerClient } from '../../../lib/sanity-server';
 import { docIdFor } from '../../../../netlify/functions/_shared/pp-id.mjs';
+import { printPanelState } from '../../../../netlify/functions/_shared/personalised-print.mjs';
 
 /**
  * Approve / Hold / Re-render / Edit one personalisation.
@@ -24,7 +25,7 @@ import { docIdFor } from '../../../../netlify/functions/_shared/pp-id.mjs';
  */
 const { id } = Astro.params;
 const action = (Astro.url.searchParams.get('action') || '').toLowerCase();
-const KNOWN = ['approve', 'hold', 'rerender'];
+const KNOWN = ['approve', 'hold', 'rerender', 'rerender-print'];
 const wanted = KNOWN.includes(action) ? action : '';
 
 const VALID_ID = typeof id === 'string' && /^pp-[0-9a-f]{32}$/.test(id);
@@ -43,7 +44,7 @@ if (VALID_ID) {
     doc = await sanityServerClient.fetch(
       `*[_id == $id][0]{ _id, _type, status, templateId, orderNumber, printSize, outputFormat,
         proofUrl, approvedAt, customerApprovedAt, holdNote, renderError, proofNote,
-        editCount, editedAt, customerNotes, minEffectiveDpi,
+        editCount, editedAt, customerNotes, minEffectiveDpi, recipe, sceneSvg, printFile, printError,
         "hasOriginal": defined(customerOriginal.sceneSvg),
         "originalKeptAt": customerOriginal.savedAt }`,
       { id: docIdFor(id) }
@@ -53,6 +54,12 @@ if (VALID_ID) {
   }
 }
 const known = !!doc && doc._type === 'pendingPersonalisation';
+/* The print file: offered, refused, or out of date -- by the same rules the
+   download itself applies (_shared/personalised-print.mjs). The download route
+   reads the stored file and has the last word; this page reads what the render
+   recorded on the build, which is all a page can see. */
+const print = known ? await printPanelState(doc) : null;
+const printHref = `/admin/personalisation/${id}/print`;
 const canEdit = known && EDITABLE.has(doc.status);
 const canApprove = known && doc.status === 'rendered';
 const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_hold');
@@ -158,6 +165,38 @@ const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_ho
             </p>
             <p class="mt-1 mb-0 whitespace-pre-wrap font-source text-sm text-off-white">{doc.customerNotes}</p>
           </div>
+        )}
+      </div>
+    )}
+
+    {print && (
+      <div id="print-file" class="mb-6 border-4 border-black bg-panel-dark p-4" style="box-shadow: 4px 4px 0 #000;">
+        <p class="m-0 mb-2 font-russo text-xs uppercase tracking-wide text-gray-400">Print file</p>
+        {print.state === 'awaiting' ? (
+          <p class="m-0 font-source text-sm text-gray-300">{print.why}.</p>
+        ) : (print.state === 'ready' || print.state === 'unrecorded') ? (
+          <div class="flex flex-wrap items-center gap-3">
+            <a href={printHref} class="btn-primary" style="background:#FFF200;color:#000;" download>
+              DOWNLOAD PRINT FILE
+            </a>
+            <span class="font-source text-sm text-off-white">{print.size}</span>
+            {print.state === 'unrecorded' && (
+              <span class="w-full font-source text-xs text-gray-400">{print.why}</span>
+            )}
+          </div>
+        ) : (
+          <div>
+            <p class="m-0 mb-3 font-source text-sm" style="color:#ff6b6b;">{print.why}</p>
+            <button id="pa-rerender-print" class="btn-primary" type="button" style="background:#f5a623;color:#000;">
+              RE-RENDER PRINT FILE
+            </button>
+            <span class="ml-3 font-source text-xs text-gray-400">
+              A new print from the approved design. The approval and the proof are not touched.
+            </span>
+          </div>
+        )}
+        {doc.printError && (
+          <p class="mt-3 mb-0 font-source text-xs" style="color:#ff6b6b;">Last print re-render failed: {doc.printError}</p>
         )}
       </div>
     )}
@@ -269,8 +308,9 @@ const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_ho
     buttons(true);
   };
   const buttons = (off: boolean) => {
-    for (const b of ['pa-approve', 'pa-hold-btn', 'pa-rerender']) {
-      (($(b)) as HTMLButtonElement).disabled = off;
+    for (const b of ['pa-approve', 'pa-hold-btn', 'pa-rerender', 'pa-rerender-print']) {
+      const el = document.getElementById(b) as HTMLButtonElement | null;
+      if (el) el.disabled = off;
     }
   };
 
@@ -299,10 +339,14 @@ const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_ho
         ? 'Approved, and the customer has been emailed their proof'
           + (body.noteSent ? ' with your note.' : '.')
         : action === 'hold' ? 'On hold. The note is on the build.'
+        : action === 'rerender-print'
+          ? 'Print file queued for re-render. It takes about a minute — refresh this page then to download it.'
         : 'Queued for re-render. Refresh the Studio in a minute.');
-      /* The page describes a document that has just changed, so reload it
-         rather than leave a stale status and a live Approve button on screen. */
-      setTimeout(() => location.reload(), 1600);
+      /* A print re-render is not done for a minute, so a reload now would show
+         the stale print again with its button live. Everything else has
+         changed the document already: reload rather than leave a stale status
+         and a live Approve button on screen. */
+      if (action !== 'rerender-print') setTimeout(() => location.reload(), 1600);
     } catch (e: any) {
       fail(e.message || String(e));
     }
@@ -313,6 +357,7 @@ const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_ho
     run('approve', msg ? { note: msg } : {});
   });
   $('pa-rerender').addEventListener('click', () => run('rerender'));
+  document.getElementById('pa-rerender-print')?.addEventListener('click', () => run('rerender-print'));
 
   const showHold = () => {
     box.classList.remove('hidden');
@@ -327,7 +372,9 @@ const canRerender = known && (doc.status === 'rendered' || doc.status === 'on_ho
 
   /* The Studio opened this with an intent. Approve and re-render run straight
      away; a hold needs its note first. */
-  if (wanted === 'rerender') run(wanted);
+  /* Ran once from the link; take ?action off so a refresh does not run it again. */
+  if (wanted) history.replaceState(null, '', location.pathname);
+  if (wanted === 'rerender' || wanted === 'rerender-print') run(wanted);
   else if (wanted === 'approve') {
     say('Ready', 'Add a note if you want one, then press Approve.');
     ($('pa-message') as HTMLTextAreaElement).focus();
