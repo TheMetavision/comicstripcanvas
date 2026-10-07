@@ -7,7 +7,7 @@ import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes
 import { deleteBuild } from './_shared/delete-build.mjs';
 import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
-import { readDiscount, discountLabel } from './_shared/discount.mjs';
+import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discount.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -226,6 +226,27 @@ async function fulfilOrder(session) {
       // totalAmount above is already the discounted total Stripe charged.
       const discount = await readDiscount(stripe, session);
       const discountAmount = discount.amountPence / 100;
+
+      /* A welcome code (POW10) is meant for a first order, but Stripe judges
+         "first-time" per Customer and this checkout is a guest, so it cannot
+         refuse a repeat buyer. Look for an earlier order from the same email
+         (case-insensitive) and flag this one for the team instead. Never
+         blocks the order; a failed lookup just means no flag. */
+      let repeatWelcomeCode = null;
+      if (discount.welcomeCodes.length && emailLooksValid) {
+        try {
+          const earlier = await sanity.fetch(
+            `*[_type == "order" && lower(customerEmail) == $email && stripeSessionId != $sid] | order(createdAt asc)[0]{ _id, orderNumber, createdAt }`,
+            { email: customerEmail.toLowerCase(), sid: session.id }
+          );
+          if (earlier?._id) {
+            repeatWelcomeCode = repeatWelcomeNote(discount.welcomeCodes, earlier);
+            console.warn(`webhook: REPEAT WELCOME CODE ${discount.welcomeCodes.join(', ')} on ${orderId} — earlier order ${earlier.orderNumber || earlier._id}`);
+          }
+        } catch (err) {
+          console.error(`webhook: repeat-welcome-code check failed for ${orderId}:`, err.message);
+        }
+      }
 
       let lineItems;
       let personalisationDetails = undefined;
@@ -516,7 +537,11 @@ async function fulfilOrder(session) {
         lineItems,
         shippingCost,
         ...(discountAmount
-          ? { discountAmount, ...(discount.codes.length ? { discountCode: discount.codes.join(', ') } : {}) }
+          ? {
+            discountAmount,
+            ...(discount.codes.length ? { discountCode: discount.codes.join(', ') } : {}),
+            ...(repeatWelcomeCode ? { repeatWelcomeCode } : {}),
+          }
           : {}),
         totalAmount,
         status: 'received',
@@ -798,7 +823,7 @@ async function fulfilOrder(session) {
           to: [teamEmail],
           /* The banner in the body is only seen once the mail is open. An order
              nobody can fulfil should be visible in the inbox list, before that. */
-          subject: `${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
+          subject: `${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${repeatWelcomeCode ? '⚠ REPEAT WELCOME CODE — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">
@@ -807,6 +832,10 @@ async function fulfilOrder(session) {
                 <p style="color: rgba(255,255,255,0.8); margin: 4px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
               ${missingPrintBlock}
+              ${repeatWelcomeCode ? `<div style="background: #fff4e5; padding: 18px 20px; border-bottom: 3px solid ${BRAND.pink};">
+                  <strong style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #8a4b00;">⚠ Repeat welcome code</strong>
+                  <p style="margin: 8px 0 0; font-size: 13px; color: #8a4b00; line-height: 1.6;">${repeatWelcomeCode}</p>
+                </div>` : ''}
               <div style="padding: 24px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                   <div>

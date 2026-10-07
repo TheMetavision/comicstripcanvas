@@ -187,6 +187,15 @@ export default defineType({
       description: 'Actual P&P charged. 0 = free shipping.',
     }),
     defineField({
+      name: 'repeatWelcomeCode',
+      title: '⚠ Repeat welcome code',
+      type: 'text',
+      rows: 3,
+      readOnly: true,
+      description: 'A first-order welcome code (POW10) used by an email that already has a paid order. The order stands; it is flagged so you can decide whether to follow up.',
+      hidden: ({ value }) => !value,
+    }),
+    defineField({
       name: 'discountAmount',
       title: 'Discount (£)',
       type: 'number',

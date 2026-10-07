@@ -171,6 +171,17 @@ export function createClient() {
             return row;
           });
       }
+      /* The webhook's repeat-welcome-code check: the earliest order from the
+         same email (case-insensitive), other than this session's. Projected
+         off the seeded orders. */
+      if (/_type == "order" && lower\(customerEmail\) == \$email/.test(q)) {
+        const hit = [...docs.values()]
+          .filter((d) => d._type === 'order'
+            && String(d.customerEmail || '').toLowerCase() === params.email
+            && d.stripeSessionId !== params.sid)
+          .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];
+        return hit ? { _id: hit._id, orderNumber: hit.orderNumber ?? null, createdAt: hit.createdAt ?? null } : null;
+      }
       /* The print-file renderer's two reads: one order by id, then the product
          that line is for, by slug. Projected off the seeded documents like
          every other branch here. */

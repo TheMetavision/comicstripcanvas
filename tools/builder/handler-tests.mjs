@@ -798,6 +798,69 @@ say('\n10p. WEBHOOK: A PROMOTION CODE IS RECORDED, AND SHIPPING IS NOT DISCOUNTE
   ok(!resendStub.sent.some((m) => (m.html || '').includes('Discount')), 'and its emails no discount row');
 }
 
+say('\n10r. WEBHOOK: A WELCOME CODE FROM A REPEAT EMAIL IS FLAGGED, NOT BLOCKED\n');
+
+/* Stripe cannot enforce POW10's "first order only" on a guest checkout, so
+   the webhook looks for an earlier order from the same email and tells the
+   team. The customer sees nothing and the order goes ahead. */
+function discountedSession(id, promoId) {
+  const session = seedPaidSessionWithBuild(null, id);
+  const discounted = {
+    ...session,
+    amount_total: 2294,
+    shipping_cost: { amount_total: 495 },
+    total_details: { amount_discount: 200, amount_shipping: 495, amount_tax: 0 },
+  };
+  Object.assign(stripeStub.sessions.find((s) => s.id === id), {
+    ...discounted,
+    total_details: { ...discounted.total_details, breakdown: { discounts: [{ amount: 200, discount: { promotion_code: promoId } }] } },
+  });
+  return discounted;
+}
+const earlierOrder = () => sanityStub.docs.set('order.cs_test_earlier', {
+  _id: 'order.cs_test_earlier', _type: 'order', orderNumber: 'CSC-0999',
+  customerEmail: 'Buyer@Test.Local', stripeSessionId: 'cs_test_earlier', createdAt: '2026-10-01T10:00:00Z',
+});
+const welcome = { id: 'promo_pow10', code: 'POW10', restrictions: { first_time_transaction: true } };
+
+{
+  resetAll();
+  earlierOrder();
+  stripeStub.promotionCodes.set('promo_pow10', welcome);
+  const r = await postWebhook(stripeEvent('checkout.session.completed', discountedSession('cs_test_repeat', 'promo_pow10')));
+  const order = sanityStub.docs.get('order.cs_test_repeat');
+  ok(r.status === 200 && !!order, 'the order is created, not blocked', `${r.status} ${r.text}`);
+  ok(/CSC-0999/.test(order?.repeatWelcomeCode || ''), 'flagged repeatWelcomeCode, naming the earlier order (any case of email)',
+    order?.repeatWelcomeCode);
+  ok(order?.discountCode === 'POW10' && order?.totalAmount === 22.94, 'the discount is still recorded as charged');
+  const team = resendStub.sent[1] || {};
+  ok(/⚠ REPEAT WELCOME CODE — /.test(team.subject || '') && (team.html || '').includes('Repeat welcome code'),
+    'the team email subject and banner say so', team.subject);
+  const cust = resendStub.sent[0] || {};
+  ok(!/repeat|welcome code|CSC-0999/i.test(`${cust.subject} ${cust.html}`), 'the customer email says nothing about it');
+}
+{
+  resetAll();
+  stripeStub.promotionCodes.set('promo_pow10', welcome);
+  await postWebhook(stripeEvent('checkout.session.completed', discountedSession('cs_test_first', 'promo_pow10')));
+  ok(!('repeatWelcomeCode' in (sanityStub.docs.get('order.cs_test_first') || {})), 'a genuine first order: no flag');
+}
+{
+  resetAll();
+  earlierOrder();
+  stripeStub.promotionCodes.set('promo_pow10_plain', { id: 'promo_pow10_plain', code: 'POW10' });
+  await postWebhook(stripeEvent('checkout.session.completed', discountedSession('cs_test_repeat2', 'promo_pow10_plain')));
+  ok(!!sanityStub.docs.get('order.cs_test_repeat2')?.repeatWelcomeCode,
+    'POW10 is recognised by name even without the first-time restriction');
+}
+{
+  resetAll();
+  earlierOrder();
+  stripeStub.promotionCodes.set('promo_other', { id: 'promo_other', code: 'SUMMER5', restrictions: { first_time_transaction: false } });
+  await postWebhook(stripeEvent('checkout.session.completed', discountedSession('cs_test_other', 'promo_other')));
+  ok(!('repeatWelcomeCode' in (sanityStub.docs.get('order.cs_test_other') || {})), 'a repeat buyer with another code: no flag');
+}
+
 say('\n10a. WEBHOOK: A STOCK LINE WITH NO PRINT FILE IS FLAGGED, NOT BLOCKED\n');
 
 /* 62 published products have a listing image and no print file, so they sell
