@@ -175,6 +175,8 @@ export default async (req, context) => {
   const shippingCost = order.shippingCost || 0;
   const shippingLabel = shippingCost === 0 ? 'FREE UK P&P' : `£${shippingCost.toFixed(2)}`;
   const shippingColor = shippingCost === 0 ? '#28a745' : '#333333';
+  // Recorded by webhook.mjs from the Stripe session; absent on undiscounted orders.
+  const discountAmount = order.discountAmount || 0;
   const shipping = order.shippingAddress || {};
 
   // ── Order table rows (matches webhook.mjs style) ─────────────────────────
@@ -223,6 +225,10 @@ export default async (req, context) => {
         ${itemRows}
       </tbody>
       <tfoot>
+        ${discountAmount ? `<tr style="background: #f9f9f9;">
+          <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">${order.discountCode ? `Discount (${order.discountCode})` : 'Discount'}:</td>
+          <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #28a745;">&minus;£${discountAmount.toFixed(2)}</td>
+        </tr>` : ''}
         <tr style="background: #f9f9f9;">
           <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">Shipping:</td>
           <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: ${shippingColor};">${shippingLabel}</td>

@@ -187,6 +187,21 @@ export default defineType({
       description: 'Actual P&P charged. 0 = free shipping.',
     }),
     defineField({
+      name: 'discountAmount',
+      title: 'Discount (£)',
+      type: 'number',
+      readOnly: true,
+      description: 'Promotion code discount on the goods, from Stripe. Shipping is never discounted.',
+      hidden: ({ value }) => !value,
+    }),
+    defineField({
+      name: 'discountCode',
+      title: 'Discount Code',
+      type: 'string',
+      readOnly: true,
+      hidden: ({ value }) => !value,
+    }),
+    defineField({
       name: 'totalAmount',
       title: 'Total Amount (£)',
       type: 'number',

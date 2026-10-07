@@ -333,6 +333,10 @@ export default async (req, context) => {
           },
         },
       ],
+      /* The customer types their code on Stripe's page. Coupons apply to line
+         items only, so the delivery rate above is never discounted. The webhook
+         reads the discount back off the session (_shared/discount.mjs). */
+      allow_promotion_codes: true,
       /* The visitor's GA4 client id and session id, sent by the basket only if
          they accepted analytics. The webhook reads them back to send the
          purchase to GA4 from the server, in the visit's own session. Anything

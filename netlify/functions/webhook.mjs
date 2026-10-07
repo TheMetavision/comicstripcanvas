@@ -7,6 +7,7 @@ import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes
 import { deleteBuild } from './_shared/delete-build.mjs';
 import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
+import { readDiscount, discountLabel } from './_shared/discount.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -220,6 +221,11 @@ async function fulfilOrder(session) {
       const shippingLabel =
         shippingPence === 0 ? 'FREE UK P&P' : `£${shippingCost.toFixed(2)}`;
       const shippingColor = shippingPence === 0 ? '#28a745' : '#333333';
+
+      // A promotion code entered on Stripe's page: goods only, never shipping.
+      // totalAmount above is already the discounted total Stripe charged.
+      const discount = await readDiscount(stripe, session);
+      const discountAmount = discount.amountPence / 100;
 
       let lineItems;
       let personalisationDetails = undefined;
@@ -509,6 +515,9 @@ async function fulfilOrder(session) {
         },
         lineItems,
         shippingCost,
+        ...(discountAmount
+          ? { discountAmount, ...(discount.codes.length ? { discountCode: discount.codes.join(', ') } : {}) }
+          : {}),
         totalAmount,
         status: 'received',
         isPersonalised,
@@ -608,6 +617,10 @@ async function fulfilOrder(session) {
             ${itemRows}
           </tbody>
           <tfoot>
+            ${discountAmount ? `<tr style="background: #f9f9f9;">
+              <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">${discountLabel(discount.codes)}:</td>
+              <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #28a745;">&minus;£${discountAmount.toFixed(2)}</td>
+            </tr>` : ''}
             <tr style="background: #f9f9f9;">
               <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">Shipping:</td>
               <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: ${shippingColor};">${shippingLabel}</td>

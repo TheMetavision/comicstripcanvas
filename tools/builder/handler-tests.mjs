@@ -466,6 +466,12 @@ for (const [format, sizes] of Object.entries(PRICE)) {
   let ship = stripeStub.lastSession().shipping_options[0].shipping_rate_data;
   ok(ship.fixed_amount.amount === SHIPPING_PENCE, 'a small order pays postage',
     `${ship.fixed_amount.amount}p`);
+  /* Postage is a shipping rate, not a line, so a promotion code cannot touch it;
+     and no `discounts` is passed, which Stripe would refuse alongside this. */
+  ok(stripeStub.lastSession().allow_promotion_codes === true, 'promotion codes are accepted');
+  ok(!('discounts' in stripeStub.lastSession()), 'and no discount is forced on the session');
+  ok(!stripeStub.linesOf(stripeStub.lastSession()).some((l) => /deliver|postage|shipping/i.test(l.name)),
+    'postage is not a line item');
 
   resetAll();
   seed(product('gizmo'));
@@ -716,6 +722,80 @@ function seedPaidSessionWithBuild(buildId, id = 'cs_test_paid_1') {
   const counter = sanityStub.docs.get('orderCounter.csc');
   ok(counter?.lastOrderNumber === 1001, 'the order counter was incremented once',
     String(counter?.lastOrderNumber));
+}
+
+say('\n10p. WEBHOOK: A PROMOTION CODE IS RECORDED, AND SHIPPING IS NOT DISCOUNTED\n');
+
+{
+  /* £19.99 print + £4.95 delivery, 10% off the goods: Stripe charges
+     1999 - 200 + 495 = 2294. The code is entered on Stripe's page, so the
+     webhook is the first place it is known. */
+  resetAll();
+  stripeStub.promotionCodes.set('promo_test_1', { id: 'promo_test_1', code: 'POW10' });
+  const session = seedPaidSessionWithBuild(null, 'cs_test_promo_1');
+  const discounted = {
+    ...session,
+    amount_total: 2294,
+    shipping_cost: { amount_total: 495 },
+    total_details: { amount_discount: 200, amount_shipping: 495, amount_tax: 0 },
+  };
+  Object.assign(stripeStub.sessions.find((s) => s.id === session.id), {
+    ...discounted,
+    total_details: {
+      ...discounted.total_details,
+      breakdown: { discounts: [{ amount: 200, discount: { promotion_code: 'promo_test_1', coupon: { id: 'co_1', name: 'Welcome 10%' } } }] },
+    },
+  });
+  const r = await postWebhook(stripeEvent('checkout.session.completed', discounted));
+  ok(r.status === 200, 'a discounted session is accepted', `${r.status} ${r.text}`);
+
+  const order = sanityStub.docs.get(`order.${session.id}`);
+  ok(order?.discountAmount === 2, 'the order records the discount', String(order?.discountAmount));
+  ok(order?.discountCode === 'POW10', 'and the code the customer typed', order?.discountCode);
+  ok(order?.totalAmount === 22.94, 'the total is what Stripe charged', String(order?.totalAmount));
+  ok(order?.shippingCost === 4.95, 'shipping is full price', String(order?.shippingCost));
+
+  ok(resendStub.sent.length === 2, 'both emails went out', String(resendStub.sent.length));
+  for (const [who, mail] of [['customer', resendStub.sent[0]], ['team', resendStub.sent[1]]]) {
+    const html = mail?.html || '';
+    ok(html.includes('Discount (POW10):') && html.includes('&minus;£2.00'),
+      `the ${who} email shows "Discount (POW10) −£2.00"`);
+    ok(html.includes('£4.95') && html.includes('£22.94'),
+      `and full-price shipping with the real total`);
+  }
+}
+
+{
+  /* The code cannot be read (the lookup fails): the amount is on the event
+     itself, so the order and emails still carry it, labelled plainly. */
+  resetAll();
+  const session = seedPaidSessionWithBuild(null, 'cs_test_promo_2');
+  const discounted = {
+    ...session,
+    amount_total: 1799,
+    shipping_cost: { amount_total: 0 },
+    total_details: { amount_discount: 200 },
+  };
+  Object.assign(stripeStub.sessions.find((s) => s.id === session.id), {
+    total_details: { amount_discount: 200, breakdown: { discounts: [{ amount: 200, discount: { promotion_code: 'promo_missing' } }] } },
+  });
+  const r = await postWebhook(stripeEvent('checkout.session.completed', discounted));
+  ok(r.status === 200, 'a failed code lookup does not fail the order', `${r.status} ${r.text}`);
+  const order = sanityStub.docs.get(`order.${session.id}`);
+  ok(order?.discountAmount === 2 && order?.discountCode === undefined,
+    'the amount is still recorded, without a code', `${order?.discountAmount} ${order?.discountCode}`);
+  ok((resendStub.sent[1]?.html || '').includes('Discount:'), 'the email says "Discount"');
+}
+
+{
+  /* No code: nothing about discounts appears anywhere. */
+  resetAll();
+  const session = seedPaidSessionWithBuild(null, 'cs_test_promo_3');
+  await postWebhook(stripeEvent('checkout.session.completed', session));
+  const order = sanityStub.docs.get(`order.${session.id}`);
+  ok(order && !('discountAmount' in order) && !('discountCode' in order),
+    'an undiscounted order carries no discount fields');
+  ok(!resendStub.sent.some((m) => (m.html || '').includes('Discount')), 'and its emails no discount row');
 }
 
 say('\n10a. WEBHOOK: A STOCK LINE WITH NO PRINT FILE IS FLAGGED, NOT BLOCKED\n');

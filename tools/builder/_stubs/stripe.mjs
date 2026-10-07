@@ -9,11 +9,14 @@
 
 export const sessions = [];
 export const events = [];
+/** Promotion codes by id, for the webhook's discount lookup. */
+export const promotionCodes = new Map();
 export const failures = { create: false, constructEvent: false };
 
 export function reset() {
   sessions.length = 0;
   events.length = 0;
+  promotionCodes.clear();
   failures.create = false;
   failures.constructEvent = false;
 }
@@ -67,6 +70,16 @@ export class Stripe {
             })),
           };
         },
+      },
+    };
+  }
+
+  get promotionCodes() {
+    return {
+      retrieve: async (id) => {
+        const p = promotionCodes.get(id);
+        if (!p) throw new Error(`stub: no promotion code ${id}`);
+        return p;
       },
     };
   }
