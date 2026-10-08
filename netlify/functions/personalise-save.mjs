@@ -15,6 +15,7 @@ import { CLASSIC, FULL_BLEED, styleOr, sceneKey, isArtKey } from './_shared/artw
 import { moderate, MODERATION_MESSAGE } from './_shared/moderation.mjs';
 import { internalOrigin } from './_shared/origin.mjs';
 import { docIdFor } from './_shared/pp-id.mjs';
+import { lockStamp } from './_shared/customise-stamp.mjs';
 
 const sanity = createClient({
   projectId: 'lwbwahym',
@@ -662,14 +663,14 @@ async function saveCustomise(form) {
   if (!recipe || typeof recipe !== 'object' || !recipe.template) {
     return json({ error: 'Recipe is missing its template' }, 400);
   }
-  const { svg: sceneSvg, ...recipeRest } = recipe;
-  if (typeof sceneSvg !== 'string' || !sceneSvg.trim()) {
+  const { svg: sentSvg, ...sentRecipe } = recipe;
+  if (typeof sentSvg !== 'string' || !sentSvg.trim()) {
     return json({ error: 'The recipe carries no scene' }, 400);
   }
   /* The same guard studio-save has, for the same reason: an inlined image is a
      multi-megabyte request that the platform rejects with no body, and every
      exporter here tokenises. */
-  if (/href\s*=\s*["']?\s*data:/i.test(sceneSvg)) {
+  if (/href\s*=\s*["']?\s*data:/i.test(sentSvg)) {
     return json({ error: 'The scene has an image inlined as data: — it must reference its panels by token.' }, 400);
   }
 
@@ -705,6 +706,22 @@ async function saveCustomise(form) {
       error: `This design is a ${source.recipe?.template || 'different'} layout, not ${recipe.template}`,
     }, 400);
   }
+
+  /* ---- the publisher stamp: the product's, whatever was sent ----
+     The builder offers no logo controls in this mode; this is the lock. The
+     stamp (plate, logo, clip) and recipe.logo are put back exactly as the
+     product's stored scene has them, and any image that is not one of the
+     design's own tokens is refused. See _shared/customise-stamp.mjs. */
+  const stamp = lockStamp(sentSvg, sentRecipe, source);
+  if (!stamp.ok) {
+    console.warn(`personalise-save: customise refused for ${productId} — ${stamp.error}`);
+    return json({ error: stamp.error }, 422);
+  }
+  if (stamp.changed.length) {
+    console.warn(`personalise-save: customise ${productId} — restored the product's ${stamp.changed.join(', ')}`);
+  }
+  const sceneSvg = stamp.svg;
+  const recipeRest = stamp.recipe;
 
   /* ---- the artwork, resolved here and nowhere else ---- */
   const keys = source.images || {};

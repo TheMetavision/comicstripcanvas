@@ -265,7 +265,7 @@ const builderData = JSON.stringify(resolvePaletteTokens({
         <div id="colourTint" hidden>
           <div class="b-row" id="artColours"></div>
           <div class="b-row">
-            <button id="sampleArt" class="b-btn">Take colours from photo</button>
+            <button id="sampleArt" class="b-btn" hidden={mode === 'customise'}>Take colours from photo</button>
             <button id="resetTint" class="b-btn">Reset</button>
           </div>
           <p class="b-hint" id="tintHint" aria-live="polite">
