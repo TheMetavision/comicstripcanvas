@@ -67,9 +67,11 @@ if (!TURNSTILE_SITE_KEY) {
                   id="name"
                   name="name"
                   required
+                  aria-describedby="name-error"
                   placeholder="Your full name"
                   class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors"
                 />
+                <p id="name-error" class="field-error hidden font-source text-comic-red text-sm mt-2">Please tell us your name.</p>
               </div>
               <div>
                 <label for="email" class="block font-russo text-off-white text-sm uppercase tracking-wide mb-2">
@@ -80,9 +82,11 @@ if (!TURNSTILE_SITE_KEY) {
                   id="email"
                   name="email"
                   required
+                  aria-describedby="email-error"
                   placeholder="your@email.com"
                   class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors"
                 />
+                <p id="email-error" class="field-error hidden font-source text-comic-red text-sm mt-2">Please enter a valid email address.</p>
               </div>
             </div>
 
@@ -107,6 +111,7 @@ if (!TURNSTILE_SITE_KEY) {
                   id="subject"
                   name="subject"
                   required
+                  aria-describedby="subject-error"
                   class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source focus:border-comic-yellow focus:outline-none transition-colors"
                 >
                   <option value="" disabled selected>Choose a topic...</option>
@@ -117,6 +122,7 @@ if (!TURNSTILE_SITE_KEY) {
                   <option value="Press & Media">Press &amp; Media</option>
                   <option value="General Enquiry">General Enquiry</option>
                 </select>
+                <p id="subject-error" class="field-error hidden font-source text-comic-red text-sm mt-2">Please choose a topic.</p>
               </div>
             </div>
 
@@ -128,10 +134,12 @@ if (!TURNSTILE_SITE_KEY) {
                 id="message"
                 name="message"
                 required
+                aria-describedby="message-error"
                 rows="6"
                 placeholder="Tell us about what you're after — the more detail, the better the reply."
                 class="w-full px-4 py-3 bg-black border-4 border-gray-700 text-off-white font-source placeholder-gray-500 focus:border-comic-yellow focus:outline-none transition-colors resize-y"
               ></textarea>
+              <p id="message-error" class="field-error hidden font-source text-comic-red text-sm mt-2">Please write your message.</p>
             </div>
 
             {TURNSTILE_SITE_KEY && (
@@ -243,6 +251,7 @@ if (!TURNSTILE_SITE_KEY) {
               <div class="flex flex-wrap gap-3">
                 <a href="/store/" class="btn-primary text-sm">BROWSE THE STORE</a>
                 <a href="/personalise/" class="btn-secondary text-sm">START A CUSTOM ORDER</a>
+                <button type="button" id="form-send-another" class="btn-secondary text-sm">SEND ANOTHER MESSAGE</button>
               </div>
             </div>
           </div>
@@ -274,6 +283,7 @@ if (!TURNSTILE_SITE_KEY) {
                 <a href="mailto:contact@comicstripcanvas.co.uk" class="text-comic-yellow underline hover:text-comic-cyan transition-colors">contact@comicstripcanvas.co.uk</a>
                 directly.
               </p>
+              <p id="form-error-detail" class="hidden font-source text-off-white text-sm mb-5"></p>
               <button type="button" id="form-retry" class="btn-secondary text-sm">
                 TRY AGAIN
               </button>
@@ -354,6 +364,8 @@ if (!TURNSTILE_SITE_KEY) {
   const sendText = form?.querySelector('.submit-text') as HTMLElement | null;
   const sending = form?.querySelector('.submit-sending') as HTMLElement | null;
   const retryBtn = document.getElementById('form-retry');
+  const sendAnotherBtn = document.getElementById('form-send-another');
+  const errorDetail = document.getElementById('form-error-detail');
   const formCard = form?.closest('.bg-panel-dark') as HTMLElement | null;
   const turnstileWidget = form?.querySelector('.cf-turnstile') as HTMLElement | null;
   const turnstileError = document.getElementById('turnstile-error');
@@ -406,12 +418,72 @@ if (!TURNSTILE_SITE_KEY) {
     if (sending) sending.style.display = on ? 'inline' : 'none';
   }
 
-  function resetState() {
+  // One result at a time. Every attempt starts by hiding both panels, and only
+  // the outcome of THIS attempt is shown. Previously the error branch never hid
+  // the success panel, so a second submit after a success (the Turnstile token
+  // is single-use, so the server rejects it) left both on screen together.
+  function showResult(kind: 'success' | 'error' | null, detail = '') {
     successEl?.classList.add('hidden');
     errorEl?.classList.add('hidden');
+    if (errorDetail) {
+      errorDetail.textContent = detail;
+      errorDetail.classList.toggle('hidden', !detail);
+    }
+    if (kind === 'success') successEl?.classList.remove('hidden');
+    if (kind === 'error') errorEl?.classList.remove('hidden');
+    if (formCard) formCard.style.display = kind ? 'none' : '';
+  }
+
+  // Back to the form. TRY AGAIN keeps what was typed; SEND ANOTHER clears it.
+  function resetState() {
+    showResult(null);
     turnstileError?.classList.add('hidden');
-    if (formCard) formCard.style.display = '';
     setSending(false);
+  }
+
+  /* Required fields, checked in the browser BEFORE the anti-spam check, so an
+   * empty submit says which fields are missing instead of asking for the
+   * challenge. The function still validates everything itself. */
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const REQUIRED: { id: string; ok: (v: string) => boolean }[] = [
+    { id: 'name', ok: (v) => v.length > 0 },
+    { id: 'email', ok: (v) => EMAIL_RE.test(v) },
+    { id: 'subject', ok: (v) => v.length > 0 },
+    { id: 'message', ok: (v) => v.length > 0 },
+  ];
+
+  function markField(id: string, bad: boolean) {
+    const field = document.getElementById(id);
+    const msg = document.getElementById(`${id}-error`);
+    if (!field) return;
+    field.classList.toggle('border-comic-red', bad);
+    field.classList.toggle('border-gray-700', !bad);
+    if (bad) field.setAttribute('aria-invalid', 'true');
+    else field.removeAttribute('aria-invalid');
+    msg?.classList.toggle('hidden', !bad);
+  }
+
+  function validateFields(): boolean {
+    let firstBad: HTMLElement | null = null;
+    for (const { id, ok } of REQUIRED) {
+      const field = document.getElementById(id) as HTMLInputElement | null;
+      if (!field) continue;
+      const bad = !ok(field.value.trim());
+      markField(id, bad);
+      if (bad && !firstBad) firstBad = field;
+    }
+    firstBad?.focus();
+    return !firstBad;
+  }
+
+  // Clear a field's mark as soon as it is fixed.
+  for (const { id, ok } of REQUIRED) {
+    const field = document.getElementById(id) as HTMLInputElement | null;
+    const recheck = () => {
+      if (field?.getAttribute('aria-invalid') && ok(field.value.trim())) markField(id, false);
+    };
+    field?.addEventListener('input', recheck);
+    field?.addEventListener('change', recheck);
   }
 
   // Turnstile writes its token into a hidden input inside the form. A fresh
@@ -435,10 +507,26 @@ if (!TURNSTILE_SITE_KEY) {
   }
 
   retryBtn?.addEventListener('click', resetState);
+  sendAnotherBtn?.addEventListener('click', () => {
+    sent = false;
+    form?.reset();
+    for (const { id } of REQUIRED) markField(id, false);
+    resetState();
+    document.getElementById('name')?.focus();
+  });
+
+  // One submission at a time: a second submit event while one is in flight,
+  // or after a success until SEND ANOTHER, is ignored rather than sent again.
+  let inFlight = false;
+  let sent = false;
 
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!form) return;
+    if (!form || inFlight || sent) return;
+    showResult(null);
+
+    // Fields first, so an empty form names what is missing.
+    if (!validateFields()) return;
 
     // Stop early with an inline message rather than a generic failure card when
     // the visitor has not completed the challenge yet.
@@ -449,6 +537,7 @@ if (!TURNSTILE_SITE_KEY) {
       return;
     }
     turnstileError?.classList.add('hidden');
+    inFlight = true;
     setSending(true);
 
     const fd = new FormData(form);
@@ -478,18 +567,21 @@ if (!TURNSTILE_SITE_KEY) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
-        if (formCard) formCard.style.display = 'none';
-        successEl?.classList.remove('hidden');
+        sent = true;
+        showResult('success');
         // Scroll the success card into view — top-aligned, polite.
         successEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else {
-        throw new Error(data?.error || 'Submission failed');
+        // The function's own message (e.g. a failed anti-spam check) is shown
+        // under the generic text, as text, never as HTML.
+        showResult('error', typeof data?.error === 'string' ? data.error : '');
+        errorEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     } catch {
-      if (formCard) formCard.style.display = 'none';
-      errorEl?.classList.remove('hidden');
+      showResult('error');
       errorEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } finally {
+      inFlight = false;
       // A Turnstile token is single-use, so the widget must be re-armed
       // whether the submission succeeded or failed.
       resetTurnstile();
