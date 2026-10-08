@@ -212,10 +212,13 @@ if (!TURNSTILE_SITE_KEY) {
             <input type="hidden" name="csc_ts_load" id="csc-ts-load" value="" />
 
             <div class="pt-2">
+              {/* Disabled until the page script is listening: a press before then
+                  was a native GET that put the whole message in the URL. */}
               <button
                 type="submit"
                 id="form-submit"
                 class="btn-primary text-xl w-full md:w-auto"
+                disabled
               >
                 <span class="submit-text">SEND MESSAGE &rarr;</span>
                 <span class="submit-sending" style="display:none;">SENDING...</span>
@@ -588,4 +591,7 @@ if (!TURNSTILE_SITE_KEY) {
       setSending(false);
     }
   });
+
+  // Listening now; the button was rendered disabled until this point.
+  if (submitBtn) submitBtn.disabled = false;
 </script>
