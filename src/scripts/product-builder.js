@@ -65,6 +65,7 @@ import {
   cutoutClipRect, faceBox,
 } from '../../netlify/functions/_shared/print-geometry.mjs';
 import { customiseCutout } from './customise-variant.js';
+import { hiddenControls } from './builder-locks.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg', SR = 0.065;
 
@@ -190,6 +191,8 @@ export function initProductBuilder() {
   const ADMIN_OF = ADMIN ? (root.dataset.buildId || '') : '';
   const MODE = ['studio', 'customise'].includes(root.dataset.mode) ? root.dataset.mode : 'customer';
   const CUSTOMISE = MODE === 'customise';
+  /* Controls this mode does not offer at all; see builder-locks.js. */
+  const HIDDEN = hiddenControls(MODE);
   /* Which product's design, and in which of its two styles. Only set in
      customise mode; the page reads them off the product it is showing. */
   const CUSTOMISE_OF = root.dataset.productId || '';
@@ -458,7 +461,18 @@ export function initProductBuilder() {
   /* Only the cover offers a choice that needs explaining; the icon's two
      variants are portrait and landscape, which say what they are. */
   const swHint = $('switchHint');
-  if (swHint) swHint.hidden = !(VARIANTS[INITIAL].length > 1 && VARIANTS[INITIAL].every((k) => SWITCH_HINT[k]));
+  /* Customise mode has no style switcher (above), so the hint about choosing
+     between the styles has nothing to explain there. */
+  if (swHint) swHint.hidden = HIDDEN.styleHint
+    || !(VARIANTS[INITIAL].length > 1 && VARIANTS[INITIAL].every((k) => SWITCH_HINT[k]));
+  /* Customise mode: the publisher stamp is the product's, and there is no
+     customer photo to take colours from. Hidden, not just disabled -- a control
+     that can never do anything is noise. The save path enforces the stamp
+     (_shared/customise-stamp.mjs); this only stops offering it. */
+  if (HIDDEN.sampleColours) {
+    const sa0 = $('sampleArt');
+    if (sa0) sa0.hidden = true;
+  }
 
   function load(key) {
     TK = key; T = TEMPLATES[key]; state = new Map(); selected = null; tint = { h: 0, s: 100 };
@@ -3741,7 +3755,7 @@ export function initProductBuilder() {
   picker.addEventListener('change', () => {
     const files = [...picker.files].filter((f) => f.type.startsWith('image/'));
     if (pickTarget === '__logo__') {
-      if (files[0] && T.logo) {
+      if (files[0] && T.logo && !HIDDEN.logo) {
         T.logo.href = URL.createObjectURL(files[0]);
         T.logo.custom = files[0].name;
         placeLogo();
@@ -3814,7 +3828,7 @@ export function initProductBuilder() {
        Enter on a focused button used to be enough to paint the whole burst
        black. Disabled, it cannot. */
     const sa = $('sampleArt');
-    if (sa) {
+    if (sa && !HIDDEN.sampleColours) {
       const src = s && !s.demo ? ((variantOf(s) === 'cutout' && s.cutoutEl) ? s.cutoutEl : s.el) : null;
       sa.disabled = !src || !sampleColours(src, 1);
     }
@@ -4175,7 +4189,7 @@ export function initProductBuilder() {
       f2.addEventListener('input', kgo); f2.addEventListener('change', kgo);
       top.appendChild(f2); w.appendChild(top); bb.appendChild(w);
     });
-    $('logoBox').hidden = !T.logo;
+    $('logoBox').hidden = HIDDEN.logo || !T.logo;   // the stamp is locked in customise mode
     if (T.logo) $('logoFill').checked = !!T.logo.fillPlate;
     const solid = T.bg && T.bg.type === 'colour', tintable = T.bg && T.bg.tintable;
     $('colourBox').hidden = !(solid || tintable);
@@ -4204,12 +4218,12 @@ export function initProductBuilder() {
     if (swapFrom) cancelSwap();          // the button doubles as Cancel
     else beginSwap(selected);
   });
-  $('logoPick').addEventListener('click', () => { pickTarget = '__logo__'; picker.click(); });
+  $('logoPick').addEventListener('click', () => { if (HIDDEN.logo) return; pickTarget = '__logo__'; picker.click(); });
   $('logoReset').addEventListener('click', () => {
-    if (!T.logo) return; T.logo.href = DEFAULT_LOGO; T.logo.custom = null; placeLogo();
+    if (!T.logo || HIDDEN.logo) return; T.logo.href = DEFAULT_LOGO; T.logo.custom = null; placeLogo();
   });
   $('logoFill').addEventListener('change', (e) => {
-    if (!T.logo) return; T.logo.fillPlate = e.target.checked; placeLogo();
+    if (!T.logo || HIDDEN.logo) return; T.logo.fillPlate = e.target.checked; placeLogo();
   });
   $('cutOn').addEventListener('change', (e) => {
     const s = state.get(selected); if (!s) return;
@@ -4240,6 +4254,7 @@ export function initProductBuilder() {
     repaintArt(); buildArtPickers();
   });
   $('sampleArt').addEventListener('click', () => {
+    if (HIDDEN.sampleColours) return;   // no customer photo in this mode
     const s = state.get(T.panels[0].id); if (!s || !nodes.borderRects) return;
     /* Sample what is actually shown, which on a cover set to Cutout is the
        cut-out PNG rather than the photograph behind it. */
