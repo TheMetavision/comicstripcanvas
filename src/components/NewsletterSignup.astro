@@ -26,7 +26,9 @@
         class="flex-1 px-4 py-3 bg-white text-black font-source border-4 border-black focus:outline-none focus:border-comic-yellow placeholder:text-gray-400"
         style="box-shadow: 3px 3px 0 #000000;"
       />
-      <button type="submit"
+      {/* Disabled until the script below is listening, so an early press is
+          not a native GET with the email in the URL. */}
+      <button type="submit" disabled
               class="bg-comic-yellow text-black font-bangers text-xl px-8 py-3 border-4 border-black transition-all hover:-translate-y-1 whitespace-nowrap uppercase tracking-wider"
               style="box-shadow: 4px 4px 0 #000000;">
         SIGN UP
@@ -80,4 +82,8 @@
       alert('Failed to subscribe. Please try again.');
     }
   });
+
+  // Listening now; the button was rendered disabled until this point.
+  const nlBtn = form?.querySelector('button') as HTMLButtonElement | null;
+  if (nlBtn) nlBtn.disabled = false;
 </script>
