@@ -14,28 +14,47 @@
  *   3. Cloudflare Turnstile, verified server-side. No secret configured means
  *      the endpoint is closed (503), never open.
  *   4. Email format.
- *   5. Per-IP rate limit: 3 sign-ups per hour, in Netlify Blobs (hashed IP).
+ *   5. Per-IP rate limit: 3 per hour, in Netlify Blobs (hashed IP). Every
+ *      request that gets this far counts, confirmation email or not.
  *   6. Domain check: disposable-mail domains and domains with no MX refused.
- *   7. MailerLite, with double opt-in -- see subscribe() below.
+ *   7. Our own double opt-in -- see below. Nothing is written to MailerLite
+ *      here; the subscriber is created only by /api/newsletter-confirm.
  *
- * Every accepted request gets the same answer, whether the address was new,
- * already subscribed, unconfirmed or unsubscribed, so the endpoint cannot be
- * used to find out who is on the list.
+ * Double opt-in is ours, not MailerLite's account-wide "double opt-in for API"
+ * (that sends one account-branded email for every brand on the account). The
+ * address is looked up (read only) and:
  *
- * Env vars: MAILERLITE_API_KEY, MAILERLITE_GROUP_ID, TURNSTILE_SECRET_KEY
- * (TURNSTILE_SITE_KEY is read at build time by NewsletterSignup.astro).
+ *   already active in this brand's group  -> nothing
+ *   unsubscribed, bounced or junk         -> nothing (never re-mailed from a form)
+ *   anything else (new, unconfirmed, or
+ *   active on another of the account's lists) -> a branded "Confirm your
+ *     subscription" email via Resend, at most 1 per address per 24 hours,
+ *     carrying a single-use link that expires in 48 hours
+ *
+ * Every accepted request gets the same answer, so the endpoint cannot be used
+ * to find out who is on the list.
+ *
+ * Env vars: MAILERLITE_API_KEY, MAILERLITE_GROUP_ID, TURNSTILE_SECRET_KEY,
+ * RESEND_API_KEY, NEWSLETTER_CONFIRM_SECRET; optional EMAIL_FROM (sender) and
+ * URL (Netlify's own: the site address the link points at).
+ * TURNSTILE_SITE_KEY is read at build time by NewsletterSignup.astro.
  */
 import type { Context } from "@netlify/functions";
 import { verifyTurnstile } from "./_shared/turnstile.mjs";
 import { hashKey, takeSlot } from "./_shared/rate-limit.mjs";
 import { checkEmailDomain } from "./_shared/email-domain.mjs";
+import { makeToken } from "./_shared/newsletter-token.mjs";
+import { confirmationEmail } from "./_shared/newsletter-email.mjs";
 
 const MIN_SUBMIT_MS = 3000;
 const IP_LIMIT = 3;
 const IP_WINDOW_MS = 60 * 60 * 1000;
+const ADDRESS_LIMIT = 1;
+const ADDRESS_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RATE_STORE = "newsletter-rate-limits";
 const HONEYPOT = "csc_nl_extra";
 const ML = "https://connect.mailerlite.com/api";
+const DEFAULT_FROM = "Comic Strip Canvas <orders@comicstripcanvas.co.uk>";
 
 // One answer for every accepted request (see above).
 const ACCEPTED = {
@@ -58,50 +77,23 @@ function clientIp(req: Request, context: Context): string {
 }
 
 /**
- * Double opt-in, without letting the form be turned against existing
- * subscribers. MailerLite sends its confirmation email when a subscriber is
- * created with status "unconfirmed" (needs "Double opt-in for API and
- * integrations" ON in Subscribe settings). But sending "unconfirmed" for an
- * EXISTING active or unsubscribed subscriber also re-sends that email and
- * resets them to unconfirmed -- so the address is looked up first:
- *
- *   not found     -> created unconfirmed in the group; MailerLite emails them
- *   active        -> added to the group if missing (status untouched)
- *   unconfirmed   -> nothing: they already have a confirmation email; sending
- *                    another on every submit is exactly the bombing to stop
- *   unsubscribed, bounced, junk -> nothing: never resubscribed from a form
- *
- * Returns true when MailerLite answered as expected.
+ * Should this address get a confirmation email? Read only: never writes to
+ * MailerLite. Returns true/false, or null when MailerLite could not answer.
  */
-async function subscribe(apiKey: string, groupId: string, email: string): Promise<boolean> {
-  const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" };
-
-  const found = await fetch(`${ML}/subscribers/${encodeURIComponent(email)}`, { headers });
-  let existing: any = null;
-  if (found.status === 200) {
-    existing = (await found.json().catch(() => null))?.data ?? null;
-  } else if (found.status !== 404) {
-    console.error("MailerLite lookup failed:", found.status, await found.text().catch(() => ""));
-    return false;
+async function needsConfirmation(apiKey: string, groupId: string, email: string): Promise<boolean | null> {
+  const res = await fetch(`${ML}/subscribers/${encodeURIComponent(email)}`, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+  });
+  if (res.status === 404) return true;
+  if (res.status !== 200) {
+    console.error("MailerLite lookup failed:", res.status, await res.text().catch(() => ""));
+    return null;
   }
-
-  let payload: Record<string, unknown> | null = null;
-  if (!existing) {
-    payload = { email, groups: [groupId], status: "unconfirmed" };
-  } else if (existing.status === "active") {
-    const inGroup = (existing.groups || []).some((g: any) => String(g?.id) === String(groupId));
-    if (!inGroup) payload = { email, groups: [groupId] };
-  }
-  if (!payload) {
-    console.info("newsletter: existing subscriber, status", existing?.status, "- nothing sent");
-    return true;
-  }
-
-  const res = await fetch(`${ML}/subscribers`, { method: "POST", headers, body: JSON.stringify(payload) });
-  if (!res.ok) {
-    console.error("MailerLite API error:", res.status, await res.text().catch(() => ""));
-    return false;
-  }
+  const sub = (await res.json().catch(() => null))?.data;
+  const status = sub?.status;
+  if (status === "unsubscribed" || status === "bounced" || status === "junk") return false;
+  const inGroup = (sub?.groups || []).some((g: any) => String(g?.id) === String(groupId));
+  if (status === "active" && inGroup) return false;
   return true;
 }
 
@@ -130,21 +122,35 @@ export default async (req: Request, context: Context) => {
   }
 
   // 3. Turnstile.
-  const secret = Netlify.env.get("TURNSTILE_SECRET_KEY") || "";
-  if (!secret) {
+  const turnstileSecret = Netlify.env.get("TURNSTILE_SECRET_KEY") || "";
+  if (!turnstileSecret) {
     console.error("newsletter misconfigured: TURNSTILE_SECRET_KEY is not set");
     return json({ error: "Sign-up is temporarily unavailable. Please try again later." }, 503);
   }
   const token = String(body.turnstileToken || body["cf-turnstile-response"] || "").slice(0, 2048);
   if (!token) return json({ error: "Please complete the anti-spam check and try again." }, 400);
   const ip = clientIp(req, context);
-  const verdict = await verifyTurnstile(secret, token, ip);
+  const verdict = await verifyTurnstile(turnstileSecret, token, ip);
   if (!verdict.ok) return json({ error: verdict.error }, verdict.status);
 
   // 4. Format.
   const email = String(body.email ?? "").trim().toLowerCase().slice(0, 254);
   if (!email) return json({ error: "Email is required." }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Invalid email address." }, 400);
+
+  // Everything the rest needs, checked before the request counts against anyone.
+  const apiKey = Netlify.env.get("MAILERLITE_API_KEY");
+  const groupId = Netlify.env.get("MAILERLITE_GROUP_ID");
+  const resendKey = Netlify.env.get("RESEND_API_KEY");
+  const confirmSecret = Netlify.env.get("NEWSLETTER_CONFIRM_SECRET");
+  if (!apiKey || !groupId || !resendKey || !confirmSecret) {
+    console.error(
+      "newsletter misconfigured: missing",
+      [!apiKey && "MAILERLITE_API_KEY", !groupId && "MAILERLITE_GROUP_ID", !resendKey && "RESEND_API_KEY",
+        !confirmSecret && "NEWSLETTER_CONFIRM_SECRET"].filter(Boolean).join(", "),
+    );
+    return json({ error: "Sign-up is temporarily unavailable. Please try again later." }, 503);
+  }
 
   // 5. Per IP, hashed with the day so it is never stored raw.
   const day = new Date().toISOString().slice(0, 10);
@@ -166,15 +172,39 @@ export default async (req: Request, context: Context) => {
     );
   }
 
-  // 7. MailerLite.
-  const apiKey = Netlify.env.get("MAILERLITE_API_KEY");
-  const groupId = Netlify.env.get("MAILERLITE_GROUP_ID");
-  if (!apiKey || !groupId) {
-    console.error("Missing MAILERLITE_API_KEY or MAILERLITE_GROUP_ID env vars");
-    return json({ error: FAILED }, 500);
-  }
+  // 7. Double opt-in.
   try {
-    if (!(await subscribe(apiKey, groupId, email))) return json({ error: FAILED }, 502);
+    const needed = await needsConfirmation(apiKey, groupId, email);
+    if (needed === null) return json({ error: FAILED }, 502);
+    if (!needed) {
+      console.info("newsletter: already subscribed or opted out - nothing sent");
+      return json(ACCEPTED);
+    }
+
+    // At most one confirmation per address per day, whichever IPs ask.
+    if (!(await takeSlot(RATE_STORE, hashKey("addr", email), ADDRESS_LIMIT, ADDRESS_WINDOW_MS))) {
+      console.info("newsletter: confirmation already sent to this address today - nothing sent");
+      return json(ACCEPTED);
+    }
+
+    const site = (Netlify.env.get("URL") || new URL(req.url).origin).replace(/\/$/, "");
+    const { token: confirmToken } = makeToken(confirmSecret, email);
+    const mail = confirmationEmail({ confirmUrl: `${site}/newsletter/confirm/?t=${encodeURIComponent(confirmToken)}` });
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: Netlify.env.get("EMAIL_FROM") || DEFAULT_FROM,
+        to: [email],
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      }),
+    });
+    if (!res.ok) {
+      console.error("newsletter: confirmation email failed:", res.status, await res.text().catch(() => ""));
+      return json({ error: FAILED }, 502);
+    }
   } catch (err: any) {
     console.error("Newsletter function error:", err?.message || err);
     return json({ error: FAILED }, 502);

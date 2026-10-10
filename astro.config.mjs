@@ -29,7 +29,9 @@ export default defineConfig({
       // 301s to /personalise, so there is nothing left to exclude for it.
       filter: (page) =>
         page !== 'https://comicstripcanvas.co.uk/order-confirmation/' &&
-        !page.startsWith('https://comicstripcanvas.co.uk/admin/')
+        !page.startsWith('https://comicstripcanvas.co.uk/admin/') &&
+        // The newsletter's confirm and link pages are reached only from its email.
+        !page.startsWith('https://comicstripcanvas.co.uk/newsletter/')
     }),
     slugRedirects({ client: redirectClient, query: PREVIOUS_SLUGS_QUERY }),
   ],

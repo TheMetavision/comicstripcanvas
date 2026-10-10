@@ -1,0 +1,77 @@
+---
+/**
+ * /newsletter/confirm/?t=... -- where the confirmation email's link lands.
+ *
+ * Deliberately a page with a button rather than a link that subscribes on
+ * arrival: mail scanners open links in emails by themselves, and must not be
+ * able to confirm for the recipient. The button POSTs the token to
+ * /api/newsletter-confirm, which subscribes and redirects to /newsletter/confirmed/.
+ *
+ * Static page: the token is copied from the address bar into the form by the
+ * script below, and Confirm stays disabled until it has been.
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Confirm your subscription" description="Confirm your Comic Strip Canvas newsletter subscription." noindex={true}>
+  <section class="relative bg-charcoal py-20 min-h-[60vh]">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
+
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 relative text-center">
+      <div class="speech-bubble inline-block mb-8 text-lg">ONE MORE CLICK!</div>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-6"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        CONFIRM YOUR <span class="text-comic-yellow">SUBSCRIPTION</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg leading-relaxed mb-8 max-w-lg mx-auto">
+        Press the button to join the Comic Strip Canvas crew. Your welcome email will follow straight after.
+      </p>
+
+      <form id="nl-confirm-form" method="post" action="/api/newsletter-confirm">
+        <input type="hidden" name="t" id="nl-confirm-token" value="" />
+        <button type="submit" id="nl-confirm-btn" disabled
+                class="bg-comic-yellow text-black font-bangers text-2xl px-10 py-4 border-4 border-black transition-all hover:-translate-y-1 uppercase tracking-wider disabled:opacity-60 disabled:cursor-not-allowed"
+                style="box-shadow: 4px 4px 0 #000000;">
+          Confirm my subscription
+        </button>
+      </form>
+
+      <p id="nl-confirm-missing" class="hidden font-source text-gray-300 mt-8">
+        This link is missing its code. Open the link from your email again, or
+        <a href="/#newsletter" class="text-comic-yellow underline">sign up again</a>.
+      </p>
+      <noscript>
+        <p class="font-source text-gray-300 mt-8">This page needs JavaScript to confirm. Please turn it on and reload.</p>
+      </noscript>
+      <p class="font-source text-gray-500 text-sm mt-10">
+        Didn’t sign up? Just close this page. You won’t be added to anything.
+      </p>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  const t = new URLSearchParams(location.search).get('t') || '';
+  const field = document.getElementById('nl-confirm-token') as HTMLInputElement | null;
+  const btn = document.getElementById('nl-confirm-btn') as HTMLButtonElement | null;
+  const form = document.getElementById('nl-confirm-form') as HTMLFormElement | null;
+  if (t && field && btn && form) {
+    field.value = t;
+    btn.disabled = false;
+    // One press: a double click must not post twice.
+    form.addEventListener('submit', () => {
+      btn.disabled = true;
+      btn.textContent = 'Confirming...';
+    });
+    // Back from the next page (bfcache): usable again.
+    window.addEventListener('pageshow', (ev) => {
+      if (!(ev as PageTransitionEvent).persisted) return;
+      btn.disabled = false;
+      btn.textContent = 'Confirm my subscription';
+    });
+  } else {
+    form?.classList.add('hidden');
+    document.getElementById('nl-confirm-missing')?.classList.remove('hidden');
+  }
+</script>

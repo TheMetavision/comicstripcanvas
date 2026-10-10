@@ -1,0 +1,28 @@
+---
+/** /newsletter/confirmed/ -- where /api/newsletter-confirm sends a confirmed subscriber. */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="You're in!" description="Your Comic Strip Canvas newsletter subscription is confirmed." noindex={true}>
+  <section class="relative bg-charcoal py-20 min-h-[60vh]">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
+
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 relative text-center">
+      <div class="speech-bubble inline-block mb-8 text-lg">KA-POW!</div>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-6"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        YOU'RE <span class="text-comic-yellow">IN!</span>
+      </h1>
+      <p class="font-source text-gray-300 text-lg leading-relaxed mb-10 max-w-lg mx-auto">
+        Welcome to the Comic Strip Canvas crew. Your welcome email is on its way. Keep an eye on your inbox
+        (and your spam folder, just in case).
+      </p>
+      <a href="/store"
+         class="inline-block bg-comic-yellow text-black font-bangers text-2xl px-10 py-4 border-4 border-black transition-all hover:-translate-y-1 uppercase tracking-wider"
+         style="box-shadow: 4px 4px 0 #000000;">
+        Browse the store
+      </a>
+    </div>
+  </section>
+</BaseLayout>
