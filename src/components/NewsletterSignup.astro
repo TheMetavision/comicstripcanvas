@@ -1,4 +1,7 @@
 ---
+// Turnstile site key: public, baked in at build time (see contact.astro).
+const TURNSTILE_SITE_KEY =
+  import.meta.env.TURNSTILE_SITE_KEY || process.env.TURNSTILE_SITE_KEY || '';
 ---
 
 <section class="py-16 bg-comic-red relative overflow-hidden">
@@ -17,34 +20,81 @@
     <p class="font-source text-red-100 mb-8 text-lg">
       Join our comic crew for exclusive offers, new releases, and behind-the-scenes art.
     </p>
-    <form class="flex flex-col sm:flex-row gap-3 max-w-lg mx-auto" id="newsletter-form">
-      <input
-        type="email"
-        name="email"
-        placeholder="Enter your email address"
-        required
-        class="flex-1 px-4 py-3 bg-white text-black font-source border-4 border-black focus:outline-none focus:border-comic-yellow placeholder:text-gray-400"
-        style="box-shadow: 3px 3px 0 #000000;"
-      />
-      {/* Disabled until the script below is listening, so an early press is
-          not a native GET with the email in the URL. */}
-      <button type="submit" disabled
-              class="bg-comic-yellow text-black font-bangers text-xl px-8 py-3 border-4 border-black transition-all hover:-translate-y-1 whitespace-nowrap uppercase tracking-wider"
-              style="box-shadow: 4px 4px 0 #000000;">
-        SIGN UP
-      </button>
+    <form class="max-w-lg mx-auto" id="newsletter-form">
+      <div class="flex flex-col sm:flex-row gap-3">
+        <input
+          type="email"
+          name="email"
+          placeholder="Enter your email address"
+          required
+          class="flex-1 px-4 py-3 bg-white text-black font-source border-4 border-black focus:outline-none focus:border-comic-yellow placeholder:text-gray-400"
+          style="box-shadow: 3px 3px 0 #000000;"
+        />
+        {/* Disabled until the script below is listening, so an early press is
+            not a native GET with the email in the URL. */}
+        <button type="submit" disabled
+                class="bg-comic-yellow text-black font-bangers text-xl px-8 py-3 border-4 border-black transition-all hover:-translate-y-1 whitespace-nowrap uppercase tracking-wider"
+                style="box-shadow: 4px 4px 0 #000000;">
+          SIGN UP
+        </button>
+      </div>
+      {/* Honeypot: off-screen, unreachable by pointer, keyboard or screen
+          reader, with a name autofill does not recognise. Checked in
+          netlify/functions/newsletter.mts. */}
+      <div style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+        <label for="csc-nl-extra">Extra</label>
+        <input type="text" id="csc-nl-extra" name="csc_nl_extra" tabindex="-1" autocomplete="off" />
+      </div>
+      {TURNSTILE_SITE_KEY && (
+        <div class="mt-4 flex justify-center">
+          <div
+            class="cf-turnstile"
+            data-sitekey={TURNSTILE_SITE_KEY}
+            data-action="newsletter"
+            data-response-field-name="cf-turnstile-response"
+          ></div>
+        </div>
+      )}
     </form>
     <p class="font-source text-red-200 text-xs mt-4">
       No spam, ever. Unsubscribe anytime.
     </p>
     <div id="newsletter-success" class="hidden mt-4 bg-comic-yellow text-black font-russo px-6 py-3 border-4 border-black inline-block">
-      Thanks for joining the crew!
+      Almost there! Check your inbox and click the link to confirm.
     </div>
   </div>
 </section>
 
+{TURNSTILE_SITE_KEY && (
+  <script is:inline>
+    /* Load Turnstile once. The contact page loads it itself further down, and a
+       second copy breaks it, so wait until the page is parsed and load it only
+       if nothing else has. */
+    document.addEventListener('DOMContentLoaded', function () {
+      if (document.querySelector('script[src^="https://challenges.cloudflare.com/turnstile/v0/api.js"]')) return;
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      s.async = true;
+      s.defer = true;
+      document.head.appendChild(s);
+    });
+  </script>
+)}
+
 <script>
   const form = document.getElementById('newsletter-form') as HTMLFormElement;
+  // Time on page: stamped now, compared with the submit time by the function.
+  const loadedAt = Date.now();
+  const turnstileWidget = form?.querySelector('.cf-turnstile') as HTMLElement | null;
+  const turnstileToken = () =>
+    (form?.querySelector('input[name="cf-turnstile-response"]') as HTMLInputElement | null)?.value?.trim() || '';
+  // A token is single use: reset the widget after any failed attempt.
+  const resetTurnstile = () => {
+    const ts = (window as any).turnstile;
+    if (turnstileWidget && ts && typeof ts.reset === 'function') {
+      try { ts.reset(turnstileWidget); } catch { /* not rendered yet */ }
+    }
+  };
   const success = document.getElementById('newsletter-success');
 
   form?.addEventListener('submit', async (e) => {
@@ -53,6 +103,10 @@
     const emailInput = form.querySelector('input[name="email"]') as HTMLInputElement;
     const email = emailInput?.value?.trim();
     if (!email) return;
+    if (turnstileWidget && !turnstileToken()) {
+      alert('Please complete the anti-spam check first.');
+      return;
+    }
 
     const btn = form.querySelector('button') as HTMLButtonElement;
     const originalText = btn.textContent;
@@ -63,7 +117,13 @@
       const response = await fetch('/api/newsletter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({
+          email,
+          turnstileToken: turnstileToken(),
+          csc_nl_extra: (form.querySelector('input[name="csc_nl_extra"]') as HTMLInputElement | null)?.value || '',
+          csc_nl_ts_load: loadedAt,
+          csc_nl_ts_submit: Date.now(),
+        }),
       });
 
       const data = await response.json();
@@ -74,11 +134,13 @@
       } else {
         btn.textContent = originalText;
         btn.disabled = false;
+        resetTurnstile();
         alert(data.error || 'Something went wrong. Please try again.');
       }
     } catch (err) {
       btn.textContent = originalText;
       btn.disabled = false;
+      resetTurnstile();
       alert('Failed to subscribe. Please try again.');
     }
   });
