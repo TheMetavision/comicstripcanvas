@@ -19,11 +19,18 @@
  * else) in the `newsletter-confirm-used` Blobs store before MailerLite is
  * called; if MailerLite then fails, the record is removed so the same link can
  * be tried again.
+ *
+ * Speed: the Blobs write has a 2.5s budget (retries included) and the
+ * MailerLite call a 4s limit (_shared/timing.mjs). A slow Blobs is treated like
+ * an unavailable one (carry on); a slow MailerLite like a failed one (error
+ * page, link given back). Each request logs one "[newsletter-confirm] timing"
+ * line.
  */
 import type { Context } from "@netlify/functions";
 import { getStore } from "@netlify/blobs";
 import { readToken } from "./_shared/newsletter-token.mjs";
 import { hashKey } from "./_shared/rate-limit.mjs";
+import { LIMITS_MS, blobsFetch, fetchWithTimeout, stopwatch, withinBudget } from "./_shared/timing.mjs";
 
 const ML = "https://connect.mailerlite.com/api";
 const USED_STORE = "newsletter-confirm-used";
@@ -61,28 +68,36 @@ export default async (req: Request, _context: Context) => {
 
   const verdict = readToken(secret, (await tokenFrom(req)).slice(0, 4096));
   if (!verdict.ok) return problem(req, verdict.reason);
+  const clock = stopwatch("[newsletter-confirm]");
 
   // Spend the nonce first, atomically: two clicks racing cannot both get past.
   let store: ReturnType<typeof getStore> | null = null;
   const usedKey = hashKey("nonce", verdict.nonce);
   try {
-    store = getStore({ name: USED_STORE, consistency: "strong" });
-    const res = await store.setJSON(usedKey, { x: verdict.expiresAt }, { onlyIfNew: true });
-    if (!res.modified) return problem(req, "used");
+    store = getStore({ name: USED_STORE, consistency: "strong", fetch: blobsFetch });
+    const res = await clock.time("spend", withinBudget(
+      store.setJSON(usedKey, { x: verdict.expiresAt }, { onlyIfNew: true }),
+      LIMITS_MS.blobsOp, "token spend",
+    ));
+    if (!res.modified) {
+      clock.log("used");
+      return problem(req, "used");
+    }
   } catch (err: any) {
     // Without Blobs single use cannot be enforced; a repeat only repeats the
     // same idempotent upsert below, so carry on rather than refuse a real click.
+    // The store is kept: a write that ran out of budget may still land, and
+    // the release below must be able to undo it (deleting nothing is harmless).
     console.warn("newsletter-confirm: used-token store unavailable (continuing):", err?.message || err);
-    store = null;
   }
 
   let ok = false;
   try {
-    const res = await fetch(`${ML}/subscribers`, {
+    const res = await clock.time("mailerlite", fetchWithTimeout(`${ML}/subscribers`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ email: verdict.email, groups: [groupId], status: "active" }),
-    });
+    }, LIMITS_MS.mailerlite, "MailerLite create"));
     ok = res.ok;
     if (!ok) console.error("newsletter-confirm: MailerLite refused:", res.status, await res.text().catch(() => ""));
   } catch (err: any) {
@@ -91,8 +106,10 @@ export default async (req: Request, _context: Context) => {
 
   if (!ok) {
     // Give the link back, so trying again later works.
-    await store?.delete(usedKey).catch(() => {});
+    if (store) await withinBudget(store.delete(usedKey), LIMITS_MS.blobsOp, "token release").catch(() => {});
+    clock.log("mailerlite failed");
     return problem(req, "error");
   }
+  clock.log("confirmed");
   return goTo(req, CONFIRMED);
 };

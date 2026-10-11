@@ -8,7 +8,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 
-globalThis.__blobs = { data: new Map(), down: false };
+globalThis.__blobs = { data: new Map(), down: false, delay: 0 };
 globalThis.__dns = { answers: new Map() };
 const STUBS = {
   '@netlify/blobs': `
@@ -16,13 +16,16 @@ const STUBS = {
       const b = globalThis.__blobs;
       const k = (key) => name + '/' + key;
       let n = 0;
+      const slow = () => b.delay === 'hang' ? new Promise(() => {}) : b.delay ? new Promise((r) => setTimeout(r, b.delay)) : null;
       return {
         async getWithMetadata(key) {
+          await slow();
           if (b.down) throw new Error('blobs unreachable');
           const e = b.data.get(k(key));
           return e ? { data: JSON.parse(e.json), etag: e.etag, metadata: {} } : null;
         },
         async setJSON(key, value, opts = {}) {
+          await slow();
           if (b.down) throw new Error('blobs unreachable');
           const e = b.data.get(k(key));
           if (opts.onlyIfNew && e) return { modified: false };
@@ -32,6 +35,7 @@ const STUBS = {
           return { modified: true, etag };
         },
         async delete(key) {
+          await slow();
           if (b.down) throw new Error('blobs unreachable');
           b.data.delete(k(key));
         },
@@ -71,10 +75,24 @@ let subscriber = null;                   // MailerLite's record for the address,
 let lookupStatus = null;                 // force the lookup's status
 let resendStatus = 200;
 let mlCreateStatus = 201;                // or 'throw'
+let delays = {};                         // { turnstile, lookup, create, resend }: ms, or 'hang'
+/** Wait like a slow server would; an aborted request rejects as fetch does. */
+function lag(ms, signal) {
+  if (!ms) return null;
+  return new Promise((resolve, reject) => {
+    const t = ms === 'hang' ? null : setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); });
+  });
+}
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
-  const call = { url, method: init.method || 'GET' };
+  const call = { url, method: init.method || 'GET', signal: !!init.signal };
   calls.push(call);
+  const which = url.includes('challenges.cloudflare.com') ? 'turnstile'
+    : url.startsWith('https://connect.mailerlite.com/api/subscribers/') ? 'lookup'
+    : url.startsWith('https://connect.mailerlite.com/api/subscribers') ? 'create'
+    : url.startsWith('https://api.resend.com') ? 'resend' : '';
+  await lag(delays[which], init.signal);
   if (url.includes('challenges.cloudflare.com')) {
     call.form = Object.fromEntries(new URLSearchParams(String(init.body)));
     if (turnstile.throws) throw new Error('getaddrinfo ENOTFOUND challenges.cloudflare.com');
@@ -113,14 +131,20 @@ const human = (over = {}) => ({
   csc_nl_ts_submit: now,
   ...over,
 });
-const post = async (body, ip = `203.0.113.${++ipSeq}`) => {
+const post = async (body, ip = `203.0.113.${++ipSeq}`, context = {}) => {
   const res = await signup(new Request('http://localhost/api/newsletter', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-nf-client-connection-ip': ip },
     body: JSON.stringify(body),
-  }), {});
+  }), context);
   return { status: res.status, body: await res.json() };
 };
+/** A Netlify context whose waitUntil records the background work. */
+const withWaitUntil = () => {
+  const pending = [];
+  return { pending, waitUntil: (p) => { pending.push(p); } };
+};
+const elapsed = async (fn) => { const t0 = Date.now(); const out = await fn(); return { ...out, ms: Date.now() - t0 }; };
 const ACCEPTED = {
   success: true,
   message: "Thanks! If you're new here, check your inbox for a link to confirm your subscription.",
@@ -140,7 +164,7 @@ const sign = (email = 'reader@realmail.example', at = Date.now()) => makeToken(E
 beforeEach(() => {
   calls = []; turnstile = { success: true }; subscriber = null; lookupStatus = null;
   resendStatus = 200; mlCreateStatus = 201;
-  blobs.data.clear(); blobs.down = false;
+  blobs.data.clear(); blobs.down = false; blobs.delay = 0; delays = {};
   globalThis.__dns.answers.clear();
   Object.assign(process.env, ENV);
 });
@@ -335,7 +359,7 @@ test('disposable and mail-less domains are refused before MailerLite or Resend',
     const r = await post(human({ email }));
     assert.equal(r.status, 400, email);
     assert.match(r.body.error, re, email);
-    assert.equal(mlCalls().length + mails().length, 0, email);
+    assert.equal(mlWrites().length + mails().length, 0, email);
   }
 });
 
@@ -347,6 +371,111 @@ test('a DNS failure or timeout is not held against the visitor', async () => {
     assert.equal((await post(human({ email: `x@${d}` }))).status, 200, d);
     assert.equal(mails().length, 1, d);
   }
+});
+
+// ── Latency: limits on every outside call, checks in parallel ────────────
+
+test('every outside call carries a timeout signal', async () => {
+  await post(human());
+  const outside = calls.filter((c) => /cloudflare|mailerlite|resend/.test(c.url));
+  assert.ok(outside.length >= 3, 'turnstile, lookup and resend');
+  for (const c of outside) assert.ok(c.signal, c.url);
+});
+
+test('the IP limit, MX check and MailerLite lookup run in parallel', async () => {
+  blobs.delay = 300; delays.lookup = 300;
+  globalThis.__dns.answers.set('slowdns.example', [{ exchange: 'mx.slowdns.example', priority: 10 }]);
+  const { status, ms } = await elapsed(() => post(human({ email: 'x@slowdns.example' })));
+  assert.equal(status, 200);
+  // In sequence: 2 x 300 (IP check) + 300 (lookup) + 2 x 300 (address check) = 1500ms+.
+  // In parallel the first three overlap: about 600 + 600.
+  assert.ok(ms < 1400, `took ${ms}ms`);
+});
+
+test('Blobs that never answers costs at most ~2.5s a check, and sign-up still works (fails open)', async () => {
+  blobs.delay = 'hang';
+  const { status, ms } = await elapsed(() => post(human()));
+  assert.equal(status, 200);
+  assert.equal(mails().length, 1);
+  assert.ok(ms < 6000, `took ${ms}ms (two checks, 2.5s budget each)`);
+});
+
+test('a hanging Turnstile is cut off at 4s and fails closed (503)', async () => {
+  delays.turnstile = 'hang';
+  const { status, ms } = await elapsed(() => post(human()));
+  assert.equal(status, 503);
+  assert.ok(ms >= 3900 && ms < 5000, `took ${ms}ms`);
+  assert.equal(mlCalls().length + mails().length, 0);
+});
+
+test('a hanging MailerLite lookup is cut off at 4s and fails closed (502), no email', async () => {
+  delays.lookup = 'hang';
+  const { status, ms } = await elapsed(() => post(human()));
+  assert.equal(status, 502);
+  assert.ok(ms >= 3900 && ms < 5000, `took ${ms}ms`);
+  assert.equal(mails().length, 0);
+});
+
+test('with waitUntil, the reply does not wait for the email', async () => {
+  delays.resend = 1500;
+  const ctx = withWaitUntil();
+  const { status, body, ms } = await elapsed(() => post(human(), undefined, ctx));
+  assert.equal(status, 200);
+  assert.deepEqual(body, ACCEPTED);
+  assert.ok(ms < 1000, `replied in ${ms}ms`);
+  assert.equal(ctx.pending.length, 1, 'the send was handed to waitUntil');
+  assert.equal(await ctx.pending[0], true, 'and completed after the reply');
+  assert.equal(mails().length, 1);
+});
+
+test('a send that fails or hangs gives the address its slot back, so a retry works', async () => {
+  for (const failure of [{ status: 500 }, { hang: true }]) {
+    calls = []; blobs.data.clear(); delays = {}; resendStatus = 200;
+    if (failure.hang) delays.resend = 'hang'; else resendStatus = failure.status;
+    const ctx = withWaitUntil();
+    assert.equal((await post(human(), undefined, ctx)).status, 200);
+    assert.equal(await ctx.pending[0], false, 'not sent');
+    delays = {}; resendStatus = 200;
+    await post(human());
+    assert.equal(mails().length, failure.hang ? 1 : 2, 'the retry sends straight away');
+  }
+});
+
+test('without waitUntil a failed send is still reported (502) and the slot given back', async () => {
+  resendStatus = 500;
+  assert.equal((await post(human())).status, 502);
+  resendStatus = 200;
+  assert.equal((await post(human())).status, 200);
+  assert.equal(mails().length, 2);
+});
+
+test('confirm: Blobs that never answers costs ~2.5s and the click still confirms', async () => {
+  blobs.delay = 'hang';
+  const { location, ms } = await elapsed(() => confirmPost(sign()));
+  assert.match(location, /\/newsletter\/confirmed\/$/);
+  assert.ok(ms < 3500, `took ${ms}ms`);
+});
+
+test('confirm: a hanging MailerLite is cut off at 4s: error page, link given back', async () => {
+  delays.create = 'hang';
+  const t = sign();
+  const { location, ms } = await elapsed(() => confirmPost(t));
+  assert.match(location, /r=error$/);
+  assert.ok(ms >= 3900 && ms < 5000, `took ${ms}ms`);
+  delays = {};
+  assert.match((await confirmPost(t)).location, /\/newsletter\/confirmed\/$/, 'the same link works on retry');
+});
+
+test('each request logs one timing line with its steps and no visitor data', async () => {
+  const lines = [];
+  const orig = console.info;
+  console.info = (...a) => { lines.push(a.join(' ')); };
+  try { await post(human({ email: 'private.person@realmail.example' })); } finally { console.info = orig; }
+  const timing = lines.filter((l) => l.includes('timing'));
+  assert.equal(timing.length, 1, lines.join('\n'));
+  assert.match(timing[0], /total=\d+ms turnstile=\d+ms/);
+  for (const step of ['ip', 'mx', 'lookup', 'addr']) assert.match(timing[0], new RegExp(`${step}=\\d+ms`));
+  assert.ok(!/private|realmail/.test(lines.join(' ')), 'no address in the logs');
 });
 
 test('format and method are still checked', async () => {

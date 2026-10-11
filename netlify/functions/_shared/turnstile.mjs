@@ -3,20 +3,23 @@
  *
  * Returns { ok: true } on a pass, or { ok: false, status, error } describing how
  * to answer. A token Cloudflare rejects is the caller's problem (400); a
- * siteverify call that never completes is ours (503, retryable) -- failing open
- * there would hand every spammer a trivial bypass.
+ * siteverify call that fails or takes longer than LIMITS_MS.turnstile is ours
+ * (503, retryable) -- failing open there would hand every spammer a trivial
+ * bypass.
  */
+import { LIMITS_MS, fetchWithTimeout } from './timing.mjs';
+
 export async function verifyTurnstile(secret, token, remoteIp) {
   const body = new URLSearchParams({ secret, response: token });
   if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
 
   let outcome;
   try {
-    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    const res = await fetchWithTimeout('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
-    });
+    }, LIMITS_MS.turnstile, 'turnstile siteverify');
     outcome = await res.json();
   } catch (err) {
     console.error('turnstile siteverify unreachable:', err && err.message);

@@ -97,8 +97,16 @@ const TURNSTILE_SITE_KEY =
   };
   const success = document.getElementById('newsletter-success');
 
-  form?.addEventListener('submit', async (e) => {
+  // One listener, bound once, one request at a time, and none after a
+  // success: a second submit must never re-post the same single-use Turnstile
+  // token (it would fail and show an error over the success message).
+  let nlInFlight = false;
+  let nlDone = false;
+  if (form && !form.dataset.nlBound) {
+  form.dataset.nlBound = '1';
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (nlInFlight || nlDone) return;
 
     const emailInput = form.querySelector('input[name="email"]') as HTMLInputElement;
     const email = emailInput?.value?.trim();
@@ -108,6 +116,7 @@ const TURNSTILE_SITE_KEY =
       return;
     }
 
+    nlInFlight = true;
     const btn = form.querySelector('button') as HTMLButtonElement;
     const originalText = btn.textContent;
     btn.textContent = 'SENDING...';
@@ -129,6 +138,7 @@ const TURNSTILE_SITE_KEY =
       const data = await response.json();
 
       if (response.ok && data.success) {
+        nlDone = true;
         form.classList.add('hidden');
         success?.classList.remove('hidden');
       } else {
@@ -142,8 +152,11 @@ const TURNSTILE_SITE_KEY =
       btn.disabled = false;
       resetTurnstile();
       alert('Failed to subscribe. Please try again.');
+    } finally {
+      nlInFlight = false;
     }
   });
+  }
 
   // Listening now; the button was rendered disabled until this point.
   const nlBtn = form?.querySelector('button') as HTMLButtonElement | null;

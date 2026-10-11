@@ -151,10 +151,15 @@ function countUrls(text) {
  *
  * Returns { ok: true } on a pass, or { ok: false, status, error } describing how
  * to answer. A token Cloudflare rejects is the caller's problem (400); a
- * siteverify call that never completes is ours (503, retryable) -- failing open
- * there would hand every spammer a trivial bypass.
+ * siteverify call that fails, or takes longer than TURNSTILE_TIMEOUT_MS, is ours
+ * (503, retryable) -- failing open there would hand every spammer a trivial
+ * bypass. The limit is the newsletter's (netlify/functions/_shared/timing.mjs);
+ * it is set here rather than imported so this file still stands alone on every
+ * brand site it is copied to.
  */
-async function verifyTurnstile(secret, token, remoteIp) {
+export const TURNSTILE_TIMEOUT_MS = 4000;
+
+export async function verifyTurnstile(secret, token, remoteIp) {
   const body = new URLSearchParams({ secret, response: token });
   if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
 
@@ -164,6 +169,7 @@ async function verifyTurnstile(secret, token, remoteIp) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
+      signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS),
     });
     outcome = await res.json();
   } catch (err) {

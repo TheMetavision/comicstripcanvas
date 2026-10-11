@@ -13,6 +13,7 @@
 // those domains have perfectly good MX records. Turnstile, the rate limit and
 // double opt-in do that; this keeps junk out of the list.
 import { resolveMx } from 'node:dns/promises';
+import { LIMITS_MS } from './timing.mjs';
 
 const DISPOSABLE_DOMAINS = new Set([
   '10minutemail.com', '10minutemail.net', '20minutemail.com', 'anonaddy.me',
@@ -37,7 +38,6 @@ const DISPOSABLE_MX_SUFFIXES = [
   'mailsac.com', 'temp-mail.org', 'trashmail.com', 'dispostable.com', 'getnada.com',
 ];
 
-const DNS_TIMEOUT_MS = 2500;
 
 function withTimeout(promise, ms) {
   let timer;
@@ -62,7 +62,7 @@ export async function checkEmailDomain(email, { resolver = resolveMx } = {}) {
 
   let records;
   try {
-    records = await withTimeout(resolver(domain), DNS_TIMEOUT_MS);
+    records = await withTimeout(resolver(domain), LIMITS_MS.mx);
   } catch (err) {
     // The domain does not exist, or exists with no MX: it cannot take mail.
     if (err && (err.code === 'ENOTFOUND' || err.code === 'ENODATA')) return { ok: false, reason: 'no-mx' };
