@@ -1,0 +1,51 @@
+---
+/**
+ * /newsletter/link-expired/?r=expired|used|invalid|error -- where
+ * /api/newsletter-confirm sends any link it cannot use. Static: the reason only
+ * picks which line of copy shows, and every version offers the form again.
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="That link didn't work" description="Your newsletter confirmation link could not be used." noindex={true}>
+  <section class="relative bg-charcoal py-20 min-h-[60vh]">
+    <div class="absolute inset-0 halftone-bg opacity-40"></div>
+    <div class="absolute top-0 left-0 right-0 h-1 bg-comic-yellow"></div>
+
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 relative text-center">
+      <div class="speech-bubble inline-block mb-8 text-lg">WHOOPS!</div>
+      <h1 class="font-bangers text-5xl md:text-7xl text-off-white tracking-wide mb-6"
+          style="text-shadow: 4px 4px 0 rgba(0,0,0,0.5);">
+        THAT LINK <span class="text-comic-yellow">DIDN'T WORK</span>
+      </h1>
+
+      <p data-reason="expired" class="reason hidden font-source text-gray-300 text-lg leading-relaxed mb-10 max-w-lg mx-auto">
+        Confirmation links last 48 hours, and this one has run out. Sign up again and we'll send you a fresh one.
+      </p>
+      <p data-reason="used" class="reason hidden font-source text-gray-300 text-lg leading-relaxed mb-10 max-w-lg mx-auto">
+        This link has already been used. If that was you, you're on the list already and there's nothing more to do.
+        If not, sign up again below.
+      </p>
+      <p data-reason="error" class="reason hidden font-source text-gray-300 text-lg leading-relaxed mb-10 max-w-lg mx-auto">
+        Something went wrong on our side. Please try the link from your email again in a few minutes.
+      </p>
+      <p data-reason="invalid" class="reason font-source text-gray-300 text-lg leading-relaxed mb-10 max-w-lg mx-auto">
+        We couldn't read this link. It may have been cut short when it was copied. Sign up again and we'll send you a fresh one.
+      </p>
+
+      <a href="/#newsletter"
+         class="inline-block bg-comic-yellow text-black font-bangers text-2xl px-10 py-4 border-4 border-black transition-all hover:-translate-y-1 uppercase tracking-wider"
+         style="box-shadow: 4px 4px 0 #000000;">
+        Sign up again
+      </a>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  const reason = new URLSearchParams(location.search).get('r');
+  const match = reason && document.querySelector(`.reason[data-reason="${CSS.escape(reason)}"]`);
+  if (match) {
+    document.querySelectorAll('.reason').forEach((p) => p.classList.toggle('hidden', p !== match));
+  }
+</script>
