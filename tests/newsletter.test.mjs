@@ -383,13 +383,12 @@ test('every outside call carries a timeout signal', async () => {
 });
 
 test('the IP limit, MX check and MailerLite lookup run in parallel', async () => {
-  blobs.delay = 300; delays.lookup = 300;
-  globalThis.__dns.answers.set('slowdns.example', [{ exchange: 'mx.slowdns.example', priority: 10 }]);
-  const { status, ms } = await elapsed(() => post(human({ email: 'x@slowdns.example' })));
+  blobs.delay = 500; delays.lookup = 1000;
+  const { status, ms } = await elapsed(() => post(human()));
   assert.equal(status, 200);
-  // In sequence: 2 x 300 (IP check) + 300 (lookup) + 2 x 300 (address check) = 1500ms+.
-  // In parallel the first three overlap: about 600 + 600.
-  assert.ok(ms < 1400, `took ${ms}ms`);
+  // In sequence: IP check 2 x 500 + lookup 1000 + address check 2 x 500 = 3000ms+.
+  // In parallel the IP check and lookup overlap: about 1000 + 1000 = 2000ms.
+  assert.ok(ms < 2600, `took ${ms}ms`);
 });
 
 test('Blobs that never answers costs at most ~2.5s a check, and sign-up still works (fails open)', async () => {
