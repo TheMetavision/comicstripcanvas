@@ -28,7 +28,9 @@ export function confirmationEmail({ confirmUrl }) {
 <body style="margin:0;padding:0;background-color:#f2f3f5;" bgcolor="#f2f3f5">
 <div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f2f3f5;">${preheader}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f2f3f5" style="background-color:#f2f3f5;">
-  <tr><td align="center" style="padding:24px 12px;">
+  <tr><td align="center" style="padding:24px 0;">
+    <!-- No side padding: under 600px wide the header runs edge to edge. Outlook ignores max-width, so it gets a fixed table. -->
+    <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
       <tr><td>${emailHeader}</td></tr>
       <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:32px 28px;font-family:${sans};color:#1f2125;">
@@ -43,6 +45,7 @@ export function confirmationEmail({ confirmUrl }) {
         Bold pop culture wall art.
       </td></tr>
     </table>
+    <!--[if mso]></td></tr></table><![endif]-->
   </td></tr>
 </table>
 </body>

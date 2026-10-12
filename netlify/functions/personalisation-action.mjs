@@ -266,9 +266,13 @@ function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: #f4f4f4;">
   <tr>
-    <td align="center" style="padding: 24px 12px;">
-
-      <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width: 640px; max-width: 640px; border-collapse: collapse; background: #ffffff;">
+    <td align="center" style="padding: 24px 0;">
+      <!-- No side padding and a fluid 640px column: under 640px wide (the Gmail
+           apps) the black header runs edge to edge instead of the whole email
+           being shrunk to fit. Outlook ignores max-width, so it gets a fixed
+           640px table of its own. -->
+      <!--[if mso]><table role="presentation" width="640" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+      <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 640px; border-collapse: collapse; background: #ffffff;">
         <tr>
           <td style="padding: 0;">${emailHeader}</td>
         </tr>
@@ -327,6 +331,7 @@ function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
           </td>
         </tr>
       </table>
+      <!--[if mso]></td></tr></table><![endif]-->
 
     </td>
   </tr>
