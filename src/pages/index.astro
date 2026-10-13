@@ -240,27 +240,7 @@ const stripImages = cardImages(categoryImages.strips);
   <!-- Newsletter -->
   <NewsletterSignup />
 
-  <script type="application/ld+json" set:html={JSON.stringify({
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "Comic Strip Canvas",
-    "url": "https://comicstripcanvas.co.uk",
-    "logo": "https://cdn.sanity.io/images/lwbwahym/production/ea1e54dd3477bbbfbf2a13a8761a048a6a2f30b6-2752x1536.jpg?w=1200",
-    "description": "UK-based pop culture wall art. Bold comic-book style canvas prints, framed prints, and posters.",
-    "aggregateRating": testimonials.length > 0 ? {
-      "@type": "AggregateRating",
-      "ratingValue": (testimonials.reduce((sum: number, t: any) => sum + (t.rating || 5), 0) / testimonials.length).toFixed(1),
-      "reviewCount": testimonials.length,
-      "bestRating": "5",
-      "worstRating": "1",
-    } : undefined,
-    "review": testimonials.slice(0, 5).map((t: any) => ({
-      "@type": "Review",
-      "author": { "@type": "Person", "name": t.customerName },
-      "reviewRating": { "@type": "Rating", "ratingValue": t.rating, "bestRating": "5" },
-      "reviewBody": t.quote,
-    })),
-  })}></script>
+  <!-- Organization schema is emitted once, site-wide, by BaseLayout. No self-served review/rating markup: Google ignores it on a business's own Organization and it is not tied to verified orders. -->
 </BaseLayout>
 
 <script src="../scripts/rotation-toggle.js"></script>
