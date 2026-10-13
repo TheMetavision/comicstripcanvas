@@ -96,7 +96,9 @@ export const productBySlugQuery = `
     isPersonalised,
     personalisationFee,
     seo,
-    "relatedProducts": *[_type == "product" && category == ^.category && slug.current != $slug][0..2] {
+    "relatedProducts": *[_type == "product" && slug.current != $slug && isPersonalised != true] {
+      category,
+      isPersonalised,
       _id,
       title,
       "slug": slug.current,

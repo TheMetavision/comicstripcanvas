@@ -3,6 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { sanityClient, urlFor } from '../../lib/sanity';
 import { sanityDims } from '../../lib/sanityImage';
 import { allProductSlugsQuery, productBySlugQuery } from '../../lib/queries';
+import { pickRelated } from '../../lib/related';
 import { PRICES, FORMAT_LABELS, SIZES, ARTWORK_STYLES } from '../../data/products';
 import { sizeLabelFor, orientationFromAspect } from '../../../netlify/functions/_shared/sizes.mjs';
 /* The one place the customise fee is decided. Imported across the src/netlify
@@ -269,7 +270,9 @@ const productSchema = {
   "offers": offers,
 };
 
-const relatedProducts = product.relatedProducts || [];
+/* Themed picks (src/lib/related.ts): same subject first, then same theme.
+   The query hands over every other product; the choice is made here. */
+const relatedProducts = pickRelated(product, product.relatedProducts || []);
 const productFaqs = product.isPersonalised ? [] : await faqsFor('product', { title: product.title });
 ---
 

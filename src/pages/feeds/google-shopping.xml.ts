@@ -156,10 +156,33 @@ export const GET: APIRoute = async () => {
          Labelling on `customisable` did exactly that to 2,250 of 2,799 items.
          If customise variants are ever listed as items of their own, they get
          the personalised label -- they are made to specification. */
-      const returnsLabel = product.isPersonalised ? 'personalised' : 'standard';
-      const description = product.description
-        ? truncate(product.description, 4900)
-        : `${category} — bold pop culture wall art from Comic Strip Canvas`;
+      // Only personalised items carry a label (matches the 'personalised' exception policy in Merchant Center).
+      // Standard items must carry NO label, or they match no policy and the UK standard return policy does not apply.
+      const returnsLabel = product.isPersonalised ? 'personalised' : '';
+      /* Merchant Center flagged ~1,850 Framed Wall Art items for thin
+         descriptions (Oct 2026): a third of products have no description,
+         and the fallback was one short line. The base text below is a real
+         description, and each variant adds what is specific to it (format,
+         size, material) in variantDescription. */
+      const NOUN: Record<string, string> = {
+        'comic-book-covers': 'Comic Book Cover',
+        'comic-book-icons': 'Comic Book Icon',
+        'comic-book-strips': 'Comic Book Strip',
+      };
+      const baseDescription = product.description
+        ? String(product.description).trim()
+        : `${product.title} reimagined in bold comic book style as a ${NOUN[product.category] || 'comic art print'} `
+          + `from Comic Strip Canvas. Pop culture wall art with vivid colour and graphic impact, printed to order in the UK.`;
+      const description = truncate(`${baseDescription} Available as a poster print, a canvas with a standard frame `
+        + `or a canvas with a gallery frame, each in three sizes. Free UK P&P on orders of £50 and over.`, 4900);
+      const variantDescription = (formatLabel?: string, sizeLabel?: string, format?: string) =>
+        formatLabel && sizeLabel
+          ? truncate(`${baseDescription} This listing is the ${formatLabel} in ${sizeLabel}: `
+            + (format === 'poster'
+              ? 'printed on 260gsm photo paper, ready to frame. '
+              : `printed on canvas and stretched over a ${format === 'canvas-gallery' ? 'deep gallery' : 'standard'} frame, ready to hang. `)
+            + 'Made to order in the UK and dispatched within 3–6 working days. Free UK P&P on orders of £50 and over.', 4900)
+          : description;
 
       /* One <item>, in the feed's shape. The variant-only lines (item_group_id,
          size, and the format/size custom labels) are written only when given, so
@@ -169,22 +192,42 @@ export const GET: APIRoute = async () => {
          template. */
       const itemXml = (f: {
         id: string; title: string; link: string; price: number;
-        groupId?: string; size?: string; formatLabel?: string; sizeLabel?: string;
+        groupId?: string; size?: string; formatLabel?: string; sizeLabel?: string; format?: string;
       }) => `
     <item>
       <g:id>${xmlEscape(f.id)}</g:id>${f.groupId ? `
       <g:item_group_id>${xmlEscape(f.groupId)}</g:item_group_id>` : ''}
       <g:title>${xmlEscape(truncate(f.title, 150))}</g:title>
-      <g:description>${xmlEscape(description)}</g:description>
+      <g:description>${xmlEscape(variantDescription(f.formatLabel, f.sizeLabel, f.format))}</g:description>
       <g:link>${f.link}</g:link>
       <g:image_link>${xmlEscape(optimisedImage)}</g:image_link>
       <g:availability>in stock</g:availability>
       <g:price>${f.price.toFixed(2)} GBP</g:price>
       <g:brand>${xmlEscape(BRAND)}</g:brand>
       <g:condition>new</g:condition>
+      <g:color>Multicolour</g:color>${f.format ? `
+      <g:material>${f.format === 'poster' ? 'Photo paper' : 'Canvas'}</g:material>` : ''}
+      <g:product_highlight>Bold comic book style pop culture art</g:product_highlight>
+      <g:product_highlight>Printed to order in the UK</g:product_highlight>
+      <g:product_highlight>Free UK P&amp;P on orders of £50 and over</g:product_highlight>${f.formatLabel ? `
+      <g:product_detail>
+        <g:section_name>Print</g:section_name>
+        <g:attribute_name>Format</g:attribute_name>
+        <g:attribute_value>${xmlEscape(f.formatLabel)}</g:attribute_value>
+      </g:product_detail>` : ''}${f.sizeLabel ? `
+      <g:product_detail>
+        <g:section_name>Print</g:section_name>
+        <g:attribute_name>Size</g:attribute_name>
+        <g:attribute_value>${xmlEscape(f.sizeLabel)}</g:attribute_value>
+      </g:product_detail>` : ''}
+      <g:product_detail>
+        <g:section_name>Print</g:section_name>
+        <g:attribute_name>Style</g:attribute_name>
+        <g:attribute_value>${xmlEscape(category)}</g:attribute_value>
+      </g:product_detail>
       <g:identifier_exists>no</g:identifier_exists>${f.size ? `
-      <g:size>${xmlEscape(f.size)}</g:size>` : ''}
-      <g:return_policy_label>${returnsLabel}</g:return_policy_label>
+      <g:size>${xmlEscape(f.size)}</g:size>` : ''}${returnsLabel ? `
+      <g:return_policy_label>${returnsLabel}</g:return_policy_label>` : ''}
       <g:product_type>${xmlEscape(`Home & Garden > Decor > Artwork > Posters, Prints, & Visual Artwork > ${category}`)}</g:product_type>
       <g:google_product_category>500044</g:google_product_category>
       <g:custom_label_0>${xmlEscape(category)}</g:custom_label_0>${f.formatLabel ? `
@@ -248,6 +291,7 @@ export const GET: APIRoute = async () => {
             size: sizeAttr(size, orientation),
             formatLabel,
             sizeLabel,
+            format,
           }));
         }
       }
