@@ -337,6 +337,12 @@ export default async (req, context) => {
          items only, so the delivery rate above is never discounted. The webhook
          reads the discount back off the session (_shared/discount.mjs). */
       allow_promotion_codes: true,
+      /* Stripe's own marketing checkbox ("keep me updated"), shown where the
+         law calls for it. The answer lands on session.consent.promotions; the
+         webhook stores it on the order, and order-shipped.mjs keeps the day-21
+         referral email away from anyone who said no. Service emails (dispatch,
+         did it arrive) are unaffected. */
+      consent_collection: { promotions: 'auto' },
       /* The visitor's GA4 client id and session id, sent by the basket only if
          they accepted analytics. The webhook reads them back to send the
          purchase to GA4 from the server, in the visit's own session. Anything

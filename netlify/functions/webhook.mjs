@@ -8,6 +8,7 @@ import { deleteBuild } from './_shared/delete-build.mjs';
 import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
 import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discount.mjs';
+import { referralsFrom, issueReward } from './_shared/referral.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -544,6 +545,11 @@ async function fulfilOrder(session) {
           }
           : {}),
         totalAmount,
+        /* The marketing checkbox on Stripe's page (consent_collection in
+           checkout.mjs): 'opt_in', 'opt_out', or 'not_asked' when Stripe did
+           not show it. order-shipped.mjs uses it to keep the day-21 referral
+           email away from anyone who said no. */
+        marketingConsent: session.consent?.promotions || 'not_asked',
         status: 'received',
         isPersonalised,
         shippingEmailSent: false,
@@ -751,7 +757,7 @@ async function fulfilOrder(session) {
           + ' We\'ll check your design over and email you a proof to approve —'
           + ' <strong>nothing is printed until you\'re happy with it</strong>.'
           + ' Once you\'ve approved your proof, please allow'
-          + ` <strong style="color: ${BRAND.cyan};">7-10 working days</strong> for printing`
+          + ` <strong style="color: ${BRAND.cyan};">3-6 working days</strong> for printing`
           + ' and dispatch, plus 1-2 working days for delivery.';
 
       /* The closing line names the next email that will arrive. For a
@@ -811,6 +817,58 @@ async function fulfilOrder(session) {
       }
       } else {
         console.error(`Skipping customer email for order ${orderNumber} — missing/invalid address.`);
+      }
+
+      // ── Referral: thank the friend who sent this customer ─────
+      /* A PAL- code on this order belongs to an earlier buyer ("give 10%,
+         get 10%"). Issue them a single-use 10% THANKS- code and email it.
+         Self-referral (own code, same email) is ignored by referralsFrom.
+         Best-effort: a failure is logged and recorded, never blocks the order.
+         Stripe retries are covered by the order's create-once idempotency
+         above, so this runs at most once per order. */
+      const referrals = referralsFrom(discount.promos, customerEmail);
+      if (referrals.length) {
+        const ref = referrals[0];
+        try {
+          const rewardCode = await issueReward(stripe, { referrerEmail: ref.referrerEmail, referredOrder: orderNumber });
+          await sanity.patch(orderId).set({
+            referredBy: { code: ref.code, referrerEmail: ref.referrerEmail, referrerOrder: ref.referrerOrder, rewardCode },
+          }).commit();
+          const resend = getResend();
+          if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
+          const { error } = await resend.emails.send({
+            from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
+            to: [ref.referrerEmail],
+            subject: 'WHAM! Your friend ordered. Here\'s your 10% thank you',
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
+                ${emailHeader}
+                <div style="padding: 32px 24px;">
+                  <h2 style="margin: 0 0 12px; font-size: 24px; color: ${BRAND.dark};">Thanks for spreading the word!</h2>
+                  <p style="color: #555; line-height: 1.7; margin: 0 0 20px; font-size: 15px;">
+                    Someone just used your friend code <strong>${ref.code}</strong> on their first order. As promised, here's
+                    <strong>10% off your next order</strong>:
+                  </p>
+                  <p style="text-align: center; margin: 0 0 20px;">
+                    <span style="display: inline-block; background: ${BRAND.yellow}; color: ${BRAND.dark}; font-size: 26px; font-weight: bold; letter-spacing: 2px; padding: 14px 28px; border: 3px solid ${BRAND.dark};">${rewardCode}</span>
+                  </p>
+                  <p style="color: #555; line-height: 1.7; margin: 0 0 24px; font-size: 15px;">
+                    Enter it at checkout. It works once, on anything in the store, personalised designs included.
+                  </p>
+                  <p style="text-align: center; margin: 0;">
+                    <a href="${BRAND.site}/store/?utm_source=transactional&utm_medium=email&utm_campaign=csc-referral-reward" style="display: inline-block; background: ${BRAND.pink}; color: #ffffff; text-decoration: none; font-weight: bold; padding: 14px 28px;">SHOP THE STORE</a>
+                  </p>
+                </div>
+                ${emailFooter}
+              </div>
+            `,
+          });
+          if (error) throw new Error(`${error.name || 'Error'}: ${error.message || 'Resend rejected the send'}`);
+          console.log(`Referral reward ${rewardCode} sent to ${ref.referrerEmail} for ${orderNumber}`);
+        } catch (err) {
+          console.error(`Referral reward for ${orderNumber} failed:`, err?.message || err);
+          await flagOrderError('referralError', err?.message || String(err));
+        }
       }
 
       // ── Send production team notification email ───────────────

@@ -8,18 +8,23 @@
  * shipping_options rate, which coupons do not touch, so the discount is goods
  * only and the order's lines still read at the price they were sold at.
  *
+ * `promos` are the expanded promotion code objects (for referral codes).
  * `welcomeCodes` are the codes among them that are the newsletter's welcome
  * offer (see isWelcomeCode), for the webhook's repeat-customer check.
  *
  * Never throws. The payment is taken whatever this finds, so a failed lookup
  * costs the order its code and keeps the amount, which is on the event itself.
  */
+import { isFriendCode, isRewardCode } from './referral.mjs';
+
 export async function readDiscount(stripe, session) {
   const amountPence = session?.total_details?.amount_discount || 0;
-  if (!amountPence) return { amountPence: 0, codes: [], welcomeCodes: [] };
+  if (!amountPence) return { amountPence: 0, codes: [], welcomeCodes: [], promos: [] };
 
   const codes = [];
   const welcomeCodes = [];
+  // Expanded promotion code objects, for the referral check in the webhook.
+  const promos = [];
   try {
     const full = await stripe.checkout.sessions.retrieve(session.id, {
       expand: ['total_details.breakdown'],
@@ -35,6 +40,7 @@ export async function readDiscount(stripe, session) {
           promo = null;
         }
       }
+      if (promo && typeof promo === 'object') promos.push(promo);
       let code = (promo && typeof promo === 'object' && promo.code) || null;
       /* A coupon applied without a customer-facing code (from the Dashboard,
          say) still gets named, by the coupon's own name. */
@@ -45,7 +51,7 @@ export async function readDiscount(stripe, session) {
   } catch (err) {
     console.error(`discount: could not read the discount breakdown for ${session.id}:`, err.message);
   }
-  return { amountPence, codes, welcomeCodes };
+  return { amountPence, codes, welcomeCodes, promos };
 }
 
 /** "Discount (POW10)", or plain "Discount" when the code could not be read. */
@@ -63,6 +69,8 @@ export const discountLabel = (codes) =>
 export const WELCOME_CODES = ['POW10'];
 export function isWelcomeCode(promo) {
   if (!promo || typeof promo !== 'object') return false;
+  // Referral codes are first-time-only too, but they are not the welcome offer.
+  if (isFriendCode(promo) || isRewardCode(promo)) return false;
   return promo.restrictions?.first_time_transaction === true
     || WELCOME_CODES.includes(String(promo.code || '').toUpperCase());
 }

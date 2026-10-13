@@ -2,6 +2,9 @@ import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { isValidSignature, SIGNATURE_HEADER_NAME } from '@sanity/webhook';
 import { emailHeader } from './_shared/email.mjs';
+import Stripe from 'stripe';
+import { friendCodeFor } from './_shared/referral.mjs';
+import { addShippedCustomer } from './_shared/mailerlite-customer.mjs';
 
 /**
  * order-shipped.mjs
@@ -283,7 +286,7 @@ export default async (req, context) => {
 
         <h3 style="margin: 28px 0 4px; font-size: 16px; color: ${BRAND.dark};">What to expect</h3>
         <p style="color: #666; line-height: 1.7; margin: 0 0 8px; font-size: 14px;">
-          Delivery typically takes <strong>3-6 working days</strong> from dispatch. Your print is packaged to protect it in transit — please check it carefully when it arrives.
+          Delivery typically takes <strong>1-2 working days</strong> from dispatch. Your print is packaged to protect it in transit — please check it carefully when it arrives.
         </p>
         <p style="color: #666; line-height: 1.7; margin: 0 0 24px; font-size: 14px;">
           If anything isn't quite right, just reply to this email and we'll sort it straight away.
@@ -360,8 +363,39 @@ export default async (req, context) => {
     return new Response('Sent but flag update failed (logged)', { status: 200 });
   }
 
+  // ── Post-delivery sequence + referral code ───────────────────────────────
+  // After the shipping email has gone and the order is marked, so neither can
+  // ever hold the other up. Runs once per order: the shippingEmailSent guard
+  // above stops any later webhook from getting this far.
+  await startPostDelivery(order, orderNumber);
+
   return new Response('OK', { status: 200 });
 };
+
+/**
+ * Give the buyer their own PAL- friend code (reusing one from an earlier
+ * order by the same email) and add them to "CSC - Customers" in MailerLite,
+ * which starts the post-delivery automation. Never throws.
+ */
+async function startPostDelivery(order, orderNumber) {
+  let referralCode = '';
+  try {
+    if (process.env.STRIPE_SECRET_KEY) {
+      const earlier = await sanity.fetch(
+        `*[_type == "order" && lower(customerEmail) == $email && defined(referralCode)][0].referralCode`,
+        { email: String(order.customerEmail || '').toLowerCase() }
+      );
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' });
+      referralCode = await friendCodeFor(stripe, { email: order.customerEmail, orderNumber, existingCode: earlier || null });
+      await sanity.patch(order._id).set({ referralCode }).commit();
+    }
+  } catch (err) {
+    console.error(`Referral code for ${orderNumber} failed:`, err?.message || err);
+  }
+  const ml = await addShippedCustomer(order, { referralCode });
+  if (ml.ok) console.log(`${orderNumber}: added to MailerLite "CSC - Customers"`);
+  else console.error(`${orderNumber}: MailerLite customer add ${ml.skipped ? 'skipped' : 'failed'}:`, ml.skipped || ml.status || '', ml.error || '');
+}
 
 // NOTE: no `export const config = { path }`. Routed by the forced /api/* redirect
 // in netlify.toml (/api/* -> /.netlify/functions/:splat). This is the SANITY order webhook;

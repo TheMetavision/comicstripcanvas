@@ -83,14 +83,26 @@ if (!products?.length) throw new Error('[store] Sanity returned no products'); /
 
   <FAQSection faqs={faqs} />
 
+  {/* CollectionPage + ItemList for this category. BaseLayout already emits the
+     BreadcrumbList on every page, so it is not repeated here (until Oct 2026
+     this page carried two). */}
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comicstripcanvas.co.uk/" },
-      { "@type": "ListItem", "position": 2, "name": "Store", "item": "https://comicstripcanvas.co.uk/store/" },
-      { "@type": "ListItem", "position": 3, "name": "Comic Book Strips", "item": "https://comicstripcanvas.co.uk/store/comic-book-strips/" }
-    ]
+    "@type": "CollectionPage",
+    "name": "Comic Book Strips",
+    "description": "Bold multi-panel comic strip wall art. Iconic scenes from film, music and sport rendered in vivid comic book style. Canvas prints, framed prints & posters from £9.99. FREE UK P&P on orders of £50 and over.",
+    "url": "https://comicstripcanvas.co.uk/store/comic-book-strips/",
+    "publisher": { "@id": "https://comicstripcanvas.co.uk/#organization" },
+    "mainEntity": {
+      "@type": "ItemList",
+      "numberOfItems": products.length,
+      "itemListElement": products.map((p, i) => ({
+        "@type": "ListItem",
+        "position": i + 1,
+        "url": `https://comicstripcanvas.co.uk/store/${p.slug}/`,
+        "name": p.title,
+      })),
+    },
   })}></script>
 </BaseLayout>
 
