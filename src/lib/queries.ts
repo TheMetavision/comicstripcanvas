@@ -147,6 +147,8 @@ export const allBlogPostsQuery = `
 export const blogPostBySlugQuery = `
   *[_type == "blogPost" && slug.current == $slug][0] {
     _id,
+    _createdAt,
+    _updatedAt,
     title,
     "slug": slug.current,
     author,

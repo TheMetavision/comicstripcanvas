@@ -19,6 +19,13 @@ if (!post) {
 }
 
 const relatedPosts = post.relatedPosts || [];
+
+// Publish date falls back to the document's creation date; "Updated" shows only for edits made 7+ days after publishing.
+const publishedAt: string = post.publishedAt || post._createdAt;
+const modifiedAt: string = post._updatedAt || publishedAt;
+const showUpdated = !!post._updatedAt &&
+  new Date(post._updatedAt).getTime() - new Date(publishedAt).getTime() > 7 * 24 * 60 * 60 * 1000;
+const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 const mainImageUrl = post.mainImage?.asset ? urlFor(post.mainImage).width(1200).height(675).auto('format').quality(75).url() : null;
 const seoTitle = post.seo?.metaTitle || post.title;
 const seoDesc = post.seo?.metaDescription || post.excerpt;
@@ -104,9 +111,13 @@ const bodyHtml = renderBody(post.body);
       <div class="flex items-center gap-4 font-source text-gray-400 text-sm">
         <span>{post.author}</span>
         <span class="w-1 h-1 bg-gray-600 rounded-full"></span>
-        <time datetime={post.publishedAt}>
-          {new Date(post.publishedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-        </time>
+        <time datetime={publishedAt}>{fmtDate(publishedAt)}</time>
+        {showUpdated && (
+          <>
+            <span class="w-1 h-1 bg-gray-600 rounded-full"></span>
+            <span>Updated <time datetime={post._updatedAt}>{fmtDate(post._updatedAt)}</time></span>
+          </>
+        )}
       </div>
     </div>
   </section>
@@ -187,7 +198,8 @@ const bodyHtml = renderBody(post.body);
       "@type": "Organization",
       "name": "Comic Strip Canvas",
     },
-    "datePublished": post.publishedAt,
+    "datePublished": publishedAt,
+    "dateModified": modifiedAt,
     "mainEntityOfPage": {
       "@type": "WebPage",
       "@id": `https://comicstripcanvas.co.uk/blog/${post.slug}/`,
