@@ -1,0 +1,35 @@
+---
+/* Comic snow cap: a white band with a scalloped, dripping lower edge and an
+   inked outline. Purely decorative and absolutely positioned by the caller's
+   class, so it overlaps what is there rather than adding height. Wrap it in
+   .season-on (see src/lib/seasonal.ts). */
+interface Props {
+  class?: string;
+}
+const { class: className = '' } = Astro.props;
+
+// 40 scallops across a 400-unit band, stretched to full width. Every few is a
+// longer drip; the pattern is fixed so builds are reproducible.
+const W = 400;
+const BASE = 8;
+const DEPTHS = [14, 14, 22, 14, 14, 14, 26, 14, 14, 18, 14, 14, 14, 24, 14, 14, 14, 20, 14, 14];
+let edge = '';
+for (let i = 0; i < 40; i++) {
+  const x = i * 10;
+  edge += ` Q${x + 5},${DEPTHS[i % DEPTHS.length]} ${x + 10},${BASE}`;
+}
+const fill = `M0,0 L0,${BASE}${edge} L${W},0 Z`;
+const outline = `M0,${BASE}${edge}`;
+---
+<svg
+  class={`pointer-events-none ${className}`}
+  style="display: block; width: 100%; height: 18px; overflow: visible;"
+  viewBox={`0 0 ${W} 18`}
+  preserveAspectRatio="none"
+  aria-hidden="true"
+  focusable="false"
+>
+  <path d={fill} fill="#ffffff" />
+  <path d={outline} fill="none" stroke="#111111" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+</svg>
+
