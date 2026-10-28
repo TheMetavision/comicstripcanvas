@@ -63,20 +63,20 @@ const dims = (img: SeasonalImage, w: number) =>
     position: absolute;
     inset: 0;
     /* Phones: the text column fills most of the hero's height, so the scrim
-       holds until below the trust row and the art shows clean at the bottom. */
-    background: linear-gradient(to bottom, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 45%, rgba(17, 17, 17, 0.85) 78%, rgba(17, 17, 17, 0) 92%);
+       holds until below the trust row (76% of the hero at 375px) and the art
+       shows clean at the bottom. */
+    background: linear-gradient(to bottom, rgba(17, 17, 17, 0.85) 0, rgba(17, 17, 17, 0.85) 78%, rgba(17, 17, 17, 0) 92%);
   }
   @media (min-width: 768px) {
     .seasonal-art img {
       object-position: var(--pos-d);
     }
+    /* Solid behind the text column, whose glyphs end at most at 637px or
+       50% + 13px (measured 768-1920px wide with two short headline lines),
+       then fading out over the art on the right. */
     .seasonal-scrim {
-      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 62%, rgba(17, 17, 17, 0) 85%);
-    }
-  }
-  @media (min-width: 1024px) {
-    .seasonal-scrim {
-      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 40%, rgba(17, 17, 17, 0) 58%);
+      --solid: max(680px, calc(50% + 40px));
+      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0, rgba(17, 17, 17, 0.85) var(--solid), rgba(17, 17, 17, 0) calc(var(--solid) + 15%));
     }
   }
 </style>

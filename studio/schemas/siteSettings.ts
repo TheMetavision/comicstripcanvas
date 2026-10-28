@@ -121,8 +121,8 @@ export default defineType({
           validation: (Rule) => Rule.custom(requiredWhenEnabled),
         },
         { name: 'eyebrow', title: 'Eyebrow (speech bubble)', type: 'string', fieldset: 'copy' },
-        { name: 'headlineLine1', title: 'Headline line 1', type: 'string', fieldset: 'copy' },
-        { name: 'headlineLine2', title: 'Headline line 2 (yellow)', type: 'string', fieldset: 'copy' },
+        { name: 'headlineLine1', title: 'Headline line 1', type: 'string', fieldset: 'copy', description: 'Keep it short, about 13 characters like "EPIC MOMENTS.", so it stays on the dark side of the art' },
+        { name: 'headlineLine2', title: 'Headline line 2 (yellow)', type: 'string', fieldset: 'copy', description: 'Keep it short, about 13 characters like "COMIC STYLE."' },
         { name: 'body', title: 'Body text', type: 'string', fieldset: 'copy' },
         { name: 'snow', title: 'Snowfall over the homepage hero', type: 'boolean', initialValue: true, fieldset: 'effects' },
         {
