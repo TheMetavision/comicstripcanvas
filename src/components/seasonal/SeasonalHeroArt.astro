@@ -2,9 +2,8 @@
 /* Full-bleed seasonal hero art for tablets and desktops (>= 768px), plus the
    scrim that keeps the hero text legible on it. Absolutely positioned: place
    it inside the hero after its default backgrounds and wrap it in .season-on.
-   Phones never get this art or scrim: there the text sits on the default
-   charcoal background and the art follows it as its own panel
-   (SeasonalArtPanel). */
+   Phones never get this art or scrim: they get the mobile art as the bottom
+   of the scene instead (SeasonalHeroArtMobile). */
 import { sanityImg, sanitySrcset } from '../../lib/sanityImage';
 import type { SeasonalCampaign } from '../../lib/seasonal';
 

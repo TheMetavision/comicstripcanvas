@@ -8,7 +8,7 @@ import { sanityClient, urlFor } from '../lib/sanity';
 import { testimonialsQuery } from '../lib/queries';
 import { getSeasonal } from '../lib/seasonal';
 import SeasonalHeroArt from '../components/seasonal/SeasonalHeroArt.astro';
-import SeasonalArtPanel from '../components/seasonal/SeasonalArtPanel.astro';
+import SeasonalHeroArtMobile from '../components/seasonal/SeasonalHeroArtMobile.astro';
 import HalftoneSnow from '../components/seasonal/HalftoneSnow.astro';
 import SnowCap from '../components/seasonal/SnowCap.astro';
 
@@ -21,9 +21,11 @@ const { campaign: season, announcementShown } = await getSeasonal();
 const off = season ? ' season-off' : '';
 // The announcement bar's own snow cap already sits on the hero's top edge.
 const heroSnowCap = !!season?.snowCap && !announcementShown;
-// Snow falls over the whole hero, phone art panel included, but under the
-// text: the snow layer and the text block both sit at z-1, text later.
+// Snow falls over the whole hero, art included, but under the text: the
+// snow layer and the text block both sit at z-1, text later.
 const lift = season?.snow ? ' z-[1]' : '';
+// Phones: one continuous scene in the art's sky colour (SeasonalHeroArtMobile).
+const phoneArt = season?.heroImageMobile;
 
 // Personalised examples sit in half of a 7xl row (about 600px wide).
 const pic = (url: string) => ({
@@ -52,12 +54,13 @@ const stripImages = cardImages(categoryImages.strips);
   description="UK's boldest comic-book style wall art. Canvas prints, framed prints and posters, personalised if you like. FREE UK P&P on orders of £50 and over."
 >
   <!-- Hero -->
-  <section class="relative bg-charcoal overflow-hidden clip-diagonal" style="padding-bottom: 8rem;">
+  <section class={`relative bg-charcoal overflow-hidden clip-diagonal${phoneArt ? ' seasonal-hero' : ''}`} style="padding-bottom: 8rem;">
     <div class="absolute inset-0 halftone-bg opacity-60"></div>
-    <div class="absolute inset-0" style="background: radial-gradient(circle at 15% 50%, rgba(236,0,140,0.2) 0%, transparent 55%), radial-gradient(circle at 85% 30%, rgba(0,174,239,0.12) 0%, transparent 45%);"></div>
+    <div class={`absolute inset-0${phoneArt ? ' seasonal-glow' : ''}`} style="background: radial-gradient(circle at 15% 50%, rgba(236,0,140,0.2) 0%, transparent 55%), radial-gradient(circle at 85% 30%, rgba(0,174,239,0.12) 0%, transparent 45%);"></div>
     {season && (
       <div class="season-on absolute inset-0">
         <SeasonalHeroArt campaign={season} />
+        {phoneArt && <SeasonalHeroArtMobile image={phoneArt} alt={season.heroImageAlt} />}
         {heroSnowCap && <SnowCap class="absolute left-0 right-0 top-1" />}
       </div>
     )}
@@ -121,18 +124,16 @@ const stripImages = cardImages(categoryImages.strips);
           <span class="font-source text-gray-400 text-sm">FREE UK P&P on £50 and over</span>
           <div class="w-px h-5 bg-gray-600"></div>
           <span class="font-source text-gray-400 text-sm">Made to Order</span>
-        </div>
+        </div>{phoneArt && <div class="season-on md:hidden" style="height: calc(125vw * 0.69);" aria-hidden="true"></div>}
       </div>
     </div>
 
-    {/* Phones: the art as its own panel below the text. The bottom margin
-        keeps its lower-right corner clear of the clip-diagonal cut, which
-        grows with the hero's height (24-39px clear at 375-767px). */}
-    {season?.heroImageMobile && (
-      <div class="season-on md:hidden relative px-4 sm:px-6 -mt-12 mb-[14vw]">
-        <SeasonalArtPanel image={season.heroImageMobile} alt={season.heroImageAlt} />
-      </div>
-    )}
+    {/* Phones, season on: the spacer after the trust row keeps the text above
+        Santa's cape, which starts 31.4% down the ~125vw-tall art at the
+        hero's bottom edge (SeasonalHeroArtMobile). */}
+    {/* Whitespace matters here: the spacer sits flush against the trust
+        row's </div>, and these two comments replace the old art panel, so
+        the hero's no-campaign HTML stays byte-identical. */}
 
     <div class={`absolute top-12 right-8 hidden lg:block select-none pointer-events-none${off}`}>
       <div class="font-bangers text-9xl text-comic-yellow opacity-20 rotate-12"

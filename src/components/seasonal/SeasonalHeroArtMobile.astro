@@ -1,0 +1,68 @@
+---
+/* Phones (< 768px): the seasonal art as the bottom of one continuous hero
+   scene. The hero takes the sky colour of the art's top 30% (#3C2F66), and
+   the art sits absolutely at the hero's bottom edge, its top fading into
+   that colour. No scrim: on #3C2F66 grey-300 is 7.96:1, white 10.76:1 and
+   comic yellow 10.03:1. Place it inside the hero's absolute art layer (wrap
+   it in .season-on) and give the hero .seasonal-hero and its glow
+   .seasonal-glow. The hero text needs a spacer of calc(125vw * 0.69) after
+   it, so it ends above Santa's cape (31.4% down the art). Desktops get a
+   transparent GIF instead, so they never download it. */
+import { sanitySrcset, sanityImg } from '../../lib/sanityImage';
+import type { SeasonalImage } from '../../lib/seasonal';
+
+interface Props {
+  image: SeasonalImage;
+  alt: string;
+}
+const { image, alt } = Astro.props;
+const dims = image.width && image.height ? { width: 800, height: Math.round((800 * image.height) / image.width) } : { width: 800, height: 1000 };
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+---
+<picture class="seasonal-art-mobile">
+  <source media="(min-width: 768px)" srcset={BLANK} />
+  <img
+    src={sanityImg(image.url, 767)}
+    srcset={sanitySrcset(image.url, 767)}
+    sizes="(max-width: 767px) 100vw, 1px"
+    {...dims}
+    alt={alt}
+    loading="eager"
+    decoding="async"
+  />
+</picture>
+
+<!-- is:inline: emitted only when this renders, never into the shared CSS bundle. -->
+<style is:inline>
+  .seasonal-art-mobile {
+    display: none;
+  }
+  @media (max-width: 767px) {
+    /* The default cut is 12% of the hero's height, and this hero is tall
+       enough (1212-1246px at 360-414px) for that to clip Santa's boots by up
+       to 47px. A fixed 18vw cut still trims the rooftops but clears them. */
+    html[data-season="on"] .seasonal-hero {
+      background-color: #3c2f66;
+      clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18vw), 0 100%);
+    }
+    html[data-season="on"] .seasonal-glow {
+      display: none;
+    }
+    /* As on desktop, the trust row goes grey-400 to grey-300 (4.62:1 to 7.96:1). */
+    html[data-season="on"] .season-trust .text-gray-400 {
+      color: #d1d5db;
+    }
+    .seasonal-art-mobile {
+      display: block;
+    }
+    .seasonal-art-mobile img {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      height: auto;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 12%);
+    }
+  }
+</style>
