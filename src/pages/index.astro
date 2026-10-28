@@ -8,6 +8,7 @@ import { sanityClient, urlFor } from '../lib/sanity';
 import { testimonialsQuery } from '../lib/queries';
 import { getSeasonal } from '../lib/seasonal';
 import SeasonalHeroArt from '../components/seasonal/SeasonalHeroArt.astro';
+import SeasonalArtPanel from '../components/seasonal/SeasonalArtPanel.astro';
 import HalftoneSnow from '../components/seasonal/HalftoneSnow.astro';
 import SnowCap from '../components/seasonal/SnowCap.astro';
 
@@ -20,6 +21,9 @@ const { campaign: season, announcementShown } = await getSeasonal();
 const off = season ? ' season-off' : '';
 // The announcement bar's own snow cap already sits on the hero's top edge.
 const heroSnowCap = !!season?.snowCap && !announcementShown;
+// Snow falls over the whole hero, phone art panel included, but under the
+// text: the snow layer and the text block both sit at z-1, text later.
+const lift = season?.snow ? ' z-[1]' : '';
 
 // Personalised examples sit in half of a 7xl row (about 600px wide).
 const pic = (url: string) => ({
@@ -54,13 +58,17 @@ const stripImages = cardImages(categoryImages.strips);
     {season && (
       <div class="season-on absolute inset-0">
         <SeasonalHeroArt campaign={season} />
-        {season.snow && <HalftoneSnow />}
         {heroSnowCap && <SnowCap class="absolute left-0 right-0 top-1" />}
+      </div>
+    )}
+    {season?.snow && (
+      <div class="season-on absolute inset-0 z-[1] pointer-events-none">
+        <HalftoneSnow />
       </div>
     )}
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
 
-    <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-40">
+    <div class={`relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-40${lift}`}>
       <div class="max-w-3xl">
         <div class={`speech-bubble inline-block mb-6 text-sm${off}`}>
           KA-POW! WALL ART IS HERE!
@@ -98,7 +106,7 @@ const stripImages = cardImages(categoryImages.strips);
           <a href="/store/" class="btn-primary text-xl">EXPLORE THE STORE</a>
           <a href="/personalise/" class="btn-secondary text-xl">PERSONALISE YOURS</a>
         </div>
-        <div class="flex flex-wrap items-center gap-6 mt-8">
+        <div class={`flex flex-wrap items-center gap-6 mt-8${season ? ' season-trust' : ''}`}>
           <div class="flex items-center gap-2">
             <div class="flex gap-0.5">
               {Array(5).fill(null).map(() => (
@@ -116,6 +124,15 @@ const stripImages = cardImages(categoryImages.strips);
         </div>
       </div>
     </div>
+
+    {/* Phones: the art as its own panel below the text. The bottom margin
+        keeps its lower-right corner clear of the clip-diagonal cut, which
+        grows with the hero's height (24-39px clear at 375-767px). */}
+    {season?.heroImageMobile && (
+      <div class="season-on md:hidden relative px-4 sm:px-6 -mt-12 mb-[14vw]">
+        <SeasonalArtPanel image={season.heroImageMobile} alt={season.heroImageAlt} />
+      </div>
+    )}
 
     <div class={`absolute top-12 right-8 hidden lg:block select-none pointer-events-none${off}`}>
       <div class="font-bangers text-9xl text-comic-yellow opacity-20 rotate-12"

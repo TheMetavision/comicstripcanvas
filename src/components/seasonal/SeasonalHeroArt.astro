@@ -1,41 +1,35 @@
 ---
-/* Full-bleed seasonal hero art plus the scrim that keeps the hero text
-   legible on it. Absolutely positioned: place it inside the hero after its
-   default backgrounds and wrap it in .season-on. The scrim is darkest where
-   the text column sits (worst case: white art, grey-400 trust row text still
-   clears 4.5:1 at 0.85). */
+/* Full-bleed seasonal hero art for tablets and desktops (>= 768px), plus the
+   scrim that keeps the hero text legible on it. Absolutely positioned: place
+   it inside the hero after its default backgrounds and wrap it in .season-on.
+   Phones never get this art or scrim: there the text sits on the default
+   charcoal background and the art follows it as its own panel
+   (SeasonalArtPanel). */
 import { sanityImg, sanitySrcset } from '../../lib/sanityImage';
-import type { SeasonalCampaign, SeasonalImage } from '../../lib/seasonal';
+import type { SeasonalCampaign } from '../../lib/seasonal';
 
 interface Props {
   campaign: SeasonalCampaign;
 }
 const { campaign } = Astro.props;
 const desktop = campaign.heroImageDesktop;
-const mobile = campaign.heroImageMobile;
 
-// A hotspot set in Studio wins; otherwise right centre on desktop (text sits
-// left) and centre bottom on mobile (text sits on top).
-const pos = (img: SeasonalImage | undefined, fallback: string) =>
-  img?.hotspot ? `${Math.round(img.hotspot.x * 100)}% ${Math.round(img.hotspot.y * 100)}%` : fallback;
-const dims = (img: SeasonalImage, w: number) =>
-  img.width && img.height ? { width: w, height: Math.round((w * img.height) / img.width) } : {};
+// A hotspot set in Studio wins; otherwise right centre (the text sits left).
+const pos = desktop.hotspot
+  ? `${Math.round(desktop.hotspot.x * 100)}% ${Math.round(desktop.hotspot.y * 100)}%`
+  : '100% 50%';
+const dims = desktop.width && desktop.height ? { width: 1920, height: Math.round((1920 * desktop.height) / desktop.width) } : {};
+// A 1x1 transparent GIF for phones, so they never download the desktop art.
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 ---
-<div class="seasonal-art" style={`--pos-d: ${pos(desktop, '100% 50%')}; --pos-m: ${pos(mobile ?? desktop, '50% 100%')};`}>
+<div class="seasonal-art" style={`--pos-d: ${pos};`}>
   <picture>
-    {mobile && (
-      <source
-        media="(max-width: 767px)"
-        srcset={sanitySrcset(mobile.url, 767)}
-        sizes="100vw"
-        {...dims(mobile, 767)}
-      />
-    )}
+    <source media="(max-width: 767px)" srcset={BLANK} />
     <img
       src={sanityImg(desktop.url, 1920)}
       srcset={sanitySrcset(desktop.url, 1920)}
       sizes="100vw"
-      {...dims(desktop, 1920)}
+      {...dims}
       alt={campaign.heroImageAlt}
       fetchpriority="high"
       loading="eager"
@@ -48,35 +42,35 @@ const dims = (img: SeasonalImage, w: number) =>
 <!-- is:inline: emitted only when this renders, never into the shared CSS bundle. -->
 <style is:inline>
   .seasonal-art {
-    position: absolute;
-    inset: 0;
-  }
-  .seasonal-art img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: var(--pos-m);
-  }
-  .seasonal-scrim {
-    position: absolute;
-    inset: 0;
-    /* Phones: the text column fills most of the hero's height, so the scrim
-       holds until below the trust row (76% of the hero at 375px) and the art
-       shows clean at the bottom. */
-    background: linear-gradient(to bottom, rgba(17, 17, 17, 0.85) 0, rgba(17, 17, 17, 0.85) 78%, rgba(17, 17, 17, 0) 92%);
+    display: none;
   }
   @media (min-width: 768px) {
+    .seasonal-art {
+      display: block;
+      position: absolute;
+      inset: 0;
+    }
     .seasonal-art img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
       object-position: var(--pos-d);
     }
     /* Solid behind the text column, whose glyphs end at most at 637px or
        50% + 13px (measured 768-1920px wide with two short headline lines),
-       then fading out over the art on the right. */
+       then fading out over the art on the right. 0.60 with grey-300 text was
+       checked against the real Christmas art. */
     .seasonal-scrim {
       --solid: max(680px, calc(50% + 40px));
-      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0, rgba(17, 17, 17, 0.85) var(--solid), rgba(17, 17, 17, 0) calc(var(--solid) + 15%));
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to right, rgba(17, 17, 17, 0.6) 0, rgba(17, 17, 17, 0.6) var(--solid), rgba(17, 17, 17, 0) calc(var(--solid) + 15%));
+    }
+    /* Over the art the trust row goes from grey-400 to grey-300 (#D1D5DB). */
+    html[data-season="on"] .season-trust .text-gray-400 {
+      color: #d1d5db;
     }
   }
 </style>
