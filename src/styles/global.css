@@ -4,6 +4,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Seasonal campaign switch (src/lib/seasonal.ts). Outside the layers and
+   !important so utility display classes on the same element cannot win. */
+html[data-season="on"] .season-off { display: none !important; }
+html:not([data-season="on"]) .season-on { display: none !important; }
+
 @layer base {
   html {
     scroll-behavior: smooth;

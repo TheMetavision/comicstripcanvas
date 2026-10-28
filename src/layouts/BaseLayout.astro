@@ -8,6 +8,7 @@ import '../styles/global.css';
 import { sizeLabel } from '../../netlify/functions/_shared/sizes.mjs';
 import { organizationSchema } from '../lib/schema';
 import { SITE, canonicalUrl } from '../lib/url';
+import { getSeasonal } from '../lib/seasonal';
 
 interface Props {
   title: string;
@@ -29,6 +30,8 @@ const {
   noindex = false,
   noTracking = false,
 } = Astro.props;
+
+const { campaign: season } = await getSeasonal();
 
 const siteUrl = SITE;
 // Apex host, trailing slash: the address Netlify actually serves.
@@ -67,6 +70,14 @@ const breadcrumbItems = [
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {season && (
+    <>
+      <meta name="csc-season" data-start={season.startDate} data-end={season.endDate} />
+      {/* Before paint: <html data-season="on"> inside [start, end). ?season=on|off overrides, for testing.
+          If this fails the attribute stays off and the normal hero shows. */}
+      <script is:inline>(function(){try{var m=document.querySelector('meta[name="csc-season"]'),q=/[?&]season=(on|off)(?:&|$)/.exec(location.search),n=Date.now(),on=q?q[1]==='on':n>=Date.parse(m.dataset.start)&&n<Date.parse(m.dataset.end);if(on)document.documentElement.dataset.season='on'}catch(e){}})();</script>
+    </>
+  )}
   <meta name="robots" content={noindex ? 'noindex, nofollow' : 'index, follow'} />
   <title>{fullTitle}</title>
   <meta name="description" content={metaDescription} />
