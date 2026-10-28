@@ -1,0 +1,80 @@
+---
+/* Halftone snowfall: inked comic dots drifting down a canvas. Place it inside
+   a positioned section (the homepage hero only), after its backgrounds and
+   before its text. The canvas is created by script, so with reduced motion,
+   no JS or the season off, there is no canvas at all. Styles are inline so
+   nothing reaches the shared CSS bundle unless this renders. */
+---
+<div data-halftone-snow aria-hidden="true" style="position: absolute; inset: 0; pointer-events: none; overflow: hidden;"></div>
+
+<script>
+  const host = document.querySelector<HTMLElement>('[data-halftone-snow]');
+  if (
+    host &&
+    document.documentElement.dataset.season === 'on' &&
+    !matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'display:block;width:100%;height:100%';
+    const ctx = canvas.getContext('2d')!;
+    host.appendChild(canvas);
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let w = 0;
+    let h = 0;
+    const resize = () => {
+      w = host.clientWidth;
+      h = host.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    new ResizeObserver(resize).observe(host);
+
+    // Bigger flakes fall faster; each sways on its own phase.
+    const count = innerWidth < 768 ? 25 : 60;
+    const flakes = Array.from({ length: count }, () => {
+      const r = 3 + Math.random() * 5;
+      return { x: Math.random() * w, y: Math.random() * h, r, v: 12 + r * 5, a: Math.random() * 6.28, s: 0.6 + Math.random() };
+    });
+
+    let onScreen = true;
+    let frame = 0;
+    let last = 0;
+    const tick = (t: number) => {
+      const dt = Math.min((t - last) / 1000, 0.05);
+      last = t;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#111111';
+      ctx.lineWidth = 2;
+      for (const f of flakes) {
+        f.y += f.v * dt;
+        f.a += f.s * dt;
+        if (f.y - f.r > h) {
+          f.y = -f.r;
+          f.x = Math.random() * w;
+        }
+        ctx.beginPath();
+        ctx.arc(f.x + Math.sin(f.a) * 12, f.y, f.r, 0, 6.2832);
+        ctx.fill();
+        ctx.stroke();
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (onScreen && !document.hidden) {
+        last = performance.now();
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    new IntersectionObserver(([e]) => {
+      onScreen = e.isIntersecting;
+      update();
+    }).observe(host);
+    document.addEventListener('visibilitychange', update);
+  }
+</script>

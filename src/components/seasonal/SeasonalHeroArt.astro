@@ -1,0 +1,82 @@
+---
+/* Full-bleed seasonal hero art plus the scrim that keeps the hero text
+   legible on it. Absolutely positioned: place it inside the hero after its
+   default backgrounds and wrap it in .season-on. The scrim is darkest where
+   the text column sits (worst case: white art, grey-400 trust row text still
+   clears 4.5:1 at 0.85). */
+import { sanityImg, sanitySrcset } from '../../lib/sanityImage';
+import type { SeasonalCampaign, SeasonalImage } from '../../lib/seasonal';
+
+interface Props {
+  campaign: SeasonalCampaign;
+}
+const { campaign } = Astro.props;
+const desktop = campaign.heroImageDesktop;
+const mobile = campaign.heroImageMobile;
+
+// A hotspot set in Studio wins; otherwise right centre on desktop (text sits
+// left) and centre bottom on mobile (text sits on top).
+const pos = (img: SeasonalImage | undefined, fallback: string) =>
+  img?.hotspot ? `${Math.round(img.hotspot.x * 100)}% ${Math.round(img.hotspot.y * 100)}%` : fallback;
+const dims = (img: SeasonalImage, w: number) =>
+  img.width && img.height ? { width: w, height: Math.round((w * img.height) / img.width) } : {};
+---
+<div class="seasonal-art" style={`--pos-d: ${pos(desktop, '100% 50%')}; --pos-m: ${pos(mobile ?? desktop, '50% 100%')};`}>
+  <picture>
+    {mobile && (
+      <source
+        media="(max-width: 767px)"
+        srcset={sanitySrcset(mobile.url, 767)}
+        sizes="100vw"
+        {...dims(mobile, 767)}
+      />
+    )}
+    <img
+      src={sanityImg(desktop.url, 1920)}
+      srcset={sanitySrcset(desktop.url, 1920)}
+      sizes="100vw"
+      {...dims(desktop, 1920)}
+      alt={campaign.heroImageAlt}
+      fetchpriority="high"
+      loading="eager"
+      decoding="async"
+    />
+  </picture>
+  <div class="seasonal-scrim"></div>
+</div>
+
+<!-- is:inline: emitted only when this renders, never into the shared CSS bundle. -->
+<style is:inline>
+  .seasonal-art {
+    position: absolute;
+    inset: 0;
+  }
+  .seasonal-art img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: var(--pos-m);
+  }
+  .seasonal-scrim {
+    position: absolute;
+    inset: 0;
+    /* Phones: the text column fills most of the hero's height, so the scrim
+       holds until below the trust row and the art shows clean at the bottom. */
+    background: linear-gradient(to bottom, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 45%, rgba(17, 17, 17, 0.85) 78%, rgba(17, 17, 17, 0) 92%);
+  }
+  @media (min-width: 768px) {
+    .seasonal-art img {
+      object-position: var(--pos-d);
+    }
+    .seasonal-scrim {
+      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 62%, rgba(17, 17, 17, 0) 85%);
+    }
+  }
+  @media (min-width: 1024px) {
+    .seasonal-scrim {
+      background: linear-gradient(to right, rgba(17, 17, 17, 0.85) 0%, rgba(17, 17, 17, 0.85) 40%, rgba(17, 17, 17, 0) 58%);
+    }
+  }
+</style>

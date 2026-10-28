@@ -6,8 +6,20 @@ import TestimonialCarousel from '../components/TestimonialCarousel.astro';
 import NewsletterSignup from '../components/NewsletterSignup.astro';
 import { sanityClient, urlFor } from '../lib/sanity';
 import { testimonialsQuery } from '../lib/queries';
+import { getSeasonal } from '../lib/seasonal';
+import SeasonalHeroArt from '../components/seasonal/SeasonalHeroArt.astro';
+import HalftoneSnow from '../components/seasonal/HalftoneSnow.astro';
+import SnowCap from '../components/seasonal/SnowCap.astro';
 
 const testimonials = await sanityClient.fetch(testimonialsQuery);
+
+// Seasonal hero (src/lib/seasonal.ts). With no campaign the hero renders
+// exactly as before; with one, the default pieces it replaces get .season-off
+// and the seasonal ones .season-on, and the dates decide in the browser.
+const { campaign: season, announcementShown } = await getSeasonal();
+const off = season ? ' season-off' : '';
+// The announcement bar's own snow cap already sits on the hero's top edge.
+const heroSnowCap = !!season?.snowCap && !announcementShown;
 
 // Personalised examples sit in half of a 7xl row (about 600px wide).
 const pic = (url: string) => ({
@@ -39,21 +51,49 @@ const stripImages = cardImages(categoryImages.strips);
   <section class="relative bg-charcoal overflow-hidden clip-diagonal" style="padding-bottom: 8rem;">
     <div class="absolute inset-0 halftone-bg opacity-60"></div>
     <div class="absolute inset-0" style="background: radial-gradient(circle at 15% 50%, rgba(236,0,140,0.2) 0%, transparent 55%), radial-gradient(circle at 85% 30%, rgba(0,174,239,0.12) 0%, transparent 45%);"></div>
+    {season && (
+      <div class="season-on absolute inset-0">
+        <SeasonalHeroArt campaign={season} />
+        {season.snow && <HalftoneSnow />}
+        {heroSnowCap && <SnowCap class="absolute left-0 right-0 top-1" />}
+      </div>
+    )}
     <div class="absolute top-0 left-0 right-0 h-1 bg-comic-red"></div>
 
     <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-40">
       <div class="max-w-3xl">
-        <div class="speech-bubble inline-block mb-6 text-sm">
+        <div class={`speech-bubble inline-block mb-6 text-sm${off}`}>
           KA-POW! WALL ART IS HERE!
         </div>
+        {season && (
+          <div class="season-on speech-bubble inline-block mb-6 text-sm">
+            {season.eyebrow ?? 'KA-POW! WALL ART IS HERE!'}
+          </div>
+        )}
         <h1 class="font-bangers text-off-white leading-none mb-6 text-5xl sm:text-7xl lg:text-9xl"
             style="letter-spacing: 0.03em; text-shadow: 5px 5px 0 rgba(0,0,0,0.6);">
-          EPIC MOMENTS.
-          <span class="text-comic-yellow block">COMIC STYLE.</span>
+          {season ? (
+            <>
+              <span class="season-off">EPIC MOMENTS.</span>
+              <span class="season-off text-comic-yellow block">COMIC STYLE.</span>
+              <span class="season-on">{season.headlineLine1 ?? 'EPIC MOMENTS.'}</span>
+              <span class="season-on text-comic-yellow block">{season.headlineLine2 ?? 'COMIC STYLE.'}</span>
+            </>
+          ) : (
+            <>
+              EPIC MOMENTS.
+              <span class="text-comic-yellow block">COMIC STYLE.</span>
+            </>
+          )}
         </h1>
-        <p class="font-source text-gray-300 text-lg lg:text-xl leading-relaxed mb-10 max-w-xl">
+        <p class={`font-source text-gray-300 text-lg lg:text-xl leading-relaxed mb-10 max-w-xl${off}`}>
           Bold, vibrant comic-book wall art for your home. Canvas prints, framed prints, and posters — plus fully personalised artwork made just for you.
         </p>
+        {season && (
+          <p class="season-on font-source text-gray-300 text-lg lg:text-xl leading-relaxed mb-10 max-w-xl">
+            {season.body ?? 'Bold, vibrant comic-book wall art for your home. Canvas prints, framed prints, and posters — plus fully personalised artwork made just for you.'}
+          </p>
+        )}
         <div class="flex flex-wrap gap-4">
           <a href="/store/" class="btn-primary text-xl">EXPLORE THE STORE</a>
           <a href="/personalise/" class="btn-secondary text-xl">PERSONALISE YOURS</a>
@@ -77,13 +117,13 @@ const stripImages = cardImages(categoryImages.strips);
       </div>
     </div>
 
-    <div class="absolute top-12 right-8 hidden lg:block select-none pointer-events-none">
+    <div class={`absolute top-12 right-8 hidden lg:block select-none pointer-events-none${off}`}>
       <div class="font-bangers text-9xl text-comic-yellow opacity-20 rotate-12"
            style="letter-spacing: 0.05em; -webkit-text-stroke: 3px rgba(255,242,0,0.3);">
         POW!
       </div>
     </div>
-    <div class="absolute bottom-24 right-1/3 hidden xl:block select-none pointer-events-none">
+    <div class={`absolute bottom-24 right-1/3 hidden xl:block select-none pointer-events-none${off}`}>
       <div class="font-bangers text-5xl text-comic-red opacity-15 -rotate-6">
         BOOM!
       </div>
