@@ -124,13 +124,15 @@ const stripImages = cardImages(categoryImages.strips);
           <span class="font-source text-gray-400 text-sm">FREE UK P&P on £50 and over</span>
           <div class="w-px h-5 bg-gray-600"></div>
           <span class="font-source text-gray-400 text-sm">Made to Order</span>
-        </div>{phoneArt && <div class="season-on md:hidden" style="height: calc(125vw * 0.69);" aria-hidden="true"></div>}
+        </div>{phoneArt && <div class="season-on md:hidden" style="height: calc(124.14vw * 0.686 - 14rem + 40px);" aria-hidden="true"></div>}
       </div>
     </div>
 
-    {/* Phones, season on: the spacer after the trust row keeps the text above
-        Santa's cape, which starts 31.4% down the ~125vw-tall art at the
-        hero's bottom edge (SeasonalHeroArtMobile). */}
+    {/* Phones, season on: the spacer after the trust row ends the text 40px
+        above Santa's cape. The art (SeasonalHeroArtMobile) is 124.14vw tall
+        at the hero's bottom edge and the cape starts 31.4% down it, so the
+        cape is 124.14vw * 0.686 above the hero's bottom; 14rem of padding
+        (the text block's 6rem + the section's 8rem) already sits below the text. */}
     {/* Whitespace matters here: the spacer sits flush against the trust
         row's </div>, and these two comments replace the old art panel, so
         the hero's no-campaign HTML stays byte-identical. */}

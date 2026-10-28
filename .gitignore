@@ -59,3 +59,7 @@ photos/
 # Renders made to look at a geometry change before shipping it. Tens of MB per
 # run, regenerated whenever the question comes up again.
 tools/builder/print-out/
+
+# Screenshots and other agent outputs live outside the repo, in
+# Documents\Comic Strip Canvas\<campaign>\screenshots. Never commit this.
+Claude outputs/
