@@ -225,6 +225,31 @@ export const siteSettingsQuery = `
     contactEmail,
     socialLinks,
     announcementBar,
-    newsletterHeading
+    newsletterHeading,
+    seasonalCampaign {
+      enabled,
+      label,
+      startDate,
+      endDate,
+      "heroImageDesktop": heroImageDesktop {
+        "url": asset->url,
+        "width": asset->metadata.dimensions.width,
+        "height": asset->metadata.dimensions.height,
+        hotspot
+      },
+      "heroImageMobile": heroImageMobile {
+        "url": asset->url,
+        "width": asset->metadata.dimensions.width,
+        "height": asset->metadata.dimensions.height,
+        hotspot
+      },
+      heroImageAlt,
+      eyebrow,
+      headlineLine1,
+      headlineLine2,
+      body,
+      snow,
+      snowCap
+    }
   }
 `;
