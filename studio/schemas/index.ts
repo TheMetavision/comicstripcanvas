@@ -7,6 +7,7 @@ import order from './order';
 import pendingPersonalisation from './pendingPersonalisation';
 import orderCounter from './orderCounter';
 import contactSubmission from './contactSubmission';
+import returnRequest from './returnRequest';
 
 export const schemaTypes = [
   product,
@@ -18,4 +19,5 @@ export const schemaTypes = [
   pendingPersonalisation,
   orderCounter,
   contactSubmission,
+  returnRequest,
 ];

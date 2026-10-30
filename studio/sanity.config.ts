@@ -4,6 +4,8 @@ import { schemaTypes } from './schemas';
 import { BUILD_ACTIONS } from './actions/personalisationActions';
 import { OrderPublishAction } from './actions/OrderPublishAction';
 import { resolveDocumentActions } from './actions/resolve-actions.mjs';
+import { CreateReturnAction } from './actions/CreateReturnAction';
+import { SHIPPING_UI } from './lib/shipping-flag.mjs';
 
 // A personalisation group: one workflow stage, newest first.
 const personalisations = (S: any, title: string, filter: string, params?: any) => {
@@ -14,6 +16,71 @@ const personalisations = (S: any, title: string, filter: string, params?: any) =
   if (params) list = list.params(params);
   return S.listItem().title(title).child(list);
 };
+
+// One shipping queue: orders by shipment status, newest first.
+const shippingQueue = (S: any, title: string, filter: string, params?: any) => {
+  let list = S.documentTypeList('order')
+    .title(title)
+    .filter(`_type == "order" && (${filter})`)
+    .defaultOrdering([{ field: 'createdAt', direction: 'desc' }]);
+  if (params) list = list.params(params);
+  return S.listItem().title(title).child(list);
+};
+
+// One returns queue. No "create" in these lists: a return is made by the
+// /returns page or an order's Create return button, at a private dotted id.
+const returnsQueue = (S: any, title: string, filter: string) =>
+  S.listItem().title(title).child(
+    S.documentTypeList('returnRequest')
+      .title(title)
+      .filter(`_type == "returnRequest" && (${filter})`)
+      .defaultOrdering([{ field: 'requestedAt', direction: 'desc' }])
+      .initialValueTemplates([])
+  );
+
+/* Sendcloud dispatch and returns. Only in a Studio built with
+   SANITY_STUDIO_SHIPPING_ENABLED=true (see lib/shipping-flag.mjs). */
+const shippingItems = (S: any) => (SHIPPING_UI ? [
+  S.listItem()
+    .id('shipping')
+    .title('Shipping')
+    .icon(() => '\u{1F69A}')
+    .child(
+      S.list()
+        .title('Shipping')
+        .items([
+          shippingQueue(S, 'Ready to ship', 'shipment.status == "ready_to_ship"'),
+          shippingQueue(S, 'Label created', 'shipment.status == "label_created"'),
+          shippingQueue(S, 'In transit', 'shipment.status == "in_transit"'),
+          /* A carrier problem, a failed label, or a plan with a line the
+             bands could not place (until it has shipped). */
+          shippingQueue(S, 'Exceptions',
+            'shipment.status in ["exception", "returned_to_sender"]'
+            + ' || (defined(shipment.planProblem) && !(shipment.status in $shipped))',
+            { shipped: ['label_created', 'in_transit', 'delivered'] }),
+        ])
+    ),
+  S.listItem()
+    .id('returns')
+    .title('Returns')
+    .icon(() => '↩️')
+    .child(
+      S.list()
+        .title('Returns')
+        .items([
+          returnsQueue(S, 'Requested', 'status == "requested"'),
+          returnsQueue(S, 'Approved — label pending', 'status == "approved"'),
+          returnsQueue(S, 'Label sent', 'status == "label_sent"'),
+          returnsQueue(S, 'In transit', 'status == "in_transit"'),
+          returnsQueue(S, 'Ready to collect', 'status == "ready_to_collect"'),
+          returnsQueue(S, 'Received — refund due', 'status == "received"'),
+          S.divider(),
+          returnsQueue(S, 'Refunded', 'status == "refunded"'),
+          returnsQueue(S, 'Rejected', 'status == "rejected"'),
+          returnsQueue(S, 'All returns', 'true'),
+        ])
+    ),
+] : []);
 
 // Custom desk structure for singleton + grouped document types
 const structure = (S: any) =>
@@ -106,6 +173,8 @@ const structure = (S: any) =>
             ])
         ),
 
+      ...shippingItems(S),
+
       // Contact Submissions (separate workflow from Orders — public enquiries)
       S.listItem()
         .title('Contact Submissions')
@@ -195,12 +264,20 @@ export default defineConfig({
   plugins: [structureTool({ structure })],
   schema: {
     types: schemaTypes,
+    /* Never "new return request" from the Studio's create menu: it would get
+       a random, publicly readable id. Returns are made at returnRequest.<ref>
+       by the returns page or the order's Create return button. */
+    templates: (prev) => prev.filter((t) => t.schemaType !== 'returnRequest'),
   },
   document: {
     /* Orders publish through the guarded action; builds lose every action
        that could create or publish a draft and gain Approve / Hold /
        Re-render. The list per type, and why, is in actions/resolve-actions.mjs. */
     actions: (prev, context) =>
-      resolveDocumentActions(prev, context, { OrderPublishAction, buildExtras: BUILD_ACTIONS }),
+      resolveDocumentActions(prev, context, {
+        OrderPublishAction,
+        buildExtras: BUILD_ACTIONS,
+        orderExtras: SHIPPING_UI ? [CreateReturnAction] : [],
+      }),
   },
 });

@@ -4,7 +4,10 @@
  * the exact list the Studio will show.
  *
  *   order                   Publish is replaced by the guarded one
- *                           (../lib/guarded-publish.mjs). Everything else stays.
+ *                           (../lib/guarded-publish.mjs). Everything else stays,
+ *                           plus orderExtras (Create return, when shipping is on).
+ *   returnRequest           The same guarded Publish: the server writes the
+ *                           label, tracking and events while Alan decides.
  *   pendingPersonalisation  Every field is read-only, so no draft of a build can
  *                           be made by editing. Publish, Duplicate and Restore
  *                           are removed as well, because each of them could
@@ -18,8 +21,16 @@
 
 export const BUILD_REMOVED = ['publish', 'duplicate', 'restore'];
 
-export function resolveDocumentActions(prev, context, { OrderPublishAction, buildExtras = [] }) {
+/**
+ * @param {any[]} prev
+ * @param {{ schemaType: string }} context
+ * @param {{ OrderPublishAction: any, buildExtras?: any[], orderExtras?: any[] }} components
+ */
+export function resolveDocumentActions(prev, context, { OrderPublishAction, buildExtras = [], orderExtras = [] }) {
   if (context.schemaType === 'order') {
+    return [...prev.map((a) => (a.action === 'publish' ? OrderPublishAction : a)), ...orderExtras];
+  }
+  if (context.schemaType === 'returnRequest') {
     return prev.map((a) => (a.action === 'publish' ? OrderPublishAction : a));
   }
   if (context.schemaType === 'pendingPersonalisation') {

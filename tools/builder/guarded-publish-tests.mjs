@@ -26,7 +26,7 @@ import { registerHooks } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import {
-  OPERATOR_FIELDS, mergeForPublish, findDraftBase, guardedPublish, PublishRefused,
+  OPERATOR_FIELDS, RETURN_OPERATOR_FIELDS, mergeForPublish, findDraftBase, guardedPublish, PublishRefused,
 } from '../../studio/lib/guarded-publish.mjs';
 import { resolveDocumentActions, BUILD_REMOVED } from '../../studio/actions/resolve-actions.mjs';
 import { runStaleDraftCheck, findStaleDrafts, publishedIdOf } from '../../netlify/functions/_shared/stale-drafts.mjs';
@@ -85,6 +85,40 @@ say('\n1. WHAT A PUBLISH KEEPS AND WHAT IT TAKES\n');
   /* Clearing a field in the draft is a change too. */
   const m6 = mergeForPublish({ draft: { ...base, notes: undefined }, published: { ...base, notes: 'old' }, base: { ...base, notes: 'old' } });
   ok(!('notes' in m6.doc) && m6.taken.includes('notes'), 'a field the operator emptied is emptied');
+
+  /* Sendcloud: Alan sets shipment.status; the server writes the rest of
+     shipment. Only the one dotted field is taken from the draft. */
+  const sBase = { ...base, shipment: { status: 'none' }, parcelPlan: [{ _key: 'p1', parcelRef: '1', band: 'P3' }] };
+  const sPub = { ...sBase, _rev: 'r9', shipment: { status: 'none', planProblem: 'x', events: [{ _key: 'e1' }] } };
+  const sDraft = {
+    ...sBase, shipment: { status: 'ready_to_ship' },
+    parcelPlan: [{ _key: 'p1', parcelRef: '1', band: 'P4' }],
+  };
+  const m7 = mergeForPublish({ draft: sDraft, published: sPub, base: sBase });
+  ok(m7.doc.shipment.status === 'ready_to_ship', 'shipment.status set in the draft is taken');
+  ok(m7.doc.shipment.events?.length === 1 && m7.doc.shipment.planProblem === 'x',
+    '  while everything else under shipment stays as the server wrote it');
+  ok(m7.doc.parcelPlan[0].band === 'P4', 'an edited parcel plan is taken');
+  ok(JSON.stringify(m7.taken) === '["shipment.status","parcelPlan"]', '  and those two only', JSON.stringify(m7.taken));
+  ok(sPub.shipment.status === 'none', '  without touching the published object it was merged from');
+
+  const m8 = mergeForPublish({
+    draft: { ...sBase, shipment: { status: 'ready_to_ship' } },
+    published: { ...sBase, shipment: { status: 'label_created', parcels: [{ _key: 'x' }] } },
+    base: sBase,
+  });
+  ok(m8.conflicts.length === 1 && m8.conflicts[0].field === 'shipment.status',
+    'shipment.status changed by the server AND in the draft is a conflict, not a second label run');
+
+  /* Return requests have their own operator fields. */
+  const rBase = { _id: 'returnRequest.r', _type: 'returnRequest', status: 'requested', band: 'P3' };
+  const m9 = mergeForPublish({
+    draft: { ...rBase, status: 'approved' },
+    published: { ...rBase, labelId: '77', events: [1] },
+    base: rBase,
+    fields: RETURN_OPERATOR_FIELDS,
+  });
+  ok(m9.doc.status === 'approved' && m9.doc.labelId === '77', 'a return\'s decision is taken, the server\'s label id kept');
 }
 
 /* ═════════ 2. finding where the draft came from */
@@ -139,6 +173,13 @@ say('\n3. THE BUTTONS\n');
 
   const other = resolveDocumentActions(std, { schemaType: 'product' }, { OrderPublishAction: Guarded, buildExtras: [Approve] });
   ok(other === std, 'every other type is left exactly as it was');
+
+  const CreateReturn = () => null;
+  const withReturns = resolveDocumentActions(std, { schemaType: 'order' }, { OrderPublishAction: Guarded, buildExtras: [Approve], orderExtras: [CreateReturn] });
+  ok(withReturns.includes(CreateReturn) && withReturns.length === std.length + 1, 'with shipping on, an order also gets Create return');
+  const ret = resolveDocumentActions(std, { schemaType: 'returnRequest' }, { OrderPublishAction: Guarded, buildExtras: [Approve], orderExtras: [CreateReturn] });
+  ok(ret[0] === Guarded && !ret.some((a) => a.action === 'publish'), 'a return request publishes by the same guarded rule');
+  ok(!ret.includes(CreateReturn) && !ret.includes(Approve), '  and gets nothing else');
 }
 
 /* ═════════ 4. the schemas, as the Studio builds them */
@@ -161,10 +202,11 @@ say('\n4. WHAT CAN BE EDITED IN THE STUDIO\n');
     },
   });
   const load = async (name) => (await import(pathToFileURL(path.join(ROOT, 'studio', 'schemas', name)).href)).default;
-  let pp, order;
+  let pp, order, returnRequest;
   try {
     pp = await load('pendingPersonalisation.ts');
     order = await load('order.ts');
+    returnRequest = await load('returnRequest.ts');
   } finally {
     hooks.deregister();
   }
@@ -176,9 +218,19 @@ say('\n4. WHAT CAN BE EDITED IN THE STUDIO\n');
   const overridden = pp.fields.filter((f) => f.readOnly === false || typeof f.readOnly === 'function');
   ok(overridden.length === 0, '  and no field opts back out of it', overridden.map((f) => f.name).join(', '));
 
+  /* A dotted operator field (shipment.status) makes its object editable, and
+     within that object only the named field may be. */
+  const topLevel = [...new Set(OPERATOR_FIELDS.map((f) => f.split('.')[0]))].sort();
   const editable = order.fields.filter((f) => f.readOnly !== true).map((f) => f.name).sort();
-  ok(JSON.stringify(editable) === JSON.stringify([...OPERATOR_FIELDS].sort()),
-    'on an order, exactly the guard\'s six operator fields are editable', editable.join(', '));
+  ok(JSON.stringify(editable) === JSON.stringify(topLevel),
+    'on an order, exactly the guard\'s operator fields are editable', editable.join(', '));
+  const inShipment = order.fields.find((f) => f.name === 'shipment').fields.filter((f) => f.readOnly !== true).map((f) => f.name);
+  const wantInShipment = OPERATOR_FIELDS.filter((f) => f.startsWith('shipment.')).map((f) => f.slice(9));
+  ok(JSON.stringify(inShipment) === JSON.stringify(wantInShipment),
+    '  and inside shipment, only status', inShipment.join(', '));
+  const retEditable = returnRequest.fields.filter((f) => f.readOnly !== true).map((f) => f.name).sort();
+  ok(JSON.stringify(retEditable) === JSON.stringify([...RETURN_OPERATOR_FIELDS].sort()),
+    'on a return request, exactly its operator fields are editable', retEditable.join(', '));
   ok(order.fields.find((f) => f.name === 'lineItems').readOnly === true
     && order.fields.find((f) => f.name === 'personalisationDetails').readOnly === true,
     '  line data and personalisation details are not');

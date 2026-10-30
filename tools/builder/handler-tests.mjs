@@ -722,6 +722,31 @@ function seedPaidSessionWithBuild(buildId, id = 'cs_test_paid_1') {
   const counter = sanityStub.docs.get('orderCounter.csc');
   ok(counter?.lastOrderNumber === 1001, 'the order counter was incremented once',
     String(counter?.lastOrderNumber));
+
+  /* SHIPPING_ENABLED unset: the order is written exactly as before. */
+  ok(!('parcelPlan' in (order || {})) && !('shipment' in (order || {})),
+    'with shipping off, no parcel plan or shipment is written');
+}
+
+say('\n10s. WEBHOOK: WITH SHIPPING ON, THE ORDER IS PROPOSED A PARCEL PLAN\n');
+
+{
+  resetAll();
+  process.env.SHIPPING_ENABLED = 'true';
+  try {
+    const session = seedPaidSessionWithBuild(null, 'cs_test_ship_1');
+    const r = await postWebhook(stripeEvent('checkout.session.completed', session));
+    ok(r.status === 200, 'a paid session is accepted', `${r.status} ${r.text}`);
+    const order = sanityStub.docs.get(`order.${session.id}`);
+    ok(order?.shipment?.status === 'none', 'the shipment starts "none"', order?.shipment?.status);
+    ok(order?.parcelPlan?.length === 1 && order.parcelPlan[0].band === 'P1',
+      'one parcel, in the poster 12x8 band', JSON.stringify(order?.parcelPlan?.map((p) => p.band)));
+    ok(order?.parcelPlan?.[0]?.items?.[0]?.lineKey === order?.lineItems?.[0]?._key,
+      '  holding the order line by its key');
+    ok(!order?.shipment?.planProblem, '  with no problem to flag');
+  } finally {
+    delete process.env.SHIPPING_ENABLED;
+  }
 }
 
 say('\n10p. WEBHOOK: A PROMOTION CODE IS RECORDED, AND SHIPPING IS NOT DISCOUNTED\n');

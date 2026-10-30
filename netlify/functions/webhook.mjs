@@ -9,6 +9,8 @@ import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
 import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discount.mjs';
 import { referralsFrom, issueReward } from './_shared/referral.mjs';
+import { shippingEnabled } from './_shared/shipping-client.mjs';
+import { proposeParcelPlan } from './_shared/parcel-bands.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -559,6 +561,21 @@ async function fulfilOrder(session) {
 
       if (personalisationDetails) {
         orderDoc.personalisationDetails = personalisationDetails;
+      }
+
+      /* Sendcloud dispatch, only when SHIPPING_ENABLED is on: the parcel plan
+         this order is proposed with (one parcel per item; Alan combines them
+         in the Studio) and its shipment record. A line with no known band is
+         planned without one and named in planProblem, which puts the order
+         under Shipping -> Exceptions: never a guessed box. Off, the order is
+         written exactly as before. */
+      if (shippingEnabled()) {
+        const { plan, problems } = proposeParcelPlan(lineItems);
+        orderDoc.parcelPlan = plan;
+        orderDoc.shipment = {
+          status: 'none',
+          ...(problems.length ? { planProblem: problems.join('\n') } : {}),
+        };
       }
 
       if (!emailLooksValid) {

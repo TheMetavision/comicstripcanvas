@@ -1,5 +1,20 @@
 import { defineType, defineField } from 'sanity';
 import PrintFileLinks from '../components/PrintFileLinks';
+import ShipmentPanel from '../components/ShipmentPanel';
+import { SHIPPING_UI } from '../lib/shipping-flag.mjs';
+import { ALL_BANDS, BAND_TITLES } from '../../netlify/functions/_shared/parcel-bands.mjs';
+
+const BAND_OPTIONS = ALL_BANDS.map((b: string) => ({ title: (BAND_TITLES as Record<string, string>)[b] || b, value: b }));
+
+const SHIPMENT_STATUSES = [
+  { title: 'Not shipped', value: 'none' },
+  { title: 'Ready to ship (buys the labels)', value: 'ready_to_ship' },
+  { title: 'Label created', value: 'label_created' },
+  { title: 'In transit', value: 'in_transit' },
+  { title: 'Delivered', value: 'delivered' },
+  { title: 'Exception', value: 'exception' },
+  { title: 'Returned to sender', value: 'returned_to_sender' },
+];
 
 export default defineType({
   name: 'order',
@@ -298,11 +313,14 @@ export default defineType({
         list: [
           { title: 'UPS', value: 'ups' },
           { title: 'Royal Mail', value: 'royal-mail' },
+          { title: 'Evri', value: 'evri' },
+          { title: 'InPost', value: 'inpost' },
+          { title: 'DPD', value: 'dpd' },
           { title: 'Other', value: 'other' },
         ],
         layout: 'radio',
       },
-      description: 'Auto-detected from line items at dispatch time (Canvas → UPS, Poster only → Royal Mail). Leave blank for auto-detect, or set manually + tick "Override carrier" below to force a specific carrier.',
+      description: 'Auto-detected from line items at dispatch time (Canvas → UPS, Poster only → Royal Mail). Leave blank for auto-detect, or set manually + tick "Override carrier" below to force a specific carrier. Set from the shipping service for a Sendcloud shipment.',
     }),
     defineField({
       name: 'carrierOverride',
@@ -324,6 +342,152 @@ export default defineType({
       type: 'text',
       rows: 4,
       description: 'Internal notes for the production team',
+    }),
+    /* ── Sendcloud dispatch (SHIPPING_ENABLED) ────────────────────────────
+       Hidden unless the Studio was built with SANITY_STUDIO_SHIPPING_ENABLED.
+       Alan owns shipment.status and parcelPlan (they are in guarded-publish's
+       OPERATOR_FIELDS); everything else under shipment is the server's. */
+    defineField({
+      name: 'shipmentLabels',
+      title: 'Shipment — labels',
+      type: 'string',
+      readOnly: true,
+      hidden: !SHIPPING_UI,
+      components: { field: ShipmentPanel },
+    }),
+    defineField({
+      name: 'shipment',
+      title: 'Shipment',
+      type: 'object',
+      hidden: !SHIPPING_UI,
+      options: { collapsible: true, collapsed: false },
+      fields: [
+        {
+          name: 'status',
+          title: 'Shipment status',
+          type: 'string',
+          options: { list: SHIPMENT_STATUSES, layout: 'dropdown' },
+          description:
+            'Set "Ready to ship" and publish to buy one label per parcel in the plan below. '
+            + 'The team is emailed the print links; the customer is emailed when the carrier first scans it. '
+            + 'After an Exception, fix the cause and set "Ready to ship" again: labels already bought are not bought twice.',
+        },
+        { name: 'planProblem', title: 'Plan problem', type: 'text', rows: 2, readOnly: true, hidden: ({ value }: any) => !value },
+        { name: 'error', title: 'Last error', type: 'text', rows: 3, readOnly: true, hidden: ({ value }: any) => !value },
+        { name: 'labelCreatedAt', title: 'Labels created', type: 'datetime', readOnly: true },
+        { name: 'dispatchedAt', title: 'First carrier scan', type: 'datetime', readOnly: true },
+        { name: 'deliveredAt', title: 'Delivered', type: 'datetime', readOnly: true },
+        {
+          name: 'parcels',
+          title: 'Parcels',
+          type: 'array',
+          readOnly: true,
+          of: [{
+            type: 'object',
+            name: 'shipmentParcel',
+            fields: [
+              { name: 'parcelRef', type: 'string', title: 'Parcel' },
+              { name: 'band', type: 'string', title: 'Band' },
+              { name: 'parcelId', type: 'string', title: 'Sendcloud parcel id' },
+              { name: 'shipmentId', type: 'string', title: 'Sendcloud shipment id' },
+              { name: 'carrier', type: 'string', title: 'Carrier' },
+              { name: 'option', type: 'string', title: 'Shipping option' },
+              { name: 'quotedPrice', type: 'number', title: 'Quoted price (£)' },
+              { name: 'trackingNumber', type: 'string', title: 'Tracking number' },
+              { name: 'trackingUrl', type: 'url', title: 'Tracking link' },
+              { name: 'labelId', type: 'string', title: 'Label id' },
+              { name: 'status', type: 'string', title: 'Status' },
+              { name: 'statusText', type: 'string', title: 'Carrier status' },
+              { name: 'test', type: 'boolean', title: 'Test label' },
+            ],
+            preview: {
+              select: { ref: 'parcelRef', band: 'band', carrier: 'carrier', status: 'status', tracking: 'trackingNumber' },
+              prepare: ({ ref, band, carrier, status, tracking }: any) => ({
+                title: `Parcel ${ref} · ${band || '?'}`,
+                subtitle: [carrier, status, tracking].filter(Boolean).join(' · '),
+              }),
+            },
+          }],
+        },
+        {
+          name: 'events',
+          title: 'Tracking events (newest 30)',
+          type: 'array',
+          readOnly: true,
+          of: [{
+            type: 'object',
+            name: 'shipmentEvent',
+            fields: [
+              { name: 'at', type: 'datetime', title: 'At' },
+              { name: 'parcelRef', type: 'string', title: 'Parcel' },
+              { name: 'status', type: 'string', title: 'Status' },
+              { name: 'statusCode', type: 'number', title: 'Code' },
+              { name: 'carrierStatus', type: 'string', title: 'Carrier says' },
+              { name: 'kind', type: 'string', title: 'Meaning' },
+              { name: 'test', type: 'boolean', title: 'Test' },
+            ],
+            preview: {
+              select: { at: 'at', parcel: 'parcelRef', status: 'status', kind: 'kind' },
+              prepare: ({ at, parcel, status, kind }: any) => ({
+                title: `${status || kind || 'Event'}${parcel ? ` — parcel ${parcel}` : ''}`,
+                subtitle: at ? new Date(at).toLocaleString('en-GB') : '',
+              }),
+            },
+          }],
+        },
+        { name: 'dispatchClaimedAt', title: 'Dispatch claimed', type: 'datetime', readOnly: true, hidden: true },
+      ],
+    }),
+    defineField({
+      name: 'parcelPlan',
+      title: 'Parcel plan',
+      type: 'array',
+      hidden: !SHIPPING_UI,
+      description:
+        'One parcel per item to start with. To send two posters in one tube, delete one parcel, add its line '
+        + 'to the other parcel (or raise that line\'s quantity to 2), and pick the band for the combined parcel. '
+        + 'Edit before setting "Ready to ship".',
+      of: [{
+        type: 'object',
+        name: 'plannedParcel',
+        fields: [
+          { name: 'parcelRef', type: 'string', title: 'Parcel ref', description: '1, 2, 3… unique on this order. Never reuse a ref that already has a label for a different box.' },
+          { name: 'band', type: 'string', title: 'Band', options: { list: BAND_OPTIONS } },
+          {
+            name: 'items',
+            title: 'Contents',
+            type: 'array',
+            of: [{
+              type: 'object',
+              name: 'plannedItem',
+              fields: [
+                { name: 'title', type: 'string', title: 'Item', readOnly: true, description: 'For reading only; the line is matched by its key.' },
+                { name: 'lineKey', type: 'string', title: 'Line key', description: 'Which order line. To move an item into another parcel, copy it from its parcel and paste it there.' },
+                { name: 'quantity', type: 'number', title: 'Quantity', initialValue: 1 },
+              ],
+              preview: {
+                select: { title: 'title', line: 'lineKey', qty: 'quantity' },
+                prepare: ({ title, line, qty }: any) => ({ title: `${title || line || '?'} × ${qty || 1}` }),
+              },
+            }],
+          },
+        ],
+        preview: {
+          select: { ref: 'parcelRef', band: 'band', items: 'items' },
+          prepare: ({ ref, band, items }: any) => ({
+            title: `Parcel ${ref || '?'} · ${band || 'NO BAND'}`,
+            subtitle: `${(items || []).length} line(s)`,
+          }),
+        },
+      }],
+    }),
+    defineField({
+      name: 'shippingEmailClaimedAt',
+      title: 'Shipping email claimed',
+      type: 'datetime',
+      readOnly: true,
+      hidden: true,
+      description: 'Set while the dispatch email is being sent, so it can never go twice.',
     }),
     defineField({
       name: 'isPersonalised',

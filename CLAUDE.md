@@ -44,6 +44,35 @@ public). The builder's photos are in Blobs; the legacy flow's were moved to the
 `legacy-customer-photos` store by `tools/migrate-private-personalisation.mjs`
 and are served only at `/admin/api/legacy-photo/*` behind Basic Auth.
 
+### Sendcloud dispatch and returns (feat/sendcloud-dispatch)
+
+Labels, returns and tracking go through the metavision-shipping service
+(`C:\Users\chris\Projects\metavision-shipping`, read its README). Everything is
+behind `SHIPPING_ENABLED` (functions) and `SANITY_STUDIO_SHIPPING_ENABLED`
+(Studio build); unset, orders, emails and the Studio are as before.
+
+- `_shared/shipping-client.mjs` signs every call; `SHIPPING_TEST_MODE=true`
+  makes every label the free `sendcloud:letter` test label (and flags
+  `quote-return`). Never set it in production. Prices arrive as
+  `quotedPrice: {amount, currency}`; read them with `quotedPounds`.
+- `_shared/parcel-bands.mjs` maps formatKey + sizeKey to bands. A line it
+  cannot place is flagged (`shipment.planProblem`), never guessed.
+- Alan sets `shipment.status = ready_to_ship` -> Sanity webhook ->
+  `shipping-dispatch-background` buys labels -> team "Label ready" email.
+  `shipping-event` (the service's callback) does the rest; the customer's
+  dispatch email goes out at the first carrier scan via
+  `_shared/dispatch-email.mjs`, which `order-shipped.mjs` also uses. It claims
+  the order before sending, so the email cannot go twice.
+- `/returns` -> `returns.mjs` -> `returnRequest.<ref>` (private dotted id).
+  Before submitting, the page shows the exact postage from the service's
+  `quote-return` (one item only; several items, or a failed quote, get the
+  general wording). Alan approves -> `shipping-return-background` -> label
+  emailed with the deduction, which is create-return's `quotedPrice` (stored
+  as `postageDeduction`). Refunds stay manual in Stripe.
+- `shipment.status` and `parcelPlan` are operator fields in
+  `studio/lib/guarded-publish.mjs`; everything else under `shipment` is the
+  server's. Return requests publish by the same rule.
+
 ### Notes
 
 Pending: domain DNS to Netlify.

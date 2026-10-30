@@ -13,12 +13,12 @@
  *
  * THE RULE
  * --------
- * Only six fields belong to whoever is editing (OPERATOR_FIELDS). Everything
+ * Only a few fields belong to whoever is editing (OPERATOR_FIELDS). Everything
  * else comes from the published order as it is NOW, read at the moment of
  * publishing -- including fields added after this was written, which is why
  * the rule names what the operator owns rather than what the server owns.
  *
- * The six are merged three ways against BASE, the published order as it was
+ * Those are merged three ways against BASE, the published order as it was
  * when this draft was created:
  *
  *   draft == base                  untouched here; the published value stands
@@ -42,7 +42,46 @@
 
 export const OPERATOR_FIELDS = [
   'status', 'trackingNumber', 'carrier', 'carrierOverride', 'carrierOther', 'notes',
+  /* Sendcloud dispatch. Alan sets shipment.status to ready_to_ship and edits
+     the parcel plan; the server writes everything else under shipment --
+     parcels, events, timestamps -- and those come from the published order
+     like any other server field. A dotted name is one field INSIDE an object,
+     so the rest of that object is never taken from the draft. */
+  'shipment.status', 'parcelPlan',
 ];
+
+/**
+ * A return request is decided in the Studio while the server writes to it
+ * (the label, tracking, events), so it publishes by the same rule. Alan owns
+ * the decision, the band, the free-label flag, which lines, and his notes.
+ */
+export const RETURN_OPERATOR_FIELDS = [
+  'status', 'band', 'freeLabel', 'lines', 'rejectionReason', 'alanNotes',
+];
+
+/** @type {Record<string, string[]>} */
+export const OPERATOR_FIELDS_BY_TYPE = {
+  order: OPERATOR_FIELDS,
+  returnRequest: RETURN_OPERATOR_FIELDS,
+};
+
+/** Read a possibly dotted field. */
+export const getPath = (obj, path) =>
+  path.split('.').reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), obj);
+
+/** Write (or with undefined/null, remove) a possibly dotted field, copying on the way down. */
+function setPath(doc, path, value) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  let o = doc;
+  for (const k of keys) {
+    const next = o[k] && typeof o[k] === 'object' ? { ...o[k] } : {};
+    o[k] = next;
+    o = next;
+  }
+  if (value === undefined || value === null) delete o[last];
+  else o[last] = value;
+}
 
 const SYSTEM = new Set(['_id', '_rev', '_createdAt', '_updatedAt']);
 
@@ -67,7 +106,7 @@ export const same = (a, b) => stable(a) === stable(b);
  *   conflicts  fields changed in both places -- publishing must not go ahead
  *   blind      fields the draft changes but no base could vouch for
  */
-export function mergeForPublish({ draft, published, base }) {
+export function mergeForPublish({ draft, published, base, fields = OPERATOR_FIELDS }) {
   const doc = {};
   for (const [k, v] of Object.entries(published || {})) {
     if (!SYSTEM.has(k)) doc[k] = v;
@@ -77,16 +116,15 @@ export function mergeForPublish({ draft, published, base }) {
   const taken = [];
   const conflicts = [];
   const blind = [];
-  for (const f of OPERATOR_FIELDS) {
-    const d = draft[f];
-    const p = published ? published[f] : undefined;
+  for (const f of fields) {
+    const d = getPath(draft, f);
+    const p = published ? getPath(published, f) : undefined;
     if (same(d, p)) continue;                         // nothing to decide
     if (base === undefined) { blind.push(f); continue; }
-    const b = base ? base[f] : undefined;
+    const b = base ? getPath(base, f) : undefined;
     if (same(d, b)) continue;                         // untouched in the draft
     if (same(p, b)) {                                 // changed in the draft only
-      if (d === undefined || d === null) delete doc[f];
-      else doc[f] = d;
+      setPath(doc, f, d);
       taken.push(f);
       continue;
     }
@@ -187,8 +225,10 @@ const describe = (v) => (v === null || v === undefined ? '(empty)' : JSON.string
  * @param {string} p.publishedId  e.g. order.cs_live_...
  * @param {Function} [p.beforeCommit]  test hook, called after every read and
  *   before the transaction -- where a concurrent write would land
+ * @param {object} [p.deps]
+ * @param {string[]} [p.fields]  the operator fields for this type (default: an order's)
  */
-export async function guardedPublish({ client, publishedId, beforeCommit, deps }) {
+export async function guardedPublish({ client, publishedId, beforeCommit, deps, fields = OPERATOR_FIELDS }) {
   const draftId = `drafts.${publishedId}`;
   const [draft, published] = await Promise.all([
     client.getDocument(draftId),
@@ -197,25 +237,26 @@ export async function guardedPublish({ client, publishedId, beforeCommit, deps }
   if (!draft) throw new PublishRefused('There are no unpublished changes on this order.');
   if (!published) {
     throw new PublishRefused(
-      'This order has no published version. Orders are created by the payment webhook, '
-      + 'never in the Studio -- discard this draft.');
+      'This document has no published version. Orders are created by the payment webhook and '
+      + 'return requests by the returns form or an order\'s "Create return" button, never as a '
+      + 'new document in the Studio -- discard this draft.');
   }
 
   const { base, why } = await findDraftBase({ client, draftId, publishedId, deps });
-  const { doc, taken, conflicts, blind } = mergeForPublish({ draft, published, base });
+  const { doc, taken, conflicts, blind } = mergeForPublish({ draft, published, base, fields });
 
   if (conflicts.length) {
     throw new PublishRefused(
-      `Not published: ${conflicts.map((c) => c.field).join(', ')} changed on the order while `
+      `Not published: ${conflicts.map((c) => c.field).join(', ')} changed on the published document while `
       + 'this draft was open. '
       + conflicts.map((c) => `${c.field} is now ${describe(c.published)}, this draft says ${describe(c.draft)}`).join('; ')
-      + '. Discard this draft, reopen the order and make the change again.',
+      + '. Discard this draft, reopen it and make the change again.',
       { conflicts });
   }
   if (blind.length) {
     throw new PublishRefused(
       `Not published: could not tell whether ${blind.join(', ')} was changed in this draft or `
-      + `on the order since (${why}). Discard this draft and make the change again.`,
+      + `on the published document since (${why}). Discard this draft and make the change again.`,
       { blind });
   }
 
@@ -238,11 +279,11 @@ export async function guardedPublish({ client, publishedId, beforeCommit, deps }
     const status = err && (err.statusCode || err.response?.statusCode);
     if (status === 409 || /revision/i.test((err && err.message) || '')) {
       throw new PublishRefused(
-        'Not published: the order changed while it was being published (something else saved '
+        'Not published: it changed while it was being published (something else saved '
         + 'it at the same moment). Nothing was written. Press Publish again.',
         { raced: true });
     }
     throw err;
   }
-  return { taken, kept: OPERATOR_FIELDS.filter((f) => !taken.includes(f)) };
+  return { taken, kept: fields.filter((f) => !taken.includes(f)) };
 }

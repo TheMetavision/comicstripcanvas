@@ -13,7 +13,7 @@
  */
 const PROJECT = 'lwbwahym';
 const DATASET = 'production';
-const DOC_TYPES = ['order', 'contactSubmission', 'orderCounter', 'pendingPersonalisation'];
+const DOC_TYPES = ['order', 'contactSubmission', 'orderCounter', 'pendingPersonalisation', 'returnRequest'];
 
 const URL_BASE = `https://${PROJECT}.api.sanity.io/v2024-12-01/data/query/${DATASET}`;
 const query = `{

@@ -49,6 +49,31 @@
 #                                    Anything a HUMAN triggers now lives under
 #                                    /admin and is guarded by Basic Auth
 #                                    (ADMIN_BASIC_USER / ADMIN_BASIC_PASS) instead.
+#
+# Sendcloud dispatch and returns, through the metavision-shipping service. All of
+# it is inert unless SHIPPING_ENABLED is "true": unset or empty, orders, emails
+# and the Studio behave exactly as they did before.
+#
+#   SHIPPING_ENABLED                 "true" switches the flow on
+#   SHIPPING_API_URL                 the service, e.g. https://<site>.netlify.app
+#   SHIPPING_BRAND                   CSC
+#   SHIPPING_SECRET                  same value as SHIPPING_SECRET_CSC on the
+#                                    service; signs every call to it and verifies
+#                                    its tracking callbacks. Also keys the
+#                                    /returns page's short-lived sessions.
+#   SHIPPING_TEST_MODE               "true" makes every label the service's free
+#                                    sendcloud:letter test label, and flags the
+#                                    /returns postage quote as a test. TESTING
+#                                    ONLY: leave it unset in production.
+#   SANITY_WEBHOOK_SECRET_SHIPPING   the secret on BOTH Sanity webhooks
+#                                    "CSC shipping — dispatch" and
+#                                    "CSC shipping — returns"
+#   RETURN_POINT_INPOST / RETURN_POINT_EVRI / RETURN_POINT_UPS
+#                                    optional: the name and address of each
+#                                    collection point, for the team's "ready to
+#                                    collect" email only. Never sent to customers.
+#   (TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY, already set for the contact form,
+#    protect /returns too.)
 
 [functions]
   directory = "netlify/functions"
@@ -307,6 +332,43 @@
 # /.netlify/functions/<name> is addressable whatever the redirects say.
 [[redirects]]
   from = "/api/order-print-file"
+  to = "/404"
+  status = 404
+  force = true
+
+# Sendcloud: the two Sanity webhooks. Both are background functions -- a label
+# is a Sendcloud announcement of a few seconds each, and an order of several
+# parcels would not fit a synchronous function -- so, like the renderers above,
+# the public address hides the -background suffix. Before the /api/* rule.
+[[redirects]]
+  from = "/api/shipping-dispatch"
+  to = "/.netlify/functions/shipping-dispatch-background"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/shipping-return"
+  to = "/.netlify/functions/shipping-return-background"
+  status = 200
+  force = true
+
+# A shipping label, to print: a customer's name and address, so under /admin
+# behind admin-auth.ts, like the print files. The id is in the path.
+[[redirects]]
+  from = "/admin/shipping/label/*"
+  to = "/.netlify/functions/shipping-label/:splat"
+  status = 200
+  force = true
+
+# And the public address closed. /api/* maps to functions by name.
+[[redirects]]
+  from = "/api/shipping-label"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/api/shipping-label/*"
   to = "/404"
   status = 404
   force = true
