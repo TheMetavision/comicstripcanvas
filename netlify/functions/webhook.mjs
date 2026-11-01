@@ -548,10 +548,11 @@ async function fulfilOrder(session) {
           }
           : {}),
         totalAmount,
-        /* The marketing checkbox on Stripe's page (consent_collection in
-           checkout.mjs): 'opt_in', 'opt_out', or 'not_asked' when Stripe did
-           not show it. order-shipped.mjs uses it to keep the day-21 referral
-           email away from anyone who said no. */
+        /* Stripe's marketing checkbox: 'opt_in', 'opt_out', or 'not_asked'
+           when Stripe did not show it. checkout.mjs no longer asks for it (UK
+           accounts can't use consent_collection.promotions), so new orders
+           read 'not_asked'. order-shipped.mjs uses it to keep the day-21
+           referral email away from anyone who said no. */
         marketingConsent: session.consent?.promotions || 'not_asked',
         status: 'received',
         isPersonalised,
