@@ -112,7 +112,7 @@ async function seed() {
     {
       _type: 'faq',
       question: 'What sizes are available?',
-      answer: 'We offer three sizes: Small (12x8"), Medium (16x12"), and Large (24x16"). All sizes are available as Poster Prints, Canvas Standard Frame, and Canvas Gallery Frame.',
+      answer: 'We offer three sizes: Small (12x8"), Medium (18x12"), and Large (24x16"). All sizes are available as Poster Prints, Canvas Standard Frame, and Canvas Gallery Frame.',
       sortOrder: 2,
       page: 'services',
     },

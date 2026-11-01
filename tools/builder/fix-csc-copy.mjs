@@ -149,7 +149,7 @@ const FAQS = [
   {
     match: 'What sizes are available?',
     answer:
-      'Three sizes: Small (12x8"), Medium (16x12") and Large (24x16"), in portrait or ' +
+      'Three sizes: Small (12x8"), Medium (18x12") and Large (24x16"), in portrait or ' +
       'landscape depending on the style. Each is available as a Poster Print, Canvas with ' +
       'Standard Wrap, or Canvas with Gallery Wrap. On canvas, the artwork continues around ' +
       'the frame edge — 1.5" on a standard wrap and 2.5" on a gallery wrap — and the ' +

@@ -135,7 +135,7 @@ Browse the Comic Book Icons range, explore the Comic Book Strips collection, or 
 Every design in the Comic Strip Canvas range is available in three sizes:
 
 - **Small — 12x8 inches** — ideal for smaller walls, desk displays, gallery wall arrangements, and gifting
-- **Medium — 16x12 inches** — the most versatile option; works well on most standard walls and in most rooms
+- **Medium — 18x12 inches** — the most versatile option; works well on most standard walls and in most rooms
 - **Large — 24x16 inches** — the statement piece; built for feature walls, chimney breasts, and rooms where you want the art to anchor the space
 
 Each size is available as a poster print (from £9.99) or on canvas — either standard frame (from £26.99) or gallery frame (from £28.99).
@@ -166,7 +166,7 @@ For personalised commissions, think about where the recipient is most likely to 
 
 **Small (12x8")** — poster from £9.99, canvas from £26.99. Best for gallery walls, gifting, desk or shelf display.
 
-**Medium (16x12")** — poster from £12.99, canvas from £31.99. Best for most rooms and most walls — the versatile option.
+**Medium (18x12")** — poster from £12.99, canvas from £31.99. Best for most rooms and most walls — the versatile option.
 
 **Large (24x16")** — poster from £16.99, canvas from £44.99. Best for feature walls, chimney breasts, statement pieces.
 
