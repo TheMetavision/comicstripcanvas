@@ -212,10 +212,10 @@ export default defineType({
     }),
     defineField({
       name: 'marketingConsent',
-      title: 'Marketing consent (Stripe checkbox)',
+      title: 'Marketing consent',
       type: 'string',
       readOnly: true,
-      description: "opt_in, opt_out, or not_asked when Stripe did not show the box. opt_out keeps the day-21 referral email away from this buyer.",
+      description: "refused: ticked \"Don't send me offers or referral emails\" in the basket, so no friend code, no MailerLite sequence and no day-21 referral email. not_asked: did not tick it (UK soft opt-in). opt_in / opt_out: Stripe's old checkbox, on orders before 13 Oct 2026; opt_out is treated like refused.",
     }),
     defineField({
       name: 'referralCode',

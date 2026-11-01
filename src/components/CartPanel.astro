@@ -52,6 +52,15 @@
       <span id="cart-subtotal" class="font-bangers text-comic-yellow text-2xl">£0.00</span>
     </div>
 
+    <!-- Soft opt-in refusal at the point of collection. Unticked by default. -->
+    <div class="flex items-start gap-2 mb-3">
+      <input id="marketing-opt-out" type="checkbox"
+             class="mt-0.5 h-4 w-4 shrink-0 accent-comic-yellow cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-comic-yellow" />
+      <label for="marketing-opt-out" class="font-source text-xs text-gray-300 leading-snug cursor-pointer select-none">
+        Don't send me offers or referral emails
+      </label>
+    </div>
+
     <button id="checkout-btn" class="btn-primary w-full text-center block mb-3">CHECKOUT</button>
     <p id="checkout-error" class="hidden font-source text-comic-red text-xs text-center mb-2"></p>
     <button id="continue-shopping" class="w-full text-center font-russo text-sm text-gray-400 hover:text-comic-cyan transition-colors uppercase tracking-wide py-2">
@@ -113,6 +122,7 @@
     updateQuantity,
     clearCart,
     gaItem,
+    marketingOptOut,
   } from '../stores/cart';
   import type { CartItem } from '../stores/cart';
   import { track, getGaIds } from './consent/cookie-consent';
@@ -363,6 +373,13 @@
   qualifiesForFreeShipping.subscribe(updateShippingMessage);
   amountToFreeShipping.subscribe(updateShippingMessage);
 
+  // Marketing opt-out box: mirrors the cart store (remembered for the session).
+  const optOutBox = document.getElementById('marketing-opt-out') as HTMLInputElement | null;
+  if (optOutBox) {
+    marketingOptOut.subscribe((value) => { optOutBox.checked = value; });
+    optOutBox.addEventListener('change', () => marketingOptOut.set(optOutBox.checked));
+  }
+
   // Checkout handler
   const checkoutBtn = document.getElementById('checkout-btn');
   const checkoutError = document.getElementById('checkout-error');
@@ -400,6 +417,8 @@
         body: JSON.stringify({
           ...(gaClientId ? { gaClientId } : {}),
           ...(gaClientId && gaSessionId ? { gaSessionId } : {}),
+          // Read from the box itself at the moment of checkout.
+          marketingOptOut: optOutBox ? optOutBox.checked : marketingOptOut.get(),
           items: items.map((item) => ({
             productId: item.productId,
             slug: item.slug,

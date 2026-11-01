@@ -5,6 +5,7 @@ import { PRICES } from './_shared/catalog.mjs';
 import { GA_CLIENT_ID_RE, GA_SESSION_ID_RE } from './_shared/ga4-mp.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { setting } from './_shared/site-config.mjs';
+import { optOutMetadata } from './_shared/marketing-consent.mjs';
 import {
   CLASSIC, FULL_BLEED, isStyle, styleLabel, styleLabelFor, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
@@ -78,7 +79,7 @@ export default async (req, context) => {
   }
 
   try {
-    const { items, gaClientId, gaSessionId } = await req.json();
+    const { items, gaClientId, gaSessionId, marketingOptOut } = await req.json();
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return new Response(JSON.stringify({ error: 'Cart is empty' }), {
@@ -341,23 +342,29 @@ export default async (req, context) => {
       /* No consent_collection here. Stripe refuses consent_collection.promotions
          for UK accounts ("not available in your country", 400), which failed
          every checkout from 13 Oct 2026. Without it, session.consent is absent
-         and the webhook records marketingConsent 'not_asked'.
+         and the webhook records marketingConsent 'not_asked', or 'refused'
+         when the basket's opt-out box was ticked (metadata below).
          tests/checkout-params.test.mjs keeps it out. */
       /* The visitor's GA4 client id and session id, sent by the basket only if
          they accepted analytics. The webhook reads them back to send the
          purchase to GA4 from the server, in the visit's own session. Anything
          not in the expected shape ("123.456", digits) is dropped rather than
          stored, and a session id is never kept without a client id. */
-      ...(typeof gaClientId === 'string' && GA_CLIENT_ID_RE.test(gaClientId)
-        ? {
-          metadata: {
+      /* marketing_opt_out: the basket's "Don't send me offers or referral
+         emails" box, always stamped as "true" or "false" (only a literal
+         boolean true from the browser counts). The webhook records 'refused'
+         from it; nothing else from the browser decides consent. */
+      metadata: {
+        marketing_opt_out: optOutMetadata(marketingOptOut),
+        ...(typeof gaClientId === 'string' && GA_CLIENT_ID_RE.test(gaClientId)
+          ? {
             ga_client_id: gaClientId,
             ...(typeof gaSessionId === 'string' && GA_SESSION_ID_RE.test(gaSessionId)
               ? { ga_session_id: gaSessionId }
               : {}),
-          },
-        }
-        : {}),
+          }
+          : {}),
+      },
       success_url: `${siteUrl}/order-confirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/store`,
     });

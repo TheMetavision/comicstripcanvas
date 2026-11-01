@@ -9,6 +9,7 @@ import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
 import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discount.mjs';
 import { referralsFrom, issueReward } from './_shared/referral.mjs';
+import { consentFromSession } from './_shared/marketing-consent.mjs';
 import { shippingEnabled } from './_shared/shipping-client.mjs';
 import { proposeParcelPlan } from './_shared/parcel-bands.mjs';
 import { setting } from './_shared/site-config.mjs';
@@ -548,12 +549,13 @@ async function fulfilOrder(session) {
           }
           : {}),
         totalAmount,
-        /* Stripe's marketing checkbox: 'opt_in', 'opt_out', or 'not_asked'
-           when Stripe did not show it. checkout.mjs no longer asks for it (UK
-           accounts can't use consent_collection.promotions), so new orders
-           read 'not_asked'. order-shipped.mjs uses it to keep the day-21
-           referral email away from anyone who said no. */
-        marketingConsent: session.consent?.promotions || 'not_asked',
+        /* 'refused' when the basket's "Don't send me offers or referral
+           emails" box was ticked (metadata.marketing_opt_out, stamped by
+           checkout.mjs), otherwise 'not_asked' (UK soft opt-in). Stripe's own
+           checkbox ('opt_in'/'opt_out') is only on orders before 13 Oct 2026.
+           The post-delivery step (_shared/dispatch-email.mjs) gives a refused
+           buyer no PAL- code and no MailerLite sequence. */
+        marketingConsent: consentFromSession(session),
         status: 'received',
         isPersonalised,
         shippingEmailSent: false,

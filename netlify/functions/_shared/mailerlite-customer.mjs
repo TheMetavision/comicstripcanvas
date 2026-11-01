@@ -5,8 +5,11 @@
  * workspace): arriving soon, did it land, then the day-21 referral email.
  *
  * Email 3 is marketing, so it must only go to buyers who did not refuse
- * marketing at checkout: the `marketing_ok` field carries that ("yes"/"no"),
- * and the automation sends Email 3 only when marketing_ok = yes.
+ * marketing at checkout. A buyer who ticked the basket's opt-out box
+ * (marketingConsent 'refused', or Stripe's old 'opt_out') is never added to
+ * the group at all, so the automation never starts for them; marketing_ok
+ * ("yes"/"no") stays as a second guard, and the automation sends Email 3 only
+ * when marketing_ok = yes.
  *
  * MailerLite's POST /subscribers is an upsert. It never resubscribes someone
  * who unsubscribed, so a buyer who opted out of our emails stays opted out.
@@ -20,6 +23,7 @@
  */
 import { fetchWithTimeout } from './timing.mjs';
 import { setting } from './site-config.mjs';
+import { marketingRefused } from './marketing-consent.mjs';
 
 const ML = 'https://connect.mailerlite.com/api';
 
@@ -47,15 +51,17 @@ export function customerPayload(order, { referralCode, groupId }) {
       last_order_date: String(order.paidAt || order.createdAt || '').slice(0, 10),
       is_personalised: order.isPersonalised ? 'yes' : 'no',
       referral_code: referralCode || '',
-      // Only an explicit opt-out ('opt_out') blocks the marketing email.
-      // 'opt_in', or no checkbox shown at all ('not_asked'), allows it under
-      // the UK soft opt-in for existing customers; Email 3 has an unsubscribe.
-      marketing_ok: consent === 'opt_out' ? 'no' : 'yes',
+      // A refusal ('refused' from the basket box, or Stripe's old 'opt_out')
+      // blocks the marketing email. 'opt_in', or not ticking the box
+      // ('not_asked'), allows it under the UK soft opt-in for existing
+      // customers; Email 3 has an unsubscribe.
+      marketing_ok: marketingRefused(consent) ? 'no' : 'yes',
     },
   };
 }
 
 export async function addShippedCustomer(order, { referralCode } = {}, env = process.env, fetchFn = fetchWithTimeout) {
+  if (marketingRefused(order?.marketingConsent)) return { ok: false, skipped: 'buyer refused marketing at checkout' };
   const apiKey = env.MAILERLITE_API_KEY;
   const groupId = setting('MAILERLITE_CUSTOMERS_GROUP_ID', env);
   if (!apiKey || !groupId) return { ok: false, skipped: 'MAILERLITE_API_KEY or MAILERLITE_CUSTOMERS_GROUP_ID not set' };

@@ -2,6 +2,7 @@ import { emailHeader } from './email.mjs';
 import Stripe from 'stripe';
 import { friendCodeFor } from './referral.mjs';
 import { addShippedCustomer } from './mailerlite-customer.mjs';
+import { marketingRefused } from './marketing-consent.mjs';
 import { carrierName } from './parcel-bands.mjs';
 
 /**
@@ -392,23 +393,37 @@ export async function sendDispatchEmail({
  * Give the buyer their own PAL- friend code (reusing one from an earlier
  * order by the same email) and add them to "CSC - Customers" in MailerLite,
  * which starts the post-delivery automation. Never throws.
+ *
+ * A buyer who ticked "Don't send me offers or referral emails" in the basket
+ * (marketingConsent 'refused', or Stripe's old 'opt_out') gets neither: no
+ * friend code is minted and they are not added to MailerLite, so the day-21
+ * referral email cannot reach them. The dispatch email itself has already
+ * gone; it is transactional and unaffected.
+ *
+ * `deps` lets tests swap the Stripe code and MailerLite calls.
  */
-export async function startPostDelivery(order, orderNumber, { sanity, log = console }) {
+export async function startPostDelivery(order, orderNumber, { sanity, log = console }, deps = {}) {
+  const { friendCode = friendCodeFor, addCustomer = addShippedCustomer, stripeKey = process.env.STRIPE_SECRET_KEY } = deps;
+  if (marketingRefused(order?.marketingConsent)) {
+    log.log(`${orderNumber}: buyer refused marketing at checkout; no friend code, not added to MailerLite`);
+    return { skipped: 'refused' };
+  }
   let referralCode = '';
   try {
-    if (process.env.STRIPE_SECRET_KEY) {
+    if (stripeKey) {
       const earlier = await sanity.fetch(
         `*[_type == "order" && lower(customerEmail) == $email && defined(referralCode)][0].referralCode`,
         { email: String(order.customerEmail || '').toLowerCase() }
       );
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' });
-      referralCode = await friendCodeFor(stripe, { email: order.customerEmail, orderNumber, existingCode: earlier || null });
+      const stripe = new Stripe(stripeKey, { apiVersion: '2024-12-18.acacia' });
+      referralCode = await friendCode(stripe, { email: order.customerEmail, orderNumber, existingCode: earlier || null });
       await sanity.patch(order._id).set({ referralCode }).commit();
     }
   } catch (err) {
     log.error(`Referral code for ${orderNumber} failed:`, err?.message || err);
   }
-  const ml = await addShippedCustomer(order, { referralCode });
+  const ml = await addCustomer(order, { referralCode });
   if (ml.ok) log.log(`${orderNumber}: added to MailerLite "CSC - Customers"`);
   else log.error(`${orderNumber}: MailerLite customer add ${ml.skipped ? 'skipped' : 'failed'}:`, ml.skipped || ml.status || '', ml.error || '');
+  return { referralCode, mailerlite: ml };
 }

@@ -59,6 +59,25 @@ export const cartItems = persistentAtom<CartItem[]>('csc-cart-v1', [], {
   decode: JSON.parse,
 });
 
+/**
+ * The basket's "Don't send me offers or referral emails" box. Unticked by
+ * default, and remembered for this browser session only (sessionStorage), so
+ * it survives moving between pages and the builders but not a new visit.
+ * Sent with the checkout request; checkout.mjs stamps it on the Stripe
+ * session and the webhook records the order's marketingConsent from that.
+ */
+const OPT_OUT_KEY = 'csc-marketing-opt-out';
+function readOptOut(): boolean {
+  try { return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(OPT_OUT_KEY) === '1'; } catch { return false; }
+}
+export const marketingOptOut = atom<boolean>(readOptOut());
+marketingOptOut.listen((value) => {
+  try {
+    if (value) sessionStorage.setItem(OPT_OUT_KEY, '1');
+    else sessionStorage.removeItem(OPT_OUT_KEY);
+  } catch { /* private mode: remembered for this page only */ }
+});
+
 // Drawer open/close — does NOT persist (always starts closed on a fresh page load)
 export const cartOpen = atom<boolean>(false);
 
