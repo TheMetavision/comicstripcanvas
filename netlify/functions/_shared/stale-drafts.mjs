@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { emailHeader, button, EMAIL_BRAND } from './email.mjs';
+import { setting } from './site-config.mjs';
 
 /**
  * "A Studio draft of an order or build has been sitting there" — to the team.
@@ -134,7 +135,7 @@ export async function runStaleDraftCheck({
 
   const sender = send || defaultSend;
   const { subject, html } = staleDraftsEmail(drafts, maxAgeHours);
-  const to = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+  const to = setting('TEAM_EMAIL');
   try {
     const result = await sender({
       from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',

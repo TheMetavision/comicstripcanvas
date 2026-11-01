@@ -7,11 +7,12 @@
  * dispatch email, in dispatch-email.mjs, sent once whichever path ships.
  *
  * The team address is the one webhook.mjs sends new-order notices to:
- * TEAM_EMAIL, else EMAIL_FROM, else orders@. Never the customer's address,
+ * TEAM_EMAIL, else the committed team address (_shared/site-config.mjs). Never the customer's address,
  * and the collection point a return goes to is only ever named to the team.
  */
 import { emailHeader, button, EMAIL_BRAND } from './email.mjs';
 import { carrierName } from './parcel-bands.mjs';
+import { setting } from './site-config.mjs';
 
 export const STUDIO = 'https://comicstripcanvas.sanity.studio';
 export const studioLink = (id, type) => `${STUDIO}/intent/edit/id=${encodeURIComponent(id)};type=${type}`;
@@ -20,7 +21,7 @@ export const studioLink = (id, type) => `${STUDIO}/intent/edit/id=${encodeURICom
 export const adminOrigin = () => process.env.URL || 'https://comicstripcanvas.co.uk';
 export const labelLink = (labelId) => `${adminOrigin()}/admin/shipping/label/${encodeURIComponent(labelId)}`;
 
-export const teamAddress = () => process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+export const teamAddress = () => setting('TEAM_EMAIL');
 export const fromAddress = () => process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -164,9 +165,9 @@ export function returnAlertEmail(ret, event, kind) {
  */
 export function collectionPoint(carrier) {
   const s = String(carrier || '').toLowerCase();
-  if (s.startsWith('inpost')) return process.env.RETURN_POINT_INPOST || 'the InPost locker set as RETURNS_INPOST_LOCKER_ID on the shipping service';
-  if (s.startsWith('hermes') || s.startsWith('evri')) return process.env.RETURN_POINT_EVRI || 'the Evri ParcelShop set as RETURNS_EVRI_PARCELSHOP_ID on the shipping service';
-  if (s.startsWith('ups')) return process.env.RETURN_POINT_UPS || 'the UPS Access Point set as RETURNS_UPS_ACCESS_POINT_ID on the shipping service';
+  if (s.startsWith('inpost')) return setting('RETURN_POINT_INPOST');
+  if (s.startsWith('hermes') || s.startsWith('evri')) return setting('RETURN_POINT_EVRI');
+  if (s.startsWith('ups')) return setting('RETURN_POINT_UPS');
   return `the ${carrierName(carrier)} return point set on the shipping service`;
 }
 

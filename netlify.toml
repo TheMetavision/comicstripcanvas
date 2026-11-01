@@ -10,7 +10,21 @@
 # local .env for `netlify dev`. Listed here as documentation only -- secrets
 # must never be written into this file, which is in the repository.
 #
-#   SANITY_WRITE_TOKEN               writes orders and personalisations
+# THE 4 KB LIMIT. Every variable scoped to Functions is copied into every
+# function (and Edge Functions read the same scope), and AWS Lambda refuses a
+# deploy whose function environment is over 4 KB. So only SECRETS live in
+# Netlify. Non-secret settings -- site URL, Sanity project and dataset, brand
+# colours and logo, contact and team addresses, MailerLite group ids, the GA4
+# measurement id, the shipping service URL and brand, the return points -- are
+# committed in netlify/functions/_shared/site-config.mjs. An env var of the
+# same name still overrides one, but leave them unset. A variable only the
+# Astro build reads (TURNSTILE_SITE_KEY) is scoped to Builds, not Functions.
+#
+#   SANITY_WRITE_TOKEN               writes orders and personalisations; also
+#                                    the contact form (replaces SANITY_API_TOKEN)
+#   SANITY_READ_TOKEN                Viewer token: checkout, the admin pages and
+#                                    the photo edge function. Kept separate from
+#                                    the write token on purpose (least privilege).
 #   STRIPE_SECRET_KEY                creates and reads Checkout sessions
 #   STRIPE_WEBHOOK_SECRET            verifies Stripe webhook signatures
 #   SANITY_WEBHOOK_SECRET            verifies the Sanity webhook "CSC orders"
@@ -18,8 +32,10 @@
 #                                    shipped", same secret)
 #   RESEND_API_KEY                   transactional email -- the Comic Strip Canvas
 #                                    key, NOT another project's
-#   EMAIL_FROM                       e.g. "Comic Strip Canvas <orders@comicstripcanvas.co.uk>"
-#   TEAM_EMAIL                       where new-order notifications go
+#   EMAIL_FROM                       optional; unset, every email is from
+#                                    "Comic Strip Canvas <orders@comicstripcanvas.co.uk>"
+#   TEAM_EMAIL                       optional override; the team address is in
+#                                    site-config.mjs
 #   STYLE_GUARD_SALT                 salts the hash of a visitor's IP address in
 #                                    the styling spend guards. Any long random
 #                                    string; it is not a secret that protects
@@ -57,9 +73,8 @@
 # and the Studio behave exactly as they did before.
 #
 #   SHIPPING_ENABLED                 "true" switches the flow on
-#   SHIPPING_API_URL                 the service, e.g. https://<site>.netlify.app
-#   SHIPPING_BRAND                   CSC
-#   SHIPPING_SECRET                  same value as SHIPPING_SECRET_CSC on the
+#   (SHIPPING_API_URL and SHIPPING_BRAND are committed in site-config.mjs)
+#   SHIPPING_SECRET                 same value as SHIPPING_SECRET_CSC on the
 #                                    service; signs every call to it and verifies
 #                                    its tracking callbacks. Also keys the
 #                                    /returns page's short-lived sessions.
@@ -72,10 +87,9 @@
 #                                    functions with it, and they verify it. No
 #                                    Sanity webhook carries it (the plan allows
 #                                    two webhooks; see sanity-orders-webhook.mjs).
-#   RETURN_POINT_INPOST / RETURN_POINT_EVRI / RETURN_POINT_UPS
-#                                    optional: the name and address of each
-#                                    collection point, for the team's "ready to
-#                                    collect" email only. Never sent to customers.
+#   (The return collection points, for the team's "ready to collect" email
+#    only, are committed in site-config.mjs as RETURN_POINT_INPOST / _EVRI /
+#    _UPS. Never sent to customers.)
 #   (TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY, already set for the contact form,
 #    protect /returns too.)
 

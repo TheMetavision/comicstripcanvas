@@ -52,8 +52,9 @@ const fakeFetch = (respond = () => ({ ok: true, status: 204 })) => {
 
 say('\n1. SKIPS WITHOUT SENDING\n');
 {
+  // No "no GA4_MEASUREMENT_ID" case: the id is committed in
+  // _shared/site-config.mjs, so only the secret can be missing.
   for (const [label, env] of [
-    ['no GA4_MEASUREMENT_ID', { GA4_API_SECRET: 'secret' }],
     ['no GA4_API_SECRET', { GA4_MEASUREMENT_ID: 'G-TEST123' }],
     ['neither env var', {}],
   ]) {

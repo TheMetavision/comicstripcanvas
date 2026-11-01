@@ -30,6 +30,7 @@ import {
 } from '../../studio/lib/guarded-publish.mjs';
 import { resolveDocumentActions, BUILD_REMOVED } from '../../studio/actions/resolve-actions.mjs';
 import { runStaleDraftCheck, findStaleDrafts, publishedIdOf } from '../../netlify/functions/_shared/stale-drafts.mjs';
+import { setting } from '../../netlify/functions/_shared/site-config.mjs';
 
 const ROOT = path.resolve(new URL('../../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const OFFLINE = process.argv.includes('--offline');
@@ -264,8 +265,8 @@ say('\n5. THE DAILY CHECK\n');
   ok(sent[0].html.includes('CSC-1009') && sent[0].html.includes('48 h') && sent[0].html.includes('25 h'),
     '  which, and how long untouched');
   ok(sent[0].html.includes('intent/edit/id=order.a;type=order'), '  each with a link to the published document');
-  ok(sent[0].to[0] === (process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk'),
-    '  to TEAM_EMAIL, else EMAIL_FROM', sent[0].to[0]);
+  ok(sent[0].to[0] === setting('TEAM_EMAIL'),
+    '  to TEAM_EMAIL, else the committed team address', sent[0].to[0]);
 
   const failing = await runStaleDraftCheck({
     sanity: fake([{ _id: 'drafts.order.a', _type: 'order', _updatedAt: '2026-10-01T00:00:00Z' }]),

@@ -19,6 +19,7 @@
  * Never throws: returns { ok, skipped?, status?, error? } for the caller to log.
  */
 import { fetchWithTimeout } from './timing.mjs';
+import { setting } from './site-config.mjs';
 
 const ML = 'https://connect.mailerlite.com/api';
 
@@ -56,7 +57,7 @@ export function customerPayload(order, { referralCode, groupId }) {
 
 export async function addShippedCustomer(order, { referralCode } = {}, env = process.env, fetchFn = fetchWithTimeout) {
   const apiKey = env.MAILERLITE_API_KEY;
-  const groupId = env.MAILERLITE_CUSTOMERS_GROUP_ID;
+  const groupId = setting('MAILERLITE_CUSTOMERS_GROUP_ID', env);
   if (!apiKey || !groupId) return { ok: false, skipped: 'MAILERLITE_API_KEY or MAILERLITE_CUSTOMERS_GROUP_ID not set' };
   const body = customerPayload(order, { referralCode, groupId });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return { ok: false, skipped: 'no valid email' };

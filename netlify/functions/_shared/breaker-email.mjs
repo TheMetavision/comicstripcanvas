@@ -1,6 +1,7 @@
 import { Resend } from 'resend';
 import { emailHeader, EMAIL_BRAND } from './email.mjs';
 import { claimBreakerNotice, styleDailyMax, originOr, STUDIO } from './spend-guard.mjs';
+import { setting } from './site-config.mjs';
 
 /**
  * "The styling budget for today is spent" — to the team, once a day.
@@ -49,7 +50,7 @@ export async function notifyBreakerTripped({ store, calls, origin = 'customer', 
     const studio = which === STUDIO;
     const label = studio ? 'studio' : 'customer';
     const envVar = studio ? 'STUDIO_STYLE_DAILY_MAX' : 'STYLE_DAILY_MAX';
-    const to = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+    const to = setting('TEAM_EMAIL');
     const site = process.env.URL || EMAIL_BRAND.site;
 
     const { error } = await resend.emails.send({
