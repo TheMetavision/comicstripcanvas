@@ -844,6 +844,8 @@ async function fulfilOrder(session) {
       /* A PAL- code on this order belongs to an earlier buyer ("give 10%,
          get 10%"). Issue them a single-use 10% THANKS- code and email it.
          Self-referral (own code, same email) is ignored by referralsFrom.
+         The email is only the promised reward: the code and the footer's site
+         link, no "shop" button, so it is not a promotion.
          Best-effort: a failure is logged and recorded, never blocks the order.
          Stripe retries are covered by the order's create-once idempotency
          above, so this runs at most once per order. */
@@ -873,11 +875,8 @@ async function fulfilOrder(session) {
                   <p style="text-align: center; margin: 0 0 20px;">
                     <span style="display: inline-block; background: ${BRAND.yellow}; color: ${BRAND.dark}; font-size: 26px; font-weight: bold; letter-spacing: 2px; padding: 14px 28px; border: 3px solid ${BRAND.dark};">${rewardCode}</span>
                   </p>
-                  <p style="color: #555; line-height: 1.7; margin: 0 0 24px; font-size: 15px;">
+                  <p style="color: #555; line-height: 1.7; margin: 0; font-size: 15px;">
                     Enter it at checkout. It works once, on anything in the store, personalised designs included.
-                  </p>
-                  <p style="text-align: center; margin: 0;">
-                    <a href="${BRAND.site}/store/?utm_source=transactional&utm_medium=email&utm_campaign=csc-referral-reward" style="display: inline-block; background: ${BRAND.pink}; color: #ffffff; text-decoration: none; font-weight: bold; padding: 14px 28px;">SHOP THE STORE</a>
                   </p>
                 </div>
                 ${emailFooter}

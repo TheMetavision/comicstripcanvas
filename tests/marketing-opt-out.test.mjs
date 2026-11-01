@@ -161,3 +161,21 @@ test('chain: ticked box -> metadata -> refused -> nothing marketing; unticked ->
     assert.equal(calls.addCustomer, ticked ? 0 : 1);
   }
 });
+
+// ── Referral thank-you is only the reward ───────────────────────────────────
+
+test('referral thank-you email carries the code and site link, no shop button', () => {
+  const src = read('../netlify/functions/webhook.mjs');
+  const start = src.indexOf("subject: 'WHAM! Your friend ordered.");
+  const block = src.slice(start, src.indexOf('${emailFooter}', start));
+  assert.ok(start > 0);
+  assert.match(block, /\$\{rewardCode\}/);
+  assert.equal(/SHOP THE STORE|<a\s/i.test(block), false);
+  assert.match(src.slice(src.indexOf('const emailFooter')), /href="\$\{BRAND\.site\}"/);
+});
+
+test('privacy policy describes the basket opt-out', () => {
+  const src = read('../src/pages/privacy-policy.astro');
+  assert.ok(src.includes(`tick "Don't send me offers or referral emails" in your basket before checkout`));
+  assert.equal(src.includes("only if you've opted in via our newsletter"), false);
+});
