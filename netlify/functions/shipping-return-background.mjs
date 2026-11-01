@@ -10,7 +10,9 @@ import {
 /**
  * shipping-return-background.mjs
  * --------------------------------------------------------------------------
- * POST /api/shipping-return   (the Sanity webhook "CSC shipping — returns")
+ * POST /api/shipping-return   (started by sanity-orders-webhook.mjs, the Sanity
+ *                              webhook "CSC orders", with a request signed with
+ *                              SANITY_WEBHOOK_SECRET_SHIPPING)
  *
  * Alan decides a return request in the Studio:
  *   Approved -> the service's create-return buys the label, choosing the route

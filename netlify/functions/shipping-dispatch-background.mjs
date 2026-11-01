@@ -8,7 +8,8 @@ import { sendEmail, labelReadyEmail, shipmentProblemEmail } from './_shared/ship
 /**
  * shipping-dispatch-background.mjs
  * --------------------------------------------------------------------------
- * POST /api/shipping-dispatch   (the Sanity webhook "CSC shipping — dispatch")
+ * POST /api/shipping-dispatch   (started by sanity-orders-webhook.mjs, the
+ *                                Sanity webhook "CSC orders")
  *
  * Alan sets an order's Shipment status to "Ready to ship" in the Studio. The
  * webhook fires, and this buys one label per planned parcel from the shipping
@@ -29,7 +30,9 @@ import { sendEmail, labelReadyEmail, shipmentProblemEmail } from './_shared/ship
  * Sanity therefore always sees 202; a bad signature is logged and ignored.
  *
  * Signature: @sanity/webhook, the same check as order-shipped.mjs and
- * sanity-content-changed.mts, with SANITY_WEBHOOK_SECRET_SHIPPING.
+ * sanity-content-changed.mts, with SANITY_WEBHOOK_SECRET_SHIPPING -- which
+ * sanity-orders-webhook signs its internal request with. No Sanity webhook
+ * calls this directly any more.
  *
  * Does nothing at all unless SHIPPING_ENABLED is "true".
  */

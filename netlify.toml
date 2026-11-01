@@ -13,7 +13,9 @@
 #   SANITY_WRITE_TOKEN               writes orders and personalisations
 #   STRIPE_SECRET_KEY                creates and reads Checkout sessions
 #   STRIPE_WEBHOOK_SECRET            verifies Stripe webhook signatures
-#   SANITY_WEBHOOK_SECRET            verifies the Sanity order-shipped webhook
+#   SANITY_WEBHOOK_SECRET            verifies the Sanity webhook "CSC orders"
+#                                    (/api/sanity-orders-webhook; was "Order
+#                                    shipped", same secret)
 #   RESEND_API_KEY                   transactional email -- the Comic Strip Canvas
 #                                    key, NOT another project's
 #   EMAIL_FROM                       e.g. "Comic Strip Canvas <orders@comicstripcanvas.co.uk>"
@@ -65,9 +67,11 @@
 #                                    sendcloud:letter test label, and flags the
 #                                    /returns postage quote as a test. TESTING
 #                                    ONLY: leave it unset in production.
-#   SANITY_WEBHOOK_SECRET_SHIPPING   the secret on BOTH Sanity webhooks
-#                                    "CSC shipping — dispatch" and
-#                                    "CSC shipping — returns"
+#   SANITY_WEBHOOK_SECRET_SHIPPING   INTERNAL ONLY: sanity-orders-webhook signs
+#                                    its request to the two shipping background
+#                                    functions with it, and they verify it. No
+#                                    Sanity webhook carries it (the plan allows
+#                                    two webhooks; see sanity-orders-webhook.mjs).
 #   RETURN_POINT_INPOST / RETURN_POINT_EVRI / RETURN_POINT_UPS
 #                                    optional: the name and address of each
 #                                    collection point, for the team's "ready to
@@ -336,7 +340,8 @@
   status = 404
   force = true
 
-# Sendcloud: the two Sanity webhooks. Both are background functions -- a label
+# Sendcloud: the two shipping jobs, started by sanity-orders-webhook (the one
+# Sanity webhook for orders and returns). Both are background functions -- a label
 # is a Sendcloud announcement of a few seconds each, and an order of several
 # parcels would not fit a synchronous function -- so, like the renderers above,
 # the public address hides the -background suffix. Before the /api/* rule.

@@ -13,7 +13,7 @@ const saved = { ...process.env };
 const restore = () => { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); };
 
 test('every new function module loads and exports a handler', async () => {
-  for (const f of ['shipping-dispatch-background', 'shipping-return-background', 'shipping-event', 'shipping-label', 'returns', 'order-shipped']) {
+  for (const f of ['shipping-dispatch-background', 'shipping-return-background', 'shipping-event', 'shipping-label', 'returns', 'order-shipped', 'sanity-orders-webhook']) {
     const mod = await import(`../netlify/functions/${f}.mjs`);
     assert.equal(typeof mod.default, 'function', f);
     assert.equal(mod.config?.path, undefined, `${f} must not set config.path`);

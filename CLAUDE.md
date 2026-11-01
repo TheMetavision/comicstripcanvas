@@ -57,7 +57,13 @@ behind `SHIPPING_ENABLED` (functions) and `SANITY_STUDIO_SHIPPING_ENABLED`
   `quotedPrice: {amount, currency}`; read them with `quotedPounds`.
 - `_shared/parcel-bands.mjs` maps formatKey + sizeKey to bands. A line it
   cannot place is flagged (`shipment.planProblem`), never guessed.
-- Alan sets `shipment.status = ready_to_ship` -> Sanity webhook ->
+- One Sanity webhook, "CSC orders" -> `/api/sanity-orders-webhook`, routes
+  every order and return event (the plan allows two webhooks; "Netlify
+  rebuild" is the other). It sends the dispatch email itself and starts the
+  two shipping background functions with an awaited request signed with
+  SANITY_WEBHOOK_SECRET_SHIPPING, now internal only. Each handler's claim,
+  not the router, is what stops a double send.
+- Alan sets `shipment.status = ready_to_ship` -> "CSC orders" ->
   `shipping-dispatch-background` buys labels -> team "Label ready" email.
   `shipping-event` (the service's callback) does the rest; the customer's
   dispatch email goes out at the first carrier scan via

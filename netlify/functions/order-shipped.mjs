@@ -6,6 +6,10 @@ import { sendDispatchEmail } from './_shared/dispatch-email.mjs';
 /**
  * order-shipped.mjs
  * --------------------------------------------------------------------------
+ * SUPERSEDED by sanity-orders-webhook.mjs, which routes the same orders to
+ * the same sendDispatchEmail. Kept while the Sanity webhook is switched over;
+ * delete once "CSC orders" points at /api/sanity-orders-webhook.
+ *
  * Receives a Sanity webhook when an `order` document changes. If the order
  * has just transitioned to status = 'dispatched' AND has a trackingNumber
  * AND has not already been emailed, send the customer a branded shipping
