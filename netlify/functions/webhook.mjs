@@ -11,6 +11,7 @@ import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discou
 import { referralsFrom, issueReward } from './_shared/referral.mjs';
 import { shippingEnabled } from './_shared/shipping-client.mjs';
 import { proposeParcelPlan } from './_shared/parcel-bands.mjs';
+import { setting } from './_shared/site-config.mjs';
 
 // Same trap as the Resend client below: `new Stripe()` throws without a key,
 // and at module scope that throw lands at IMPORT time, so Stripe would get an
@@ -85,7 +86,7 @@ const LEGACY_ORDER_COUNTER_ID = 'orderCounter';
  */
 export async function settlePersonalisations({ session, orderId, orderNumber, lineItems, deps }) {
   const { sanity: db = sanity, fetch: http = fetch, siteUrl = process.env.URL
-    || process.env.SITE_URL || 'https://comicstripcanvas.co.uk' } = deps || {};
+    || setting('SITE_URL') } = deps || {};
 
   const ids = [...new Set(
     (lineItems || [])
@@ -889,7 +890,7 @@ async function fulfilOrder(session) {
       }
 
       // ── Send production team notification email ───────────────
-      const teamEmail = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+      const teamEmail = setting('TEAM_EMAIL');
       try {
         const resend = getResend();
         if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');

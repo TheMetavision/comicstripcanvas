@@ -54,6 +54,7 @@ import { LIMITS_MS, fetchWithTimeout, stopwatch } from "./_shared/timing.mjs";
 import { checkEmailDomain } from "./_shared/email-domain.mjs";
 import { makeToken } from "./_shared/newsletter-token.mjs";
 import { confirmationEmail } from "./_shared/newsletter-email.mjs";
+import { setting } from './_shared/site-config.mjs';
 
 const MIN_SUBMIT_MS = 3000;
 const IP_LIMIT = 3;
@@ -176,7 +177,7 @@ export default async (req: Request, context: Context) => {
 
   // Everything the rest needs, checked before the request counts against anyone.
   const apiKey = Netlify.env.get("MAILERLITE_API_KEY");
-  const groupId = Netlify.env.get("MAILERLITE_GROUP_ID");
+  const groupId = setting("MAILERLITE_GROUP_ID");
   const resendKey = Netlify.env.get("RESEND_API_KEY");
   const confirmSecret = Netlify.env.get("NEWSLETTER_CONFIRM_SECRET");
   if (!apiKey || !groupId || !resendKey || !confirmSecret) {

@@ -36,22 +36,24 @@
  * change the success response. The IP is never stored in plaintext — only a
  * salted SHA-256 hash for rate-limit deduplication.
  *
- * Env vars (Netlify):
- *   SANITY_PROJECT_ID, SANITY_DATASET, SANITY_API_TOKEN
- *   RESEND_API_KEY, NOTIFICATION_FROM, NOTIFICATION_TO
- *   BRAND_NAME, SITE_URL
+ * Env vars (Netlify), secrets only:
+ *   SANITY_WRITE_TOKEN    writes the contactSubmission (SANITY_API_TOKEN is
+ *                         still read as a fallback until it is deleted)
+ *   RESEND_API_KEY
  *   TURNSTILE_SECRET_KEY  Cloudflare Turnstile secret (server side). The public
  *                     TURNSTILE_SITE_KEY is read by src/pages/contact.astro at
  *                     BUILD time, so changing it needs a rebuild.
- *   LOGO_URL          absolute https URL of the logo for the email header
- *   EMAIL_HEADER_BG   header background (default #0e0e14; use #000000 for a
- *                     logo that sits on a black background, to avoid a seam)
- *   BRAND_ACCENT      hex for the thin accent rule under the header
+ *
+ * Committed in _shared/site-config.mjs (an env var of the same name still
+ * overrides): SANITY_PROJECT_ID, SANITY_DATASET, NOTIFICATION_FROM,
+ * NOTIFICATION_TO, BRAND_NAME, SITE_URL, LOGO_URL, EMAIL_HEADER_BG (#000000,
+ * so the logo's black background shows no seam) and BRAND_ACCENT.
  */
 
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import crypto from 'node:crypto';
+import { setting } from './_shared/site-config.mjs';
 
 // ── CORS — restrict to the live origin + localhost for dev ───────────────
 const ALLOWED_ORIGINS = [
@@ -380,17 +382,17 @@ export const handler = async (event) => {
   }
 
   // ── Env-var sanity check ────────────────────────────────────────
-  const SANITY_PROJECT_ID = process.env.SANITY_PROJECT_ID || '';
-  const SANITY_DATASET = process.env.SANITY_DATASET || 'production';
-  const SANITY_TOKEN = process.env.SANITY_API_TOKEN || process.env.SANITY_TOKEN || '';
+  const SANITY_PROJECT_ID = setting('SANITY_PROJECT_ID');
+  const SANITY_DATASET = setting('SANITY_DATASET');
+  const SANITY_TOKEN = process.env.SANITY_WRITE_TOKEN || process.env.SANITY_API_TOKEN || '';
   const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-  const NOTIFICATION_FROM = process.env.NOTIFICATION_FROM || '';
-  const NOTIFICATION_TO = process.env.NOTIFICATION_TO || '';
-  const BRAND_NAME = process.env.BRAND_NAME || 'Website';
-  const SITE_URL = process.env.SITE_URL || '';
-  const LOGO_URL = process.env.LOGO_URL || '';
-  const EMAIL_HEADER_BG = process.env.EMAIL_HEADER_BG || '#0e0e14';
-  const BRAND_ACCENT = process.env.BRAND_ACCENT || EMAIL_HEADER_BG;
+  const NOTIFICATION_FROM = setting('NOTIFICATION_FROM');
+  const NOTIFICATION_TO = setting('NOTIFICATION_TO');
+  const BRAND_NAME = setting('BRAND_NAME');
+  const SITE_URL = setting('SITE_URL');
+  const LOGO_URL = setting('LOGO_URL');
+  const EMAIL_HEADER_BG = setting('EMAIL_HEADER_BG');
+  const BRAND_ACCENT = setting('BRAND_ACCENT');
 
   if (!SANITY_PROJECT_ID || !SANITY_TOKEN || !RESEND_API_KEY || !NOTIFICATION_TO) {
     console.error('contact endpoint misconfigured: missing required env vars');

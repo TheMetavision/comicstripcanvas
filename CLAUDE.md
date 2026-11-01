@@ -106,9 +106,22 @@ Resolved -- verified against production, not assumed:
   Note `EMAIL_FROM` is not set in Netlify, so every transactional email uses
   that hardcoded fallback address.
 
-- **Sanity build hook.** Exists and fires on product changes (2026-09-08). The
-  Sanity webhook "Netlify rebuild" POSTs to Netlify build hook
-  `69e7bb39d8d2859ae7a81ff1` ("Sanity Content Update", branch `main`). Confirmed
+- **Sanity webhooks.** The plan allows two, and both are in use (confirmed in
+  sanity.io/manage):
+  - "Netlify rebuild" -> `https://comicstripcanvas.co.uk/api/sanity-content-changed`
+    (secret SANITY_REBUILD_WEBHOOK_SECRET). That function debounces and
+    `content-build-background` then POSTs the Netlify build hook
+    `69e7bb39d8d2859ae7a81ff1` ("Sanity Content Update", branch `main`), held
+    in NETLIFY_BUILD_HOOK_URL. Sanity does not call the build hook directly.
+  - "CSC orders" (formerly "Order Shipped Email") ->
+    `https://comicstripcanvas.co.uk/api/sanity-orders-webhook` (secret
+    SANITY_WEBHOOK_SECRET). See the Sendcloud section above.
+
+  A third webhook cannot be added: route new document events through one of
+  these two.
+
+- **Sanity build hook.** Exists and fires on product changes (2026-09-08), via
+  "Netlify rebuild" above. Confirmed
   from the deploy history rather than assumed: three `product` documents were
   updated at 21:16 on 2026-09-07 and hook-triggered production deploys ran at
   21:16 and 21:18. The hook is filtered -- roughly twenty `contactSubmission`
@@ -118,4 +131,12 @@ Resolved -- verified against production, not assumed:
 
   This matters for pricing: `personalisationFee` is read from Sanity at build
   time, so a fee edit reaches the site only once this hook's rebuild finishes.
+
+- **Function env is capped at 4 KB** (AWS Lambda). A deploy failed on it.
+  Every Functions-scoped variable goes into every function, and Edge
+  Functions read the same scope, so re-scoping helps only for variables that
+  only the build reads. Only secrets belong in Netlify: non-secret settings
+  go in `netlify/functions/_shared/site-config.mjs` (read with `setting()`,
+  and an env var of the same name still overrides). Check before adding a
+  variable.
 

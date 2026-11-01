@@ -10,9 +10,10 @@
  *   SHIPPING_ENABLED     "true" turns the whole Sendcloud flow on. Unset or
  *                        empty, nothing in this file is reached: the order flow,
  *                        emails and Studio views are as they were.
- *   SHIPPING_API_URL     the service's address, e.g. https://<site>.netlify.app
- *   SHIPPING_BRAND       "CSC" (the service lower-cases it)
  *   SHIPPING_SECRET      same value as SHIPPING_SECRET_CSC on the service
+ *   SHIPPING_API_URL     optional override; the address is committed in
+ *                        _shared/site-config.mjs
+ *   SHIPPING_BRAND       optional override; "CSC" is committed there too
  *   SHIPPING_TEST_MODE   "true" adds "test": true to create-parcel,
  *                        create-return and quote-return, so the service makes
  *                        a FREE sendcloud:letter label instead of a real one
@@ -22,6 +23,7 @@
  * Secrets are read per call, never logged, never put in an error message.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { setting } from './site-config.mjs';
 
 const truthy = (v) => ['true', '1', 'yes'].includes(String(v ?? '').trim().toLowerCase());
 
@@ -61,9 +63,10 @@ export class ShippingServiceError extends Error {
  * @param {number} [opts.now]        ms, for tests
  */
 export async function shippingRequest(path, { method = 'POST', body, env = process.env, fetchImpl = fetch, now = Date.now() } = {}) {
-  const base = String(env.SHIPPING_API_URL || '').replace(/\/+$/, '');
-  if (!base || !env.SHIPPING_BRAND || !env.SHIPPING_SECRET) {
-    throw new ShippingServiceError('SHIPPING_API_URL, SHIPPING_BRAND or SHIPPING_SECRET is not set', { code: 'not_configured' });
+  const base = setting('SHIPPING_API_URL', env).replace(/\/+$/, '');
+  const brand = setting('SHIPPING_BRAND', env);
+  if (!env.SHIPPING_SECRET) {
+    throw new ShippingServiceError('SHIPPING_SECRET is not set', { code: 'not_configured' });
   }
   const name = path.split('?')[0];
   let payload = body;
@@ -79,7 +82,7 @@ export async function shippingRequest(path, { method = 'POST', body, env = proce
       method,
       headers: {
         'Content-Type': 'application/json',
-        'x-mv-brand': env.SHIPPING_BRAND,
+        'x-mv-brand': brand,
         'x-mv-timestamp': timestamp,
         'x-mv-signature': sign(env.SHIPPING_SECRET, timestamp, rawBody),
       },
@@ -129,14 +132,15 @@ export async function shippingCreate(path, body, { attempts = 3, delayMs = 2000,
  */
 export function verifyShippingCallback(request, rawBody, { env = process.env, now = Date.now() } = {}) {
   const secret = env.SHIPPING_SECRET;
-  if (!secret || !env.SHIPPING_BRAND) return false;
+  const ourBrand = setting('SHIPPING_BRAND', env);
+  if (!secret) return false;
   const timestamp = request.headers.get('x-mv-timestamp') || '';
   if (!/^\d{1,12}$/.test(timestamp)) return false;
   const fresh = Math.abs(now / 1000 - Number(timestamp)) <= 300;
   const brand = (request.headers.get('x-mv-brand') || '').toLowerCase();
   const given = Buffer.from(request.headers.get('x-mv-signature') || '');
   const expected = Buffer.from(sign(secret, timestamp, rawBody));
-  return fresh && brand === String(env.SHIPPING_BRAND).toLowerCase()
+  return fresh && brand === ourBrand.toLowerCase()
     && given.length === expected.length && timingSafeEqual(given, expected);
 }
 

@@ -31,6 +31,7 @@ import { getStore } from "@netlify/blobs";
 import { readToken } from "./_shared/newsletter-token.mjs";
 import { hashKey } from "./_shared/rate-limit.mjs";
 import { LIMITS_MS, blobsFetch, fetchWithTimeout, stopwatch, withinBudget } from "./_shared/timing.mjs";
+import { setting } from './_shared/site-config.mjs';
 
 const ML = "https://connect.mailerlite.com/api";
 const USED_STORE = "newsletter-confirm-used";
@@ -60,7 +61,7 @@ export default async (req: Request, _context: Context) => {
 
   const secret = Netlify.env.get("NEWSLETTER_CONFIRM_SECRET");
   const apiKey = Netlify.env.get("MAILERLITE_API_KEY");
-  const groupId = Netlify.env.get("MAILERLITE_GROUP_ID");
+  const groupId = setting("MAILERLITE_GROUP_ID");
   if (!secret || !apiKey || !groupId) {
     console.error("newsletter-confirm misconfigured: missing NEWSLETTER_CONFIRM_SECRET, MAILERLITE_API_KEY or MAILERLITE_GROUP_ID");
     return problem(req, "error");

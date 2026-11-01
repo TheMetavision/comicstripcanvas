@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { emailHeader, button, EMAIL_BRAND } from './email.mjs';
+import { setting } from './site-config.mjs';
 import {
   claimStyleLimitNotice, styleLimitCta, styleLimitFor, familyForTemplate,
 } from './spend-guard.mjs';
@@ -91,7 +92,7 @@ export async function notifyStyleLimit({
     const limit = styleLimitFor(family);
     const label = FAMILY_LABEL[family] || family;
     const envVar = LIMIT_ENV_LABEL[family] || 'the limit for that family';
-    const to = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+    const to = setting('TEAM_EMAIL');
     const site = process.env.URL || EMAIL_BRAND.site;
     /* The same link the customer was given, so replying to them and reading
        what they were offered are the same thing. Absolute here because an

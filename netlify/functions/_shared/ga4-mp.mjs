@@ -78,17 +78,19 @@ export function buildPurchasePayload({ session, orderNumber, lineItems, clientId
   };
 }
 
+import { setting } from './site-config.mjs';
+
 /**
  * Send the purchase. Skips (without sending) when the session is test mode,
- * carries no valid ga_client_id, or GA4_MEASUREMENT_ID / GA4_API_SECRET is
- * unset. Waits at most timeoutMs for Google.
+ * carries no valid ga_client_id, or GA4_API_SECRET is unset (the measurement
+ * id is committed in site-config.mjs; GA4_MEASUREMENT_ID overrides it). Waits at most timeoutMs for Google.
  */
 export async function sendPurchase({
   session, orderNumber, lineItems,
   env = process.env, fetch: http = globalThis.fetch, timeoutMs = 3000,
 }) {
   try {
-    const measurementId = env.GA4_MEASUREMENT_ID;
+    const measurementId = setting('GA4_MEASUREMENT_ID', env);
     const apiSecret = env.GA4_API_SECRET;
     if (!measurementId || !apiSecret) return { sent: false, skipped: 'not-configured' };
     if (session?.livemode !== true) return { sent: false, skipped: 'test-mode' };

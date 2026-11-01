@@ -12,7 +12,7 @@
 //
 // Env vars (Netlify → Site configuration → Environment variables):
 //   SANITY_REBUILD_WEBHOOK_SECRET  the secret set on the Sanity "Netlify rebuild" webhook
-//                                 (not SANITY_WEBHOOK_SECRET: that one is the Order Shipped webhook's)
+//                                 (not SANITY_WEBHOOK_SECRET: that one is the "CSC orders" webhook's)
 //   CONTENT_BUILD_INTERNAL_KEY    shared with content-build-background
 //   URL                           set by Netlify (the site's main address)
 

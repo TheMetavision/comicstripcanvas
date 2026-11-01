@@ -2,6 +2,7 @@ import { Resend } from 'resend';
 import { emailHeader, button, EMAIL_BRAND } from './email.mjs';
 import { docIdFor } from './pp-id.mjs';
 import { FULL_BLEED, STYLE_LABEL, isStyle, styleForTemplate } from './artwork-styles.mjs';
+import { setting } from './site-config.mjs';
 
 /**
  * "The customer has approved their proof" — to the team, once per approval.
@@ -155,7 +156,7 @@ export async function notifyProofApproved({ sanity, id, approvedAt = new Date().
 
     const d = describeApproval(doc);
     const site = process.env.URL || EMAIL_BRAND.site;
-    const to = process.env.TEAM_EMAIL || process.env.EMAIL_FROM || 'orders@comicstripcanvas.co.uk';
+    const to = setting('TEAM_EMAIL');
 
     const { error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',

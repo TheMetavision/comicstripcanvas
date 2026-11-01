@@ -4,6 +4,7 @@ import { docIdFor, refOf } from './_shared/pp-id.mjs';
 import { PRICES } from './_shared/catalog.mjs';
 import { GA_CLIENT_ID_RE, GA_SESSION_ID_RE } from './_shared/ga4-mp.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
+import { setting } from './_shared/site-config.mjs';
 import {
   CLASSIC, FULL_BLEED, isStyle, styleLabel, styleLabelFor, resolveCustomiseFee,
 } from './_shared/artwork-styles.mjs';
@@ -246,7 +247,7 @@ export default async (req, context) => {
       });
     }
 
-    const siteUrl = process.env.URL || process.env.SITE_URL || 'https://comicstripcanvas.co.uk';
+    const siteUrl = process.env.URL || setting('SITE_URL');
 
     // Build Stripe line items
     const lineItems = items.map((item) => ({
