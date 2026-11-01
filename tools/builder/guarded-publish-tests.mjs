@@ -280,6 +280,14 @@ say('\n5. THE DAILY CHECK\n');
 
 if (OFFLINE) {
   say('\n6. LIVE — skipped (--offline)\n');
+} else if (!process.env.SANITY_WRITE_TOKEN) {
+  /* Without a token every write below is refused, the first one throws, and
+     the cleanup check that follows is an ANONYMOUS read -- which never returns
+     a dotted id like order.*, so it reported "deleted, confirmed gone" about a
+     stub that was never made. Refuse up front instead of reporting a phantom
+     run: a live run needs node --env-file=.env. */
+  fail++;
+  say('\n6. LIVE — NOT RUN: SANITY_WRITE_TOKEN is not set (run with node --env-file=.env, or pass --offline)\n');
 } else {
   say('\n6. LIVE: PUBLISHING A STALE DRAFT\n');
   const require = createRequire(path.join(ROOT, 'studio', 'package.json'));
