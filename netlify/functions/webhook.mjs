@@ -8,7 +8,7 @@ import { deleteBuild } from './_shared/delete-build.mjs';
 import { asDocId, docIdFor } from './_shared/pp-id.mjs';
 import { sendPurchase } from './_shared/ga4-mp.mjs';
 import { readDiscount, discountLabel, repeatWelcomeNote } from './_shared/discount.mjs';
-import { referralsFrom, issueReward } from './_shared/referral.mjs';
+import { checkReferral, referralNote, rewardReferrer } from './_shared/referral.mjs';
 import { consentFromSession } from './_shared/marketing-consent.mjs';
 import { shippingEnabled } from './_shared/shipping-client.mjs';
 import { proposeParcelPlan } from './_shared/parcel-bands.mjs';
@@ -842,53 +842,56 @@ async function fulfilOrder(session) {
 
       // ── Referral: thank the friend who sent this customer ─────
       /* A PAL- code on this order belongs to an earlier buyer ("give 10%,
-         get 10%"). Issue them a single-use 10% THANKS- code and email it.
-         Self-referral (own code, same email) is ignored by referralsFrom.
+         get 10%"). Issue them a single-use 10% THANKS- code and email it --
+         for genuinely new customers only: checkReferral (_shared/referral.mjs)
+         refuses the code's own owner and anyone with an earlier paid order,
+         and the refusal is recorded as referralError and put on the team
+         email below (referralCheckNote). A failed lookup skips the reward and
+         is flagged the same way; it never blocks the order or its emails.
          The email is only the promised reward: the code and the footer's site
          link, no "shop" button, so it is not a promotion.
          Best-effort: a failure is logged and recorded, never blocks the order.
          Stripe retries are covered by the order's create-once idempotency
          above, so this runs at most once per order. */
-      const referrals = referralsFrom(discount.promos, customerEmail);
-      if (referrals.length) {
-        const ref = referrals[0];
-        try {
-          const rewardCode = await issueReward(stripe, { referrerEmail: ref.referrerEmail, referredOrder: orderNumber });
-          await sanity.patch(orderId).set({
-            referredBy: { code: ref.code, referrerEmail: ref.referrerEmail, referrerOrder: ref.referrerOrder, rewardCode },
-          }).commit();
-          const resend = getResend();
-          if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
-          const { error } = await resend.emails.send({
-            from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
-            to: [ref.referrerEmail],
-            subject: 'WHAM! Your friend ordered. Here\'s your 10% thank you',
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
-                ${emailHeader}
-                <div style="padding: 32px 24px;">
-                  <h2 style="margin: 0 0 12px; font-size: 24px; color: ${BRAND.dark};">Thanks for spreading the word!</h2>
-                  <p style="color: #555; line-height: 1.7; margin: 0 0 20px; font-size: 15px;">
-                    Someone just used your friend code <strong>${ref.code}</strong> on their first order. As promised, here's
-                    <strong>10% off your next order</strong>:
-                  </p>
-                  <p style="text-align: center; margin: 0 0 20px;">
-                    <span style="display: inline-block; background: ${BRAND.yellow}; color: ${BRAND.dark}; font-size: 26px; font-weight: bold; letter-spacing: 2px; padding: 14px 28px; border: 3px solid ${BRAND.dark};">${rewardCode}</span>
-                  </p>
-                  <p style="color: #555; line-height: 1.7; margin: 0; font-size: 15px;">
-                    Enter it at checkout. It works once, on anything in the store, personalised designs included.
-                  </p>
+      let referralCheckNote = '';
+      try {
+        const referral = await checkReferral({ sanity, promos: discount.promos, buyerEmail: customerEmail, docId: orderId, sessionId: session.id });
+        referralCheckNote = referralNote(referral);
+        await rewardReferrer({
+          stripe, sanity, check: referral, orderId, orderNumber, flagOrderError,
+          sendRewardEmail: async (ref, rewardCode) => {
+            const resend = getResend();
+            if (!resend) throw new Error('RESEND_API_KEY is not set on this deploy');
+            const { error } = await resend.emails.send({
+              from: process.env.EMAIL_FROM || 'Comic Strip Canvas <orders@comicstripcanvas.co.uk>',
+              to: [ref.referrerEmail],
+              subject: 'WHAM! Your friend ordered. Here\'s your 10% thank you',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
+                  ${emailHeader}
+                  <div style="padding: 32px 24px;">
+                    <h2 style="margin: 0 0 12px; font-size: 24px; color: ${BRAND.dark};">Thanks for spreading the word!</h2>
+                    <p style="color: #555; line-height: 1.7; margin: 0 0 20px; font-size: 15px;">
+                      Someone just used your friend code <strong>${ref.code}</strong> on their first order. As promised, here's
+                      <strong>10% off your next order</strong>:
+                    </p>
+                    <p style="text-align: center; margin: 0 0 20px;">
+                      <span style="display: inline-block; background: ${BRAND.yellow}; color: ${BRAND.dark}; font-size: 26px; font-weight: bold; letter-spacing: 2px; padding: 14px 28px; border: 3px solid ${BRAND.dark};">${rewardCode}</span>
+                    </p>
+                    <p style="color: #555; line-height: 1.7; margin: 0; font-size: 15px;">
+                      Enter it at checkout. It works once, on anything in the store, personalised designs included.
+                    </p>
+                  </div>
+                  ${emailFooter}
                 </div>
-                ${emailFooter}
-              </div>
-            `,
-          });
-          if (error) throw new Error(`${error.name || 'Error'}: ${error.message || 'Resend rejected the send'}`);
-          console.log(`Referral reward ${rewardCode} sent to ${ref.referrerEmail} for ${orderNumber}`);
-        } catch (err) {
-          console.error(`Referral reward for ${orderNumber} failed:`, err?.message || err);
-          await flagOrderError('referralError', err?.message || String(err));
-        }
+              `,
+            });
+            if (error) throw new Error(`${error.name || 'Error'}: ${error.message || 'Resend rejected the send'}`);
+          },
+        });
+      } catch (err) {
+        // checkReferral and rewardReferrer never throw; belt and braces.
+        console.error(`Referral step for ${orderNumber} failed:`, err?.message || err);
       }
 
       // ── Send production team notification email ───────────────
@@ -913,6 +916,10 @@ async function fulfilOrder(session) {
               ${repeatWelcomeCode ? `<div style="background: #fff4e5; padding: 18px 20px; border-bottom: 3px solid ${BRAND.pink};">
                   <strong style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #8a4b00;">⚠ Repeat welcome code</strong>
                   <p style="margin: 8px 0 0; font-size: 13px; color: #8a4b00; line-height: 1.6;">${repeatWelcomeCode}</p>
+                </div>` : ''}
+              ${referralCheckNote ? `<div style="background: #fff4e5; padding: 18px 20px; border-bottom: 3px solid ${BRAND.pink};">
+                  <strong style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #8a4b00;">⚠ Friend code, no reward</strong>
+                  <p style="margin: 8px 0 0; font-size: 13px; color: #8a4b00; line-height: 1.6;">${referralCheckNote.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>
                 </div>` : ''}
               <div style="padding: 24px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
