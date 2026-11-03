@@ -1,7 +1,7 @@
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { isValidSignature, SIGNATURE_HEADER_NAME } from '@sanity/webhook';
-import { shippingEnabled, shippingCreate, quotedPounds } from './_shared/shipping-client.mjs';
+import { shippingEnabled, shippingCreate, quotedPounds, testOrderFlag } from './_shared/shipping-client.mjs';
 import { proposeParcelPlan, validateParcelPlan, parcelItems, recipientFor } from './_shared/parcel-bands.mjs';
 import { sendEmail, labelReadyEmail, shipmentProblemEmail } from './_shared/shipping-emails.mjs';
 
@@ -137,6 +137,8 @@ export async function dispatchOrder(orderId, { sanity, shipping, getResend, now 
         band: planned.band,
         recipient: recipientFor(order),
         items: parcelItems(planned, order.lineItems),
+        // A Stripe test-mode order: the free void label (shipping-client.mjs).
+        ...testOrderFlag(order),
       });
       made.push(parcelRecord(planned, res));
     } catch (err) {

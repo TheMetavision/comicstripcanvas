@@ -35,6 +35,14 @@ export default defineType({
       readOnly: true,
     }),
     defineField({
+      name: 'test',
+      title: 'Test order (Stripe test mode)',
+      type: 'boolean',
+      readOnly: true,
+      description: 'Paid with Stripe test keys on a preview. Nobody was charged; its labels are free void test labels.',
+      hidden: ({ value }) => !value,
+    }),
+    defineField({
       name: 'customerName',
       title: 'Customer Name',
       type: 'string',

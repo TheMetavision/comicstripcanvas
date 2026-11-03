@@ -188,3 +188,17 @@ test('the webhook: off unless SHIPPING_ENABLED, verified with @sanity/webhook, d
   assert.equal(good.status, 200);
   assert.equal(JSON.parse(good.body).outcome, 'label_created');
 });
+
+test('a Stripe test-mode order asks the service for a free test label; a live order does not', async () => {
+  for (const [extra, expectTest] of [[{ test: true }, true], [{}, false], [{ test: false }, false]]) {
+    const sanity = fakeSanity([baseOrder(extra)]);
+    const svc = fakeService();
+    const resend = fakeResend();
+    assert.equal((await run(sanity, svc, resend)).outcome, 'label_created');
+    assert.ok(svc.calls.length > 0);
+    for (const c of svc.calls) assert.equal(c.body.test === true, expectTest, JSON.stringify(extra));
+    if (!expectTest) assert.ok(svc.calls.every((c) => !('test' in c.body)), 'a live order never sends test');
+    // The team's label email is [TEST] for a test-mode order, whatever SHIPPING_TEST_MODE says.
+    assert.equal(/^\[TEST\] /.test(resend.sent[0].subject), expectTest || /^(true|1|yes)$/i.test(process.env.SHIPPING_TEST_MODE || ''));
+  }
+});

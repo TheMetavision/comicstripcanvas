@@ -287,3 +287,19 @@ test('rejected: the reason Alan wrote, once; no reason, no email', async () => {
   assert.match(resend.sent[0].html, /nail holes/);
   assert.ok(sanity.store.get('returnRequest.ret-abc').rejectionEmailSentAt);
 });
+
+test('the return of a Stripe test-mode order asks for a free test label; a live order\'s does not', async () => {
+  for (const [order, expectTest] of [[{ ...ORDER, test: true }, true], [ORDER, false]]) {
+    const sanity = fakeSanity([order, RET()]);
+    const calls = [];
+    const r = await processReturn('returnRequest.ret-abc', {
+      sanity, getResend: () => fakeResend(), log: quiet,
+      shipping: async (path, body) => { calls.push({ path, body }); return { parcelId: 77, carrier: 'inpost_gb', method: 'inpost_gb:l2l/size=m', trackingNumber: 'IP77', labelId: '77', quotedPrice: { amount: 0, currency: 'GBP' } }; },
+      fetchLabel: async () => Buffer.from('%PDF-label'),
+    });
+    assert.equal(r.outcome, 'label_sent');
+    assert.equal(calls[0].path, 'create-return');
+    assert.equal(calls[0].body.test === true, expectTest);
+    if (!expectTest) assert.equal('test' in calls[0].body, false);
+  }
+});

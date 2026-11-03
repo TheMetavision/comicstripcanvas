@@ -33,6 +33,17 @@ export const shippingEnabled = (env = process.env) => truthy(env.SHIPPING_ENABLE
 /** Free test labels instead of real ones. */
 export const shippingTestMode = (env = process.env) => truthy(env.SHIPPING_TEST_MODE);
 
+/**
+ * { test: true } for an order paid in Stripe test mode (order.test === true),
+ * {} for any other. Spread into a create-parcel / create-return body, so a
+ * test-mode order always gets the service's free void label, even once
+ * SHIPPING_TEST_MODE is off in production. The service honours it only for
+ * brands in its SHIPPING_TEST_BRANDS and answers 403 (nothing bought) for any
+ * other. A live order is never affected. Not sent on quote-return: a quote
+ * buys nothing.
+ */
+export const testOrderFlag = (order) => (order && order.test === true ? { test: true } : {});
+
 export function sign(secret, timestamp, rawBody) {
   return createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
 }

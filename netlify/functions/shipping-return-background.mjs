@@ -1,7 +1,7 @@
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import { isValidSignature, SIGNATURE_HEADER_NAME } from '@sanity/webhook';
-import { shippingEnabled, shippingCreate, shippingRequest, quotedPounds } from './_shared/shipping-client.mjs';
+import { shippingEnabled, shippingCreate, shippingRequest, quotedPounds, testOrderFlag } from './_shared/shipping-client.mjs';
 import { ALL_BANDS, recipientFor } from './_shared/parcel-bands.mjs';
 import {
   sendEmail, returnLabelEmail, returnDeclinedEmail, returnProblemEmail,
@@ -112,6 +112,8 @@ export async function processReturn(retId, { sanity, shipping, fetchLabel, getRe
         // Name, address and email: a collection from the customer's door is
         // booked against them.
         customer: { ...recipientFor(order), email: ret.customerEmail || order.customerEmail || '' },
+        // The return of a Stripe test-mode order: the free void label (shipping-client.mjs).
+        ...testOrderFlag(order),
         items: ret.lines.map((l) => ({
           description: [l.productTitle, l.format, l.size].filter(Boolean).join(' — ').slice(0, 120) || 'Print',
           qty: Math.max(1, Math.floor(Number(l.quantity) || 1)),

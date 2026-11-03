@@ -26,7 +26,10 @@ export const fromAddress = () => process.env.EMAIL_FROM || 'Comic Strip Canvas <
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n) => `£${(Number(n) || 0).toFixed(2)}`;
-const testTag = () => (['true', '1', 'yes'].includes(String(process.env.SHIPPING_TEST_MODE || '').toLowerCase()) ? '[TEST] ' : '');
+/* [TEST] while SHIPPING_TEST_MODE is on, and always for an order paid in
+   Stripe test mode (order.test), so a test order's team emails stay marked
+   once production's test mode is off. */
+const testTag = (test = false) => (test === true || ['true', '1', 'yes'].includes(String(process.env.SHIPPING_TEST_MODE || '').toLowerCase()) ? '[TEST] ' : '');
 
 /** Resend reports a refusal by returning an error, so both shapes become { ok, error }. */
 export async function sendEmail(resend, message) {
@@ -62,7 +65,7 @@ export function labelReadyEmail(order, parcels) {
       <td><a href="${esc(labelLink(p.labelId))}"><strong>Print label</strong></a></td></tr>`).join('');
   return {
     to: [teamAddress()],
-    subject: `${testTag()}🏷️ Label ready — ${order.orderNumber} (${parcels.length} parcel${parcels.length === 1 ? '' : 's'})`,
+    subject: `${testTag(order.test)}🏷️ Label ready — ${order.orderNumber} (${parcels.length} parcel${parcels.length === 1 ? '' : 's'})`,
     html: plainWrap(`
       <h2 style="margin:0 0 8px">Label${parcels.length === 1 ? '' : 's'} ready for ${esc(order.orderNumber)}</h2>
       <p>${esc(order.customerName || '')} — ${esc([order.shippingAddress?.city, order.shippingAddress?.postcode].filter(Boolean).join(', '))}</p>
@@ -75,7 +78,7 @@ export function labelReadyEmail(order, parcels) {
 export function shipmentProblemEmail(order, reason) {
   return {
     to: [teamAddress()],
-    subject: `${testTag()}⚠ Shipping problem — ${order.orderNumber || order._id}`,
+    subject: `${testTag(order?.test)}⚠ Shipping problem — ${order.orderNumber || order._id}`,
     html: plainWrap(`
       <h2 style="margin:0 0 8px">No label for ${esc(order.orderNumber || order._id)}</h2>
       <p>The order is marked <strong>Exception</strong> and nothing more will happen until you change it.</p>
@@ -90,7 +93,7 @@ export function parcelAlertEmail(order, parcel, event, kind) {
   const what = kind === 'returned_to_sender' ? 'is being returned to sender' : 'has a delivery problem';
   return {
     to: [teamAddress()],
-    subject: `${testTag()}⚠ ${order.orderNumber}: parcel ${parcel?.parcelRef || ''} ${what}`,
+    subject: `${testTag(order.test)}⚠ ${order.orderNumber}: parcel ${parcel?.parcelRef || ''} ${what}`,
     html: plainWrap(`
       <h2 style="margin:0 0 8px">${esc(order.orderNumber)}: parcel ${esc(parcel?.parcelRef || '?')} ${what}</h2>
       ${table(`

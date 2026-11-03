@@ -529,6 +529,9 @@ async function fulfilOrder(session) {
         orderNumber,
         stripeSessionId: session.id,
         stripePaymentId: session.payment_intent,
+        /* Paid with Stripe test keys (a preview): no charge. Its labels are
+           free void test labels (_shared/shipping-client.mjs testOrderFlag). */
+        ...(session.livemode === false ? { test: true } : {}),
         customerName,
         customerEmail,
         shippingAddress: {
@@ -904,7 +907,7 @@ async function fulfilOrder(session) {
           to: [teamEmail],
           /* The banner in the body is only seen once the mail is open. An order
              nobody can fulfil should be visible in the inbox list, before that. */
-          subject: `${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${repeatWelcomeCode ? '⚠ REPEAT WELCOME CODE — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
+          subject: `${session.livemode === false ? '[TEST] ' : ''}${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${repeatWelcomeCode ? '⚠ REPEAT WELCOME CODE — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">
