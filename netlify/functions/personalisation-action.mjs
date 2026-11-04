@@ -258,7 +258,7 @@ async function rerenderPrint(doc, id, origin) {
 }
 
 /* ------------------------------------------------------------------ email --- */
-function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
+export function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
   const mailto = `mailto:${shopEmail}?subject=${encodeURIComponent('Re: ' + subject)}`;
   const B = EMAIL_BRAND;
   const body = `font-family: ${B.sans}; font-size: 15px; line-height: 1.6; color: #444444;`;
@@ -319,15 +319,15 @@ function proofEmailHtml({ proofUrl, approveLink, shopEmail, subject, note }) {
 
         <tr>
           <td align="center" style="padding: 0 24px 30px; font-family: ${B.sans}; font-size: 13px; line-height: 1.6; color: #666666;">
-            <a href="${mailto}" style="color: ${B.pink}; text-decoration: underline;">Something&rsquo;s not right?</a>
+            <a href="${mailto}" style="color: ${B.pinkText}; text-decoration: underline;">Something&rsquo;s not right?</a>
             Reply and we&rsquo;ll put it right before anything is printed.
           </td>
         </tr>
 
         <tr>
           <td align="center" bgcolor="${B.dark}" style="background: ${B.dark}; padding: 22px 24px;">
-            <a href="${B.site}" style="font-family: ${B.sans}; font-size: 12px; color: ${B.pink}; text-decoration: none;">comicstripcanvas.co.uk</a>
-            <p style="margin: 8px 0 0; font-family: ${B.sans}; font-size: 11px; color: #555555;">&copy; ${new Date().getFullYear()} Comic Strip Canvas. All rights reserved.</p>
+            <a href="${B.site}" style="font-family: ${B.sans}; font-size: 12px; color: ${B.pinkOnDark}; text-decoration: none;">comicstripcanvas.co.uk</a>
+            <p style="margin: 8px 0 0; font-family: ${B.sans}; font-size: 11px; color: ${B.mutedOnDark};">&copy; ${new Date().getFullYear()} Comic Strip Canvas. All rights reserved.</p>
           </td>
         </tr>
       </table>

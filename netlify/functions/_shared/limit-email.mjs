@@ -142,13 +142,13 @@ export async function notifyStyleLimit({
                 <td style="padding: 8px 12px; color: #111; font-family: monospace;">${key}</td>
               </tr>
             </table>
-            <p style="color: #777; line-height: 1.6; margin: 0 0 22px; font-size: 13px;">
+            <p style="color: ${EMAIL_BRAND.muted}; line-height: 1.6; margin: 0 0 22px; font-size: 13px;">
               The visitor reference is a salted hash, not an address &mdash; it is only there so two
               refusals can be told apart. Nothing in this email identifies anybody.
             </p>
             ${button(STUDIO_PERSONALISATIONS, 'Open the Studio')}
             <p style="color: #444; line-height: 1.7; margin: 22px 0 18px; font-size: 15px; text-align: center;">
-              <a href="${contact}" style="color: ${EMAIL_BRAND.pink}; font-weight: bold;">
+              <a href="${contact}" style="color: ${EMAIL_BRAND.pinkText}; font-weight: bold;">
                 The contact form they were sent to
               </a>
             </p>
@@ -156,7 +156,7 @@ export async function notifyStyleLimit({
               To give everyone more room, change <strong>${envVar}</strong> in the Netlify
               environment variables. It is read per request, so no deploy is needed.
             </p>
-            <p style="color: #777; line-height: 1.7; margin: 0; font-size: 13px;">
+            <p style="color: ${EMAIL_BRAND.muted}; line-height: 1.7; margin: 0; font-size: 13px;">
               One email per visitor per day, however many times they try.
               ${site}
             </p>

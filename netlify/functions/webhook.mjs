@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
-import { emailHeader, teamEmailHeader } from './_shared/email.mjs';
+import { emailHeader, teamEmailHeader, EMAIL_BRAND } from './_shared/email.mjs';
 import { FULL_BLEED, styleOr, styleLabel, styleLabelFor } from './_shared/artwork-styles.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
@@ -67,6 +67,17 @@ const BRAND = {
   pink: '#EC008C',
   cyan: '#00AEEF',
   dark: '#111111',
+  /* Readable shades for text (WCAG 4.5:1), from _shared/email.mjs. The
+     colours above stay for borders, rules and large type. */
+  pinkText: EMAIL_BRAND.pinkText,
+  pinkOnDark: EMAIL_BRAND.pinkOnDark,
+  pinkBanner: EMAIL_BRAND.pinkBanner,
+  cyanText: EMAIL_BRAND.cyanText,
+  cyanBanner: EMAIL_BRAND.cyanBanner,
+  greenText: EMAIL_BRAND.greenText,
+  goldText: EMAIL_BRAND.goldText,
+  muted: EMAIL_BRAND.muted,
+  mutedOnDark: EMAIL_BRAND.mutedOnDark,
   site: 'https://comicstripcanvas.co.uk',
   studio: 'https://comicstripcanvas.sanity.studio',
   studioPersonalisations: 'https://comicstripcanvas.sanity.studio/structure/personalisations',
@@ -225,7 +236,7 @@ async function fulfilOrder(session) {
       const shippingCost = shippingPence / 100;
       const shippingLabel =
         shippingPence === 0 ? 'FREE UK P&P' : `£${shippingCost.toFixed(2)}`;
-      const shippingColor = shippingPence === 0 ? '#28a745' : '#333333';
+      const shippingColor = shippingPence === 0 ? BRAND.greenText : '#333333';
 
       // A promotion code entered on Stripe's page: goods only, never shipping.
       // totalAmount above is already the discounted total Stripe charged.
@@ -503,7 +514,7 @@ async function fulfilOrder(session) {
             return `<tr>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${item.title}${
                   sName
-                    ? `<br><span style="font-size: 12px; color: #777;">${sName}</span>`
+                    ? `<br><span style="font-size: 12px; color: ${BRAND.muted};">${sName}</span>`
                     : ''
                 }</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid #eee;">${FORMAT_LABELS[item.format] || item.format}</td>
@@ -651,10 +662,10 @@ async function fulfilOrder(session) {
       // ── Email templates ──────────────────────────────────────
       const emailFooter = `
         <div style="background: ${BRAND.dark}; padding: 24px; text-align: center;">
-          <p style="margin: 0 0 8px; font-size: 12px; color: #666;">
-            <a href="${BRAND.site}" style="color: ${BRAND.pink}; text-decoration: none;">comicstripcanvas.co.uk</a>
+          <p style="margin: 0 0 8px; font-size: 12px; color: ${BRAND.mutedOnDark};">
+            <a href="${BRAND.site}" style="color: ${BRAND.pinkOnDark}; text-decoration: none;">comicstripcanvas.co.uk</a>
           </p>
-          <p style="margin: 0; font-size: 11px; color: #555;">&copy; ${new Date().getFullYear()} Comic Strip Canvas. All rights reserved.</p>
+          <p style="margin: 0; font-size: 11px; color: ${BRAND.mutedOnDark};">&copy; ${new Date().getFullYear()} Comic Strip Canvas. All rights reserved.</p>
         </div>`;
 
       const orderTable = `
@@ -674,7 +685,7 @@ async function fulfilOrder(session) {
           <tfoot>
             ${discountAmount ? `<tr style="background: #f9f9f9;">
               <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">${discountLabel(discount.codes)}:</td>
-              <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #28a745;">&minus;£${discountAmount.toFixed(2)}</td>
+              <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: ${BRAND.greenText};">&minus;£${discountAmount.toFixed(2)}</td>
             </tr>` : ''}
             <tr style="background: #f9f9f9;">
               <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">Shipping:</td>
@@ -731,17 +742,17 @@ async function fulfilOrder(session) {
       // Photo gallery block for personalised orders (team email only)
       const photoGallery = isPersonalised && personalisationDetails?.uploadedImages?.length > 0
         ? `<div style="margin: 20px 0; padding: 20px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid ${BRAND.cyan};">
-            <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.cyan};">Customer Photos (${personalisationDetails.uploadedImages.length})${isStrip ? ' — IN PANEL ORDER 1→12' : ''}</strong><br/><br/>
+            <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.cyanText};">Customer Photos (${personalisationDetails.uploadedImages.length})${isStrip ? ' — IN PANEL ORDER 1→12' : ''}</strong><br/><br/>
             ${personalisationDetails.uploadedImages.map((url, i) => `
               <div style="display: inline-block; margin: 4px; text-align: center;">
                 <a href="${url}" target="_blank" style="text-decoration: none;">
                   <img src="${url}?w=150&h=150&fit=crop" alt="Photo ${i + 1}" style="width: 120px; height: 120px; object-fit: cover; border: 2px solid ${BRAND.cyan}; border-radius: 4px;" />
                 </a>
-                <div style="font-size: 11px; color: ${BRAND.cyan}; font-weight: bold; margin-top: 4px;">${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</div>
+                <div style="font-size: 11px; color: ${BRAND.cyanText}; font-weight: bold; margin-top: 4px;">${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</div>
               </div>
             `).join('')}
             <br/><br/>
-            ${personalisationDetails.uploadedImages.map((url, i) => `<a href="${url}" style="color: ${BRAND.cyan}; margin-right: 12px;">Full-size ${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</a>`).join('')}
+            ${personalisationDetails.uploadedImages.map((url, i) => `<a href="${url}" style="color: ${BRAND.cyanText}; margin-right: 12px;">Full-size ${isStrip ? `Panel ${i + 1}` : `Photo ${i + 1}`}</a>`).join('')}
           </div>`
         : '';
 
@@ -781,7 +792,7 @@ async function fulfilOrder(session) {
           + ' We\'ll check your design over and email you a proof to approve —'
           + ' <strong>nothing is printed until you\'re happy with it</strong>.'
           + ' Once you\'ve approved your proof, please allow'
-          + ` <strong style="color: ${BRAND.cyan};">3-6 working days</strong> for printing`
+          + ` <strong style="color: ${BRAND.cyanText};">3-6 working days</strong> for printing`
           + ' and dispatch, plus 1-2 working days for delivery.';
 
       /* The closing line names the next email that will arrive. For a
@@ -815,12 +826,12 @@ async function fulfilOrder(session) {
                 ${orderTable}
                 ${shippingBlock}
 
-                <p style="color: #888; line-height: 1.6; margin: 24px 0 0; font-size: 13px;">
+                <p style="color: ${BRAND.muted}; line-height: 1.6; margin: 24px 0 0; font-size: 13px;">
                   ${nextEmailText}
                 </p>
                 
-                <p style="color: #aaa; margin-top: 24px; font-size: 12px;">
-                  Order number: <strong style="color: ${BRAND.pink};">${orderNumber}</strong><br/>
+                <p style="color: ${BRAND.muted}; margin-top: 24px; font-size: 12px;">
+                  Order number: <strong style="color: ${BRAND.pinkText};">${orderNumber}</strong><br/>
                   Placed: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </p>
               </div>
@@ -911,10 +922,10 @@ async function fulfilOrder(session) {
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
               ${teamEmailHeader}
-              <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">
+              <div style="background: ${isPersonalised ? BRAND.cyanBanner : BRAND.pinkBanner}; padding: 20px; text-align: center;">
                 <h1 style="color: #fff; margin: 0; font-size: 22px; letter-spacing: 1px;">${isPersonalised ? '🎨 PERSONALISED ORDER' : '📦 NEW ORDER RECEIVED'}</h1>
-                <p style="color: rgba(255,255,255,0.9); margin: 6px 0 0; font-size: 15px; font-weight: bold;">${orderNumber}</p>
-                <p style="color: rgba(255,255,255,0.8); margin: 4px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                <p style="color: #ffffff; margin: 6px 0 0; font-size: 15px; font-weight: bold;">${orderNumber}</p>
+                <p style="color: #ffffff; margin: 4px 0 0; font-size: 13px;">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
               ${missingPrintBlock}
               ${repeatWelcomeCode ? `<div style="background: #fff4e5; padding: 18px 20px; border-bottom: 3px solid ${BRAND.pink};">
@@ -929,10 +940,10 @@ async function fulfilOrder(session) {
                 <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                   <div>
                     <h2 style="margin: 0 0 4px; font-size: 20px;">${customerName}</h2>
-                    <p style="color: #666; margin: 0;"><a href="mailto:${customerEmail}" style="color: ${BRAND.pink};">${customerEmail}</a></p>
+                    <p style="color: #666; margin: 0;"><a href="mailto:${customerEmail}" style="color: ${BRAND.pinkText};">${customerEmail}</a></p>
                   </div>
                   <div style="text-align: right;">
-                    <span style="font-size: 28px; font-weight: bold; color: ${isPersonalised ? BRAND.cyan : BRAND.pink};">£${totalAmount.toFixed(2)}</span>
+                    <span style="font-size: 28px; font-weight: bold; color: ${isPersonalised ? BRAND.cyanText : BRAND.pink};">£${totalAmount.toFixed(2)}</span>
                   </div>
                 </div>
                 
@@ -941,7 +952,7 @@ async function fulfilOrder(session) {
 
                 ${isPersonalised && personalisationDetails ? `
                 <div style="margin: 20px 0; padding: 20px; background: #fff9e6; border-radius: 8px; border-left: 4px solid ${BRAND.yellow};">
-                  <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #b8860b;">Personalisation Brief</strong><br/><br/>
+                  <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.goldText};">Personalisation Brief</strong><br/><br/>
                   <table style="font-size: 14px; color: #333;">
                     <tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Style:</td><td style="padding: 4px 0;">${personalisationDetails.style}</td></tr>
                     ${!isStrip && personalisationDetails.customerTitle ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold; color: #666;">Name/Title:</td><td style="padding: 4px 0;">${personalisationDetails.customerTitle}</td></tr>` : ''}
@@ -955,24 +966,24 @@ async function fulfilOrder(session) {
                 ` : ''}
                 
                 <div style="margin-top: 24px; padding: 20px; background: #f0fff0; border-radius: 8px; border-left: 4px solid #28a745;">
-                  <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #28a745;">Action Required</strong><br/><br/>
+                  <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: ${BRAND.greenText};">Action Required</strong><br/><br/>
                   ${builderPersonalised ? `
                   <p style="color: #444; line-height: 1.7; margin: 0; font-size: 14px;">
                     This order was built by the customer in the product builder. Their approved
                     layout, photos and notes are on the
-                    <a href="${BRAND.studioPersonalisations}" style="color: ${BRAND.pink}; font-weight: bold;">Personalisations</a>
+                    <a href="${BRAND.studioPersonalisations}" style="color: ${BRAND.pinkText}; font-weight: bold;">Personalisations</a>
                     entry in the Studio (Needs attention). The print file is produced by the render
                     job and appears on the same entry once ready &mdash; nothing to prepare by hand.
                   </p>` : `
                   <ol style="color: #444; line-height: 2; margin: 0; padding-left: 20px; font-size: 14px;">
-                    <li>Open <a href="${BRAND.studio}" style="color: ${BRAND.pink}; font-weight: bold;">Sanity Studio</a> to view this order</li>
+                    <li>Open <a href="${BRAND.studio}" style="color: ${BRAND.pinkText}; font-weight: bold;">Sanity Studio</a> to view this order</li>
                     ${isPersonalised
                       ? '<li>Download customer photos from links above</li><li>Create the custom artwork from the brief</li><li>Print and dispatch, then add tracking and update status to "Dispatched"</li>'
                       : '<li>Prepare artwork for printing</li><li>Update status to "In Production"</li><li>Add tracking and update to "Dispatched"</li>'}
                   </ol>`}
                 </div>
                 
-                <p style="color: #aaa; margin-top: 20px; font-size: 11px;">
+                <p style="color: ${BRAND.muted}; margin-top: 20px; font-size: 11px;">
                   ${orderNumber} | Stripe: ${session.id} | Payment: ${session.payment_intent}
                 </p>
               </div>

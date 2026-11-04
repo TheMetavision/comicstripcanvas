@@ -10,6 +10,56 @@
  * survives in both is a single-column table with attributes and inline styles.
  */
 
+/* ------------------------------------------------------------ contrast --- */
+
+const hexRgb = (hex) => {
+  let h = String(hex || '').trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map((c) => c + c).join('');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+};
+const rgbHex = (rgb) => '#' + rgb.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('').toUpperCase();
+const luminance = (rgb) => {
+  const [r, g, b] = rgb.map((c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+/** WCAG contrast ratio of two #hex colours (1 when either cannot be read). */
+export function contrastRatio(a, b) {
+  const x = hexRgb(a); const y = hexRgb(b);
+  if (!x || !y) return 1;
+  const [hi, lo] = [luminance(x), luminance(y)].sort((p, q) => q - p);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * A shade of `color` that is readable on `bg`: the colour itself if it
+ * already reaches `min` (WCAG 4.5:1 for body text), otherwise the same hue
+ * mixed a step at a time towards black (light background) or white (dark
+ * background) until it does. So the brand pink stays pink -- a deeper pink on
+ * white, a lighter one on the dark footer -- rather than turning grey.
+ * Contrast is symmetric, so it also gives a banner background that white (or
+ * dark) text can sit on. An unreadable value falls back to near-black/white.
+ */
+export function readableShade(color, bg = '#ffffff', min = 4.5) {
+  const back = hexRgb(bg) || [255, 255, 255];
+  const towards = luminance(back) > 0.18 ? [0, 0, 0] : [255, 255, 255];
+  const rgb = hexRgb(color);
+  if (!rgb) return rgbHex(towards.map((t) => (t ? 245 : 17)));
+  const want = min + 0.02;
+  for (let i = 0; i <= 100; i++) {
+    const mixed = rgb.map((c, k) => c + (towards[k] - c) * (i / 100));
+    if (contrastRatio(rgbHex(mixed), rgbHex(back)) >= want) return i ? rgbHex(mixed) : String(color).toUpperCase();
+  }
+  return rgbHex(towards);
+}
+
+/* The lightest-but-one background a brand colour is put on as text: the pale
+   panels (#f0f9ff, #f5f5f5, #fff9e6, ...) are all lighter than this, so a
+   shade readable here is readable on every one of them and on white. */
+const PANEL = '#EEEEEE';
+const BASE = { pink: '#EC008C', cyan: '#00AEEF', green: '#28A745', gold: '#B8860B', dark: '#111111' };
+
 export const EMAIL_BRAND = {
   // The 440x440 EmailLogo.png asset out of Sanity. Only 48% of that square is
   // artwork -- the rest is dead black padding -- so it is cropped to the mark
@@ -35,6 +85,19 @@ export const EMAIL_BRAND = {
   headerBar: '#000000',
   site: 'https://comicstripcanvas.co.uk',
   sans: "Arial, Helvetica, sans-serif",
+
+  /* Readable shades of the brand colours, for TEXT (WCAG 4.5:1). The colours
+     above stay for rules, borders and large type. Worked out from the brand
+     values, so changing one moves its shades with it. */
+  pinkText: readableShade(BASE.pink, PANEL),     // links, order numbers on white
+  pinkOnDark: readableShade(BASE.pink, BASE.dark), // links in the dark footer
+  pinkBanner: readableShade(BASE.pink, '#FFFFFF'), // a pink panel white text sits on
+  cyanText: readableShade(BASE.cyan, PANEL),
+  cyanBanner: readableShade(BASE.cyan, '#FFFFFF'),
+  greenText: readableShade(BASE.green, PANEL),   // FREE UK P&P, discounts, "Action Required"
+  goldText: readableShade(BASE.gold, '#FFF9E6'),
+  muted: '#666666',                              // small print on white (was #777/#888/#aaa)
+  mutedOnDark: '#A3A3A3',                        // small print in the dark footer (was #555/#666)
 };
 
 // Cropped region is 211px wide natively, comfortably above the 160px it is

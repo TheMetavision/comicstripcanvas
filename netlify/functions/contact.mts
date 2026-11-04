@@ -54,6 +54,7 @@ import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
 import crypto from 'node:crypto';
 import { setting } from './_shared/site-config.mjs';
+import { readableShade } from './_shared/email.mjs';
 
 // ── CORS — restrict to the live origin + localhost for dev ───────────────
 const ALLOWED_ORIGINS = [
@@ -208,9 +209,14 @@ function renderEmailShell({ brandName, logoUrl, headerBg, accent, siteUrl, prehe
   const year = new Date().getFullYear();
   const bg = headerBg || '#0e0e14';
   const rule = accent || bg;
+  /* BRAND_ACCENT can be overridden per deploy and is also the footer link's
+     colour, so the link gets a shade of it that is readable on white (WCAG
+     4.5:1). The rule above keeps the accent exactly as set. */
+  const linkColour = readableShade(rule, '#ffffff');
+  const wordmark = readableShade('#ffffff', bg);
   const header = logoUrl
     ? `<img src="${logoUrl}" alt="${escapeHtml(brandName)}" width="200" style="display:block;width:200px;max-width:64%;height:auto;border:0;margin:0 auto;" />`
-    : `<span style="font-size:20px;font-weight:800;letter-spacing:1px;color:#ffffff;">${escapeHtml(brandName)}</span>`;
+    : `<span style="font-size:20px;font-weight:800;letter-spacing:1px;color:${wordmark};">${escapeHtml(brandName)}</span>`;
   const host = siteUrl ? siteUrl.replace(/^https?:\/\//, '') : '';
   return `<!DOCTYPE html>
 <html lang="en"><head>
@@ -226,15 +232,15 @@ function renderEmailShell({ brandName, logoUrl, headerBg, accent, siteUrl, prehe
     <tr><td align="center" bgcolor="${bg}" style="padding:24px 28px;background:${bg};">${header}</td></tr>
     <tr><td style="height:3px;background:${rule};font-size:0;line-height:0;">&nbsp;</td></tr>
     <tr><td style="padding:28px;">${innerHtml}</td></tr>
-    <tr><td style="padding:18px 28px;border-top:1px solid #eee;font-size:12px;line-height:1.6;color:#9aa0aa;">
-      ${escapeHtml(brandName)}${host ? ` &middot; <a href="${siteUrl}" style="color:${rule};text-decoration:none;">${escapeHtml(host)}</a>` : ''}<br />&copy; ${year} ${escapeHtml(brandName)}
+    <tr><td style="padding:18px 28px;border-top:1px solid #eee;font-size:12px;line-height:1.6;color:#6b7280;">
+      ${escapeHtml(brandName)}${host ? ` &middot; <a href="${siteUrl}" style="color:${linkColour};text-decoration:none;">${escapeHtml(host)}</a>` : ''}<br />&copy; ${year} ${escapeHtml(brandName)}
     </td></tr>
   </table>
 </body></html>`;
 }
 
 // ── Notification email (to the team) ─────────────────────────────────────
-function buildNotificationHtml(brand, { refCode, name, email, phone, subject, message, pageUri }) {
+export function buildNotificationHtml(brand, { refCode, name, email, phone, subject, message, pageUri }) {
   const inner = `
     <h1 style="margin:0 0 16px;font-size:18px;font-weight:700;color:#1a1a2e;">New contact-form submission</h1>
     <table cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;line-height:1.6;">
@@ -250,7 +256,7 @@ function buildNotificationHtml(brand, { refCode, name, email, phone, subject, me
 }
 
 // ── Acknowledgement email (to the customer) ──────────────────────────────
-function buildAckHtml(brand, { firstName, refCode, subject, message }) {
+export function buildAckHtml(brand, { firstName, refCode, subject, message }) {
   const inner = `
     <h1 style="margin:0 0 14px;font-size:18px;font-weight:700;color:#1a1a2e;">Thanks &mdash; we&rsquo;ve got your message</h1>
     <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Hi ${escapeHtml(firstName)}, thanks for getting in touch with ${escapeHtml(brand.brandName)}. We&rsquo;ve received your message and will get back to you as soon as we can. Here&rsquo;s a copy for your records:</p>

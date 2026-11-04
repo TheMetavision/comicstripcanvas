@@ -60,7 +60,7 @@ export function labelReadyEmail(order, parcels) {
   const rows = `<tr style="background:#f3f3f3"><th>Parcel</th><th>Band</th><th>Carrier / option</th><th>Quoted</th><th>Tracking</th><th>Label</th></tr>`
     + parcels.map((p) => `<tr>
       <td>${esc(p.parcelRef)}</td><td>${esc(p.band)}</td>
-      <td>${esc(carrierName(p.carrier))}<br><span style="color:#777">${esc(p.option || '')}</span></td>
+      <td>${esc(carrierName(p.carrier))}<br><span style="color:${EMAIL_BRAND.muted}">${esc(p.option || '')}</span></td>
       <td>${p.quotedPrice != null ? money(p.quotedPrice) : '—'}</td>
       <td>${esc(p.trackingNumber || '—')}</td>
       <td><a href="${esc(labelLink(p.labelId))}"><strong>Print label</strong></a></td></tr>`).join('');
@@ -216,7 +216,7 @@ export function returnLabelEmail(ret, { pdf, instructions, postage }) {
         ? p("This label is free: you don't pay anything to send it back.")
         : p('Please return the item unused and in its original packaging. We refund within 14 days of receiving it back.')}
       ${p('Any questions, just reply to this email.')}
-      <p style="color: #aaa; margin-top: 24px; font-size: 12px;">Return reference: <strong style="color: ${EMAIL_BRAND.pink};">${esc(ret.returnNumber)}</strong></p>`),
+      <p style="color: ${EMAIL_BRAND.muted}; margin-top: 24px; font-size: 12px;">Return reference: <strong style="color: ${EMAIL_BRAND.pinkText};">${esc(ret.returnNumber)}</strong></p>`),
   };
 }
 
@@ -232,6 +232,6 @@ export function returnDeclinedEmail(ret) {
       ${p('If your item arrived faulty, damaged or not as described, your rights are not affected — just reply to this email with your order number and some photos, and we\'ll put it right.')}
       ${p('If you have any other questions, reply to this email and we\'ll be happy to help.')}
       <div style="margin: 22px 0;">${button(EMAIL_BRAND.site, 'Visit the shop')}</div>
-      <p style="color: #aaa; margin-top: 24px; font-size: 12px;">Return reference: ${esc(ret.returnNumber)}</p>`),
+      <p style="color: ${EMAIL_BRAND.muted}; margin-top: 24px; font-size: 12px;">Return reference: ${esc(ret.returnNumber)}</p>`),
   };
 }

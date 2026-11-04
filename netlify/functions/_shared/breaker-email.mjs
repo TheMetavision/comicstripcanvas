@@ -86,7 +86,7 @@ export async function notifyBreakerTripped({ store, calls, origin = 'customer', 
               environment variables. It is read per request, so no deploy is needed &mdash;
               the next poll picks the paused photos up.
             </p>
-            <p style="color: #777; line-height: 1.7; margin: 0; font-size: 13px;">
+            <p style="color: ${EMAIL_BRAND.muted}; line-height: 1.7; margin: 0; font-size: 13px;">
               ${site}
             </p>
           </div>

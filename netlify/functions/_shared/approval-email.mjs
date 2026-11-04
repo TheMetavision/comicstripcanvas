@@ -91,7 +91,7 @@ export function approvalHtml({ id, d, proofUrl, adminUrl, orderUrl, approvedAt }
                 <td style="padding: 8px 12px;${shade ? ' background: #f5f5f5;' : ''} color: #111;">${value}</td>
               </tr>`;
   const edited = d.editCount > 0
-    ? `<strong style="color: ${EMAIL_BRAND.pink};">Edited by us</strong> &mdash; ${d.editCount} time${d.editCount === 1 ? '' : 's'}`
+    ? `<strong style="color: ${EMAIL_BRAND.pinkText};">Edited by us</strong> &mdash; ${d.editCount} time${d.editCount === 1 ? '' : 's'}`
     : 'No &mdash; the customer&rsquo;s own design';
   const when = approvedAt.replace('T', ' ').slice(0, 16) + ' UTC';
 
@@ -124,7 +124,7 @@ export function approvalHtml({ id, d, proofUrl, adminUrl, orderUrl, approvedAt }
             ${button(adminUrl, 'Open the personalisation')}
             ${orderUrl ? `
             <p style="color: #444; line-height: 1.7; margin: 22px 0 0; font-size: 15px; text-align: center;">
-              <a href="${esc(orderUrl)}" style="color: ${EMAIL_BRAND.pink}; font-weight: bold;">The order in the Studio</a>
+              <a href="${esc(orderUrl)}" style="color: ${EMAIL_BRAND.pinkText}; font-weight: bold;">The order in the Studio</a>
             </p>` : ''}
           </div>
         </div>`;

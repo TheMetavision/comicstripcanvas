@@ -1,4 +1,4 @@
-import { emailHeader } from './email.mjs';
+import { emailHeader, EMAIL_BRAND } from './email.mjs';
 import Stripe from 'stripe';
 import { friendCodeFor } from './referral.mjs';
 import { addShippedCustomer } from './mailerlite-customer.mjs';
@@ -33,6 +33,14 @@ const BRAND = {
   pink: '#EC008C',
   cyan: '#00AEEF',
   dark: '#111111',
+  /* Readable shades for text (WCAG 4.5:1), from _shared/email.mjs. The
+     colours above stay for borders, rules and large type. */
+  pinkText: EMAIL_BRAND.pinkText,
+  pinkOnDark: EMAIL_BRAND.pinkOnDark,
+  pinkBanner: EMAIL_BRAND.pinkBanner,
+  greenText: EMAIL_BRAND.greenText,
+  muted: EMAIL_BRAND.muted,
+  mutedOnDark: EMAIL_BRAND.mutedOnDark,
   site: 'https://comicstripcanvas.co.uk',
   facebook: 'https://www.facebook.com/ComicStripCanvas/',
   instagram: 'https://www.instagram.com/comicstripcanvas',
@@ -120,7 +128,7 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
   const totalAmount = order.totalAmount || 0;
   const shippingCost = order.shippingCost || 0;
   const shippingLabel = shippingCost === 0 ? 'FREE UK P&P' : `£${shippingCost.toFixed(2)}`;
-  const shippingColor = shippingCost === 0 ? '#28a745' : '#333333';
+  const shippingColor = shippingCost === 0 ? BRAND.greenText : '#333333';
   // Recorded by webhook.mjs from the Stripe session; absent on undiscounted orders.
   const discountAmount = order.discountAmount || 0;
   const shipping = order.shippingAddress || {};
@@ -144,16 +152,16 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
   // ── Email building blocks ────────────────────────────────────────────────
   const emailFooter = `
     <div style="background: ${BRAND.dark}; padding: 24px; text-align: center;">
-      <p style="margin: 0 0 12px; font-size: 13px; color: #aaa;">Follow us</p>
+      <p style="margin: 0 0 12px; font-size: 13px; color: ${BRAND.mutedOnDark};">Follow us</p>
       <p style="margin: 0 0 16px;">
-        <a href="${BRAND.facebook}" style="color: ${BRAND.pink}; text-decoration: none; margin: 0 8px; font-size: 13px;">Facebook</a>
-        <a href="${BRAND.instagram}" style="color: ${BRAND.pink}; text-decoration: none; margin: 0 8px; font-size: 13px;">Instagram</a>
-        <a href="${BRAND.tiktok}" style="color: ${BRAND.pink}; text-decoration: none; margin: 0 8px; font-size: 13px;">TikTok</a>
+        <a href="${BRAND.facebook}" style="color: ${BRAND.pinkOnDark}; text-decoration: none; margin: 0 8px; font-size: 13px;">Facebook</a>
+        <a href="${BRAND.instagram}" style="color: ${BRAND.pinkOnDark}; text-decoration: none; margin: 0 8px; font-size: 13px;">Instagram</a>
+        <a href="${BRAND.tiktok}" style="color: ${BRAND.pinkOnDark}; text-decoration: none; margin: 0 8px; font-size: 13px;">TikTok</a>
       </p>
-      <p style="margin: 0 0 8px; font-size: 12px; color: #666;">
-        <a href="${BRAND.site}" style="color: ${BRAND.pink}; text-decoration: none;">comicstripcanvas.co.uk</a>
+      <p style="margin: 0 0 8px; font-size: 12px; color: ${BRAND.mutedOnDark};">
+        <a href="${BRAND.site}" style="color: ${BRAND.pinkOnDark}; text-decoration: none;">comicstripcanvas.co.uk</a>
       </p>
-      <p style="margin: 0; font-size: 11px; color: #555;">&copy; ${now.getFullYear()} Comic Strip Canvas. All rights reserved.</p>
+      <p style="margin: 0; font-size: 11px; color: ${BRAND.mutedOnDark};">&copy; ${now.getFullYear()} Comic Strip Canvas. All rights reserved.</p>
     </div>`;
 
   const orderTable = `
@@ -173,7 +181,7 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
       <tfoot>
         ${discountAmount ? `<tr style="background: #f9f9f9;">
           <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">${order.discountCode ? `Discount (${order.discountCode})` : 'Discount'}:</td>
-          <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: #28a745;">&minus;£${discountAmount.toFixed(2)}</td>
+          <td colspan="2" style="padding: 14px 16px; text-align: right; font-weight: bold; color: ${BRAND.greenText};">&minus;£${discountAmount.toFixed(2)}</td>
         </tr>` : ''}
         <tr style="background: #f9f9f9;">
           <td colspan="3" style="padding: 14px 16px; text-align: right; font-weight: bold; font-size: 15px;">Shipping:</td>
@@ -202,16 +210,16 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
   // Big number, branded button if we have a tracking URL, plain copy if not.
   const block = ({ number, url, name, heading }) => `
     <div style="background: #ffffff; padding: 28px 20px; margin: 20px 0; border: 4px solid ${BRAND.dark}; border-radius: 8px; text-align: center; box-shadow: 4px 4px 0 ${BRAND.dark};">
-      <p style="margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: #888;">${heading}</p>
+      <p style="margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: ${BRAND.muted};">${heading}</p>
       <p style="margin: 0 0 6px; font-size: 22px; font-weight: bold; color: ${BRAND.dark}; font-family: 'Courier New', monospace; word-break: break-all;">${number}</p>
-      <p style="margin: 0 0 20px; font-size: 13px; color: #666;">Carrier: <strong style="color: ${BRAND.pink};">${name}</strong></p>
+      <p style="margin: 0 0 20px; font-size: 13px; color: #666;">Carrier: <strong style="color: ${BRAND.pinkText};">${name}</strong></p>
       ${url
         ? `<a href="${url}" target="_blank"
-             style="display: inline-block; background: ${BRAND.pink}; color: #ffffff; text-decoration: none; padding: 14px 32px; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; border: 3px solid ${BRAND.dark}; box-shadow: 3px 3px 0 ${BRAND.dark};">
+             style="display: inline-block; background: ${BRAND.pinkBanner}; color: #ffffff; text-decoration: none; padding: 14px 32px; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; border: 3px solid ${BRAND.dark}; box-shadow: 3px 3px 0 ${BRAND.dark};">
              Track Your Parcel →
            </a>`
         : `<p style="margin: 0; font-size: 13px; color: #555;">Use the tracking number above on the ${name} website to follow your parcel.</p>`}
-      <p style="margin: 18px 0 0; font-size: 12px; color: #888;">Tracking can take up to 24 hours to become active after dispatch — don't worry if the link doesn't show anything yet.</p>
+      <p style="margin: 18px 0 0; font-size: 12px; color: ${BRAND.muted};">Tracking can take up to 24 hours to become active after dispatch — don't worry if the link doesn't show anything yet.</p>
     </div>`;
 
   const trackingBlock = viaService
@@ -225,8 +233,8 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
 
   const deliveryDays = viaService ? '2-3 working days' : '1-2 working days';
   const intro = viaService && parcels.length > 1
-    ? `Great news — your Comic Strip Canvas order has been carefully packaged and dispatched in ${parcels.length} parcels. It's now with <strong style="color: ${BRAND.pink};">${esc(shownCarrier)}</strong> for delivery to you.`
-    : `Great news — your Comic Strip Canvas order has been carefully packaged and dispatched. It's now with <strong style="color: ${BRAND.pink};">${viaService ? esc(shownCarrier) : singleCarrierName}</strong> for delivery to you.`;
+    ? `Great news — your Comic Strip Canvas order has been carefully packaged and dispatched in ${parcels.length} parcels. It's now with <strong style="color: ${BRAND.pinkText};">${esc(shownCarrier)}</strong> for delivery to you.`
+    : `Great news — your Comic Strip Canvas order has been carefully packaged and dispatched. It's now with <strong style="color: ${BRAND.pinkText};">${viaService ? esc(shownCarrier) : singleCarrierName}</strong> for delivery to you.`;
 
   // ── Compose the full email ───────────────────────────────────────────────
   const html = `
@@ -254,11 +262,11 @@ export function buildDispatchEmail(order, { now = new Date() } = {}) {
 
         <div style="background: #fff9e6; padding: 18px 20px; border-radius: 8px; margin: 24px 0; border-left: 4px solid ${BRAND.yellow}; text-align: center;">
           <strong style="font-size: 14px; color: ${BRAND.dark};">We'd love to see it on your wall!</strong><br/>
-          <span style="font-size: 13px; color: #555;">Tag us <strong>@comicstripcanvas</strong> on <a href="${BRAND.facebook}" style="color: ${BRAND.pink}; text-decoration: none;">Facebook</a>, <a href="${BRAND.instagram}" style="color: ${BRAND.pink}; text-decoration: none;">Instagram</a> or <a href="${BRAND.tiktok}" style="color: ${BRAND.pink}; text-decoration: none;">TikTok</a> and we'll share the love.</span>
+          <span style="font-size: 13px; color: #555;">Tag us <strong>@comicstripcanvas</strong> on <a href="${BRAND.facebook}" style="color: ${BRAND.pinkText}; text-decoration: none;">Facebook</a>, <a href="${BRAND.instagram}" style="color: ${BRAND.pinkText}; text-decoration: none;">Instagram</a> or <a href="${BRAND.tiktok}" style="color: ${BRAND.pinkText}; text-decoration: none;">TikTok</a> and we'll share the love.</span>
         </div>
 
-        <p style="color: #aaa; margin-top: 28px; font-size: 12px;">
-          Order number: <strong style="color: ${BRAND.pink};">${orderNumber}</strong><br/>
+        <p style="color: ${BRAND.muted}; margin-top: 28px; font-size: 12px;">
+          Order number: <strong style="color: ${BRAND.pinkText};">${orderNumber}</strong><br/>
           Dispatched: ${now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
       </div>

@@ -74,7 +74,7 @@ export function staleDraftsEmail(drafts, maxAgeHours = MAX_AGE_HOURS) {
                   ${d.ageHours} h
                 </td>
                 <td style="padding: 8px 12px;${i % 2 ? '' : ' background: #f5f5f5;'}">
-                  <a href="${esc(studioLink(d))}" style="color: ${EMAIL_BRAND.pink}; font-weight: bold;">Open</a>
+                  <a href="${esc(studioLink(d))}" style="color: ${EMAIL_BRAND.pinkText}; font-weight: bold;">Open</a>
                 </td>
               </tr>`).join('');
   const html = `
@@ -105,7 +105,7 @@ export function staleDraftsEmail(drafts, maxAgeHours = MAX_AGE_HOURS) {
               written since and only applies the status, tracking, carrier and notes you changed.
             </p>
             ${button(`${STUDIO}/structure`, 'Open the Studio')}
-            <p style="color: #777; line-height: 1.7; margin: 22px 0 0; font-size: 13px;">
+            <p style="color: ${EMAIL_BRAND.muted}; line-height: 1.7; margin: 22px 0 0; font-size: 13px;">
               Checked daily. No email on a day with nothing to report.
             </p>
           </div>
