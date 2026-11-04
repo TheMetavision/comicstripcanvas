@@ -11,7 +11,8 @@ import { carrierName } from './parcel-bands.mjs';
  * Two things can decide an order has shipped:
  *   - order-shipped.mjs, the Sanity webhook, when Alan sets status Dispatched
  *     with a tracking number by hand (the way it has always worked);
- *   - shipping-event.mjs, when a Sendcloud parcel gets its first carrier scan.
+ *   - shipping-event-background.mjs (via _shared/shipping-events.mjs), when a
+ *     Sendcloud parcel gets its first carrier scan.
  * Both come here, and this is the only place the email is sent from, so there
  * is one email, one shippingEmailSentAt (which photo retention counts its 90
  * days from) and one start of the post-delivery sequence.

@@ -21,7 +21,7 @@ import { sendDispatchEmail } from './_shared/dispatch-email.mjs';
  * configured on the Sanity webhook in sanity.io/manage.
  *
  * The email, the "sent" flag and the post-delivery sequence live in
- * _shared/dispatch-email.mjs, shared with shipping-event.mjs (a Sendcloud
+ * _shared/dispatch-email.mjs, shared with shipping-event-background.mjs (a Sendcloud
  * parcel's first carrier scan). It re-reads the order and claims it before
  * sending, so the two paths -- or Sanity firing this webhook twice -- can never
  * send the email twice. Once shippingEmailSent is true, nothing does anything.

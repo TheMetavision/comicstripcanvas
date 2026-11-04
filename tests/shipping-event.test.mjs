@@ -5,7 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { handleShippingEvent, applyParcelEvent, applyReturnEvent } from '../netlify/functions/shipping-event.mjs';
+import { readFileSync } from 'node:fs';
+import { applyParcelEvent, applyReturnEvent } from '../netlify/functions/_shared/shipping-events.mjs';
+import {
+  acceptShippingEvent, runShippingEvent, startEventBackground, eventHandoffKey, EVENT_HANDOFF_HEADER,
+} from '../netlify/functions/_shared/shipping-event-handoff.mjs';
 import { sendDispatchEmail, buildDispatchEmail } from '../netlify/functions/_shared/dispatch-email.mjs';
 import { fakeSanity, fakeResend, quiet } from './fixtures/fake-sanity.mjs';
 
@@ -178,15 +182,87 @@ const request = (body, secret = SECRET) => {
   });
 };
 
-test('the handler: signature first, 503 while switched off (so the service retries), then the event', async () => {
-  const { sanity, deps } = setup();
+// shipping-event (fast) hands the unchanged signed body to
+// shipping-event-background, which runs the event. `handOff` returns the
+// request the background function would receive, or null if none was started.
+async function handOff(body, { secret = SECRET, env: e = env } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push({ url, init }); return new Response(null, { status: 202 }); };
+  const r = await acceptShippingEvent(request(body, secret), { env: e, log: quiet, start: (req, raw, o) => startEventBackground(req, raw, { ...o, fetchImpl }) });
+  const bg = calls[0] ? new Request(calls[0].url, { method: 'POST', headers: calls[0].init.headers, body: calls[0].init.body }) : null;
+  return { r, calls, bg };
+}
+const applyWith = (deps) => (e) => (e.kind === 'parcel' ? applyParcelEvent(e, deps) : applyReturnEvent(e, deps));
+
+test('fast path: signature first (401, nothing started), 503 while switched off, else handed off and 200 with no work done', async () => {
+  const { sanity, resend } = setup();
   const body = JSON.stringify(ev(91, 'Parcel en route'));
-  assert.equal((await handleShippingEvent(request(body, 'forged'), { ...deps, env })).status, 401);
-  assert.equal((await handleShippingEvent(request(body), { ...deps, env: { ...env, SHIPPING_ENABLED: '' } })).status, 503);
-  assert.equal(sanity.store.get(ORDER_ID).shipment.events, undefined, 'nothing was written while off');
-  const ok = await handleShippingEvent(request(body), { ...deps, env });
-  assert.equal(ok.status, 200);
+  const forged = await handOff(body, { secret: 'forged' });
+  assert.equal(forged.r.status, 401);
+  assert.equal(forged.calls.length, 0);
+  const off = await handOff(body, { env: { ...env, SHIPPING_ENABLED: '' } });
+  assert.equal(off.r.status, 503);
+  assert.equal(off.calls.length, 0);
+  const ok = await handOff(body);
+  assert.equal(ok.r.status, 200);
+  assert.equal(ok.calls.length, 1, 'only the background start leaves the fast path');
+  assert.match(ok.calls[0].url, /\/\.netlify\/functions\/shipping-event-background$/);
+  assert.equal(ok.calls[0].init.body, body, 'the same raw body');
+  assert.equal(ok.calls[0].init.headers[EVENT_HANDOFF_HEADER], eventHandoffKey(env));
+  assert.equal(sanity.store.get(ORDER_ID).shipment.events, undefined, 'nothing written by the fast path');
+  assert.equal(resend.sent.length, 0);
+});
+
+test('fast path: shipping-event.mjs imports nothing that reaches Sanity, Resend, Stripe or MailerLite', () => {
+  const src = readFileSync(new URL('../netlify/functions/shipping-event.mjs', import.meta.url), 'utf8');
+  assert.deepEqual([...src.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]), ['./_shared/shipping-event-handoff.mjs']);
+  const handoff = readFileSync(new URL('../netlify/functions/_shared/shipping-event-handoff.mjs', import.meta.url), 'utf8');
+  assert.deepEqual([...handoff.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]), ['node:crypto', './shipping-client.mjs']);
+});
+
+test('fast path: a failed background start is 503 so the service retries', async () => {
+  const r = await acceptShippingEvent(request(JSON.stringify(ev(91, 'Parcel en route'))), { env, log: quiet, start: async () => ({ ok: false, error: 'HTTP 500' }) });
+  assert.equal(r.status, 503);
+});
+
+test('background path: does the work -- order dispatched, builds dispatched, one dispatch email', async () => {
+  const { sanity, resend, postDelivery, deps } = setup();
+  const { bg } = await handOff(JSON.stringify(ev(91, 'Parcel en route')));
+  const r = await runShippingEvent(bg, { apply: applyWith(deps), env, log: quiet });
+  assert.equal(r.status, 200);
+  assert.equal(r.retry, false);
   assert.equal(sanity.store.get(ORDER_ID).status, 'dispatched');
+  assert.equal(customerEmails(resend).length, 1);
+  assert.deepEqual(postDelivery, ['CSC-3001']);
+});
+
+test('background path: the same event delivered twice still sends one email', async () => {
+  const { resend, deps } = setup();
+  for (let i = 0; i < 2; i++) {
+    const { bg } = await handOff(JSON.stringify(ev(91, 'Parcel en route')));
+    assert.equal((await runShippingEvent(bg, { apply: applyWith(deps), env, log: quiet })).status, 200);
+  }
+  assert.equal(customerEmails(resend).length, 1);
+});
+
+test('background path: needs the handoff key and the signature; a Netlify retry minutes later still passes', async () => {
+  const body = JSON.stringify(ev(91, 'Parcel en route'));
+  const { calls } = await handOff(body);
+  let applied = 0;
+  const apply = async () => { applied++; return { status: 200, body: 'OK' }; };
+  const rebuild = (headers, b = body) => new Request(calls[0].url, { method: 'POST', headers, body: b });
+  const h = calls[0].init.headers;
+  assert.equal((await runShippingEvent(rebuild({ ...h, [EVENT_HANDOFF_HEADER]: 'x'.repeat(48) }), { apply, env, log: quiet })).status, 403);
+  assert.equal((await runShippingEvent(rebuild(h, JSON.stringify(ev(11, 'Delivered'))), { apply, env, log: quiet })).status, 401);
+  assert.equal((await runShippingEvent(rebuild(h), { apply, env, log: quiet, now: Date.now() + 4 * 60_000 })).status, 200);
+  assert.equal((await runShippingEvent(rebuild(h), { apply, env, log: quiet, now: Date.now() + 16 * 60_000 })).status, 401);
+  assert.equal(applied, 1);
+});
+
+test('background path: a failed dispatch email (5xx outcome) asks Netlify to retry', async () => {
+  const { bg } = await handOff(JSON.stringify(ev(91, 'Parcel en route')));
+  const r = await runShippingEvent(bg, { apply: async () => ({ status: 503, body: 'Dispatch email not sent' }), env, log: quiet });
+  assert.equal(r.retry, true);
 });
 
 /* ---------------------------------------------------------------- returns */

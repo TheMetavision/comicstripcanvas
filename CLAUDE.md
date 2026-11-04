@@ -65,7 +65,9 @@ behind `SHIPPING_ENABLED` (functions) and `SANITY_STUDIO_SHIPPING_ENABLED`
   not the router, is what stops a double send.
 - Alan sets `shipment.status = ready_to_ship` -> "CSC orders" ->
   `shipping-dispatch-background` buys labels -> team "Label ready" email.
-  `shipping-event` (the service's callback) does the rest; the customer's
+  `shipping-event` (the service's callback) checks the signature, hands the
+  event to `shipping-event-background` and answers at once; that does the rest
+  (`_shared/shipping-events.mjs`); the customer's
   dispatch email goes out at the first carrier scan via
   `_shared/dispatch-email.mjs`, which `order-shipped.mjs` also uses. It claims
   the order before sending, so the email cannot go twice.

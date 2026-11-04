@@ -138,16 +138,17 @@ export async function shippingCreate(path, body, { attempts = 3, delayMs = 2000,
 
 /**
  * Verify a status callback from the service (read the raw body BEFORE
- * parsing). Same checks as the README helper: fresh timestamp (5 minutes), our
+ * parsing). Same checks as the README helper: fresh timestamp (5 minutes, or
+ * maxSkewSeconds for shipping-event-background), our
  * brand, and a constant-time signature comparison.
  */
-export function verifyShippingCallback(request, rawBody, { env = process.env, now = Date.now() } = {}) {
+export function verifyShippingCallback(request, rawBody, { env = process.env, now = Date.now(), maxSkewSeconds = 300 } = {}) {
   const secret = env.SHIPPING_SECRET;
   const ourBrand = setting('SHIPPING_BRAND', env);
   if (!secret) return false;
   const timestamp = request.headers.get('x-mv-timestamp') || '';
   if (!/^\d{1,12}$/.test(timestamp)) return false;
-  const fresh = Math.abs(now / 1000 - Number(timestamp)) <= 300;
+  const fresh = Math.abs(now / 1000 - Number(timestamp)) <= maxSkewSeconds;
   const brand = (request.headers.get('x-mv-brand') || '').toLowerCase();
   const given = Buffer.from(request.headers.get('x-mv-signature') || '');
   const expected = Buffer.from(sign(secret, timestamp, rawBody));

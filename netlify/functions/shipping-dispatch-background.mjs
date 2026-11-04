@@ -16,7 +16,7 @@ import { sendEmail, labelReadyEmail, shipmentProblemEmail } from './_shared/ship
  * service, writes carrier, option, quoted price, tracking and label id to the
  * order, sets "Label created" and emails the team "Label ready" with a print
  * link per parcel. The CUSTOMER is not emailed here: they get the dispatch
- * email at the first carrier scan (shipping-event.mjs).
+ * email at the first carrier scan (shipping-event-background.mjs).
  *
  * Any failure -- a plan that does not add up, band_not_configured,
  * no_available_option, the service down -- sets "Exception", records why on

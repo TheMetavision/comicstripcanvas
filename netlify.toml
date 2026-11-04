@@ -392,6 +392,15 @@
   status = 404
   force = true
 
+# shipping-event hands each tracking event to shipping-event-background, at
+# /.netlify/functions/shipping-event-background with a handoff key; the public
+# /api/ address is closed like the others. Before the /api/* rule.
+[[redirects]]
+  from = "/api/shipping-event-background"
+  to = "/404"
+  status = 404
+  force = true
+
 # Route /api/* requests to Netlify Functions.
 # Required for the contact form (src/pages/contact.astro POSTs to /api/contact
 # which gets rewritten to /.netlify/functions/contact).
