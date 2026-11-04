@@ -10,7 +10,7 @@
  * TEAM_EMAIL, else the committed team address (_shared/site-config.mjs). Never the customer's address,
  * and the collection point a return goes to is only ever named to the team.
  */
-import { emailHeader, button, EMAIL_BRAND } from './email.mjs';
+import { emailHeader, teamEmailHeader, button, EMAIL_BRAND } from './email.mjs';
 import { carrierName } from './parcel-bands.mjs';
 import { setting } from './site-config.mjs';
 
@@ -49,7 +49,8 @@ const wrap = (inner) => `
     <div style="padding: 28px 24px; color: #333; font-size: 15px; line-height: 1.6;">${inner}</div>
   </div>`;
 
-const plainWrap = (inner) => `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #222; max-width: 680px;">${inner}</div>`;
+/* Team notices: the logo bar on top, then plain working content. */
+const plainWrap = (inner) => `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #222; max-width: 680px;">${teamEmailHeader}<div style="padding: 16px 0 0;">${inner}</div></div>`;
 
 const table = (rows) => `<table cellpadding="6" cellspacing="0" border="1" style="border-collapse: collapse; border-color: #ddd; font-size: 13px; margin: 12px 0;">${rows}</table>`;
 

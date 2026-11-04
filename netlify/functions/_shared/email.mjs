@@ -61,6 +61,25 @@ export const emailHeader = `
   </table>`;
 
 /**
+ * The team's version: the same logo on the same black bar, half the size and
+ * without the tagline, so an alert's subject line in the body is still the
+ * first thing read. For internal notices (new order, shipping, returns) --
+ * customers get emailHeader.
+ */
+const TEAM_LOGO_WIDTH = 80;
+const TEAM_LOGO_HEIGHT = Math.round(TEAM_LOGO_WIDTH * EMAIL_BRAND.logoHeight / EMAIL_BRAND.logoWidth);
+export const teamEmailHeader = `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+    <tr>
+      <td align="center" bgcolor="${EMAIL_BRAND.headerBar}" style="background: ${EMAIL_BRAND.headerBar}; padding: 14px 16px;">
+        <img src="${LOGO_SRC}" alt="Comic Strip Canvas"
+             width="${TEAM_LOGO_WIDTH}" height="${TEAM_LOGO_HEIGHT}"
+             style="display: block; margin: 0 auto; width: ${TEAM_LOGO_WIDTH}px; height: ${TEAM_LOGO_HEIGHT}px; border: 0; outline: none; text-decoration: none;" />
+      </td>
+    </tr>
+  </table>`;
+
+/**
  * The site's .btn-primary as an email-safe button: comic-yellow, black text,
  * 4px black border. The border and background live on the <td> so Outlook draws
  * them; padding is on the <a> so the whole block is clickable.

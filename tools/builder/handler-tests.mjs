@@ -933,6 +933,14 @@ const LISTING_REF = 'image-listing-as-bought-1333x2000-jpg';
     'and does NOT invent a style for a one-style product');
   ok(html.indexOf('PRINT FILE MISSING') < html.indexOf('Shipping Address'),
     'at the top, above the order detail rather than buried in it');
+  /* fix/email-logos: the team alert opens with CSC's own logo bar, and names
+     no other brand of the estate. */
+  const CSC_LOGO = 'https://cdn.sanity.io/images/lwbwahym/production/d3b36041ed3eb60d6ef9e6a6353c30ab79363be4-440x440.png';
+  ok(html.includes(CSC_LOGO) && html.indexOf(CSC_LOGO) < html.indexOf('NEW ORDER RECEIVED'),
+    'the team email opens with the CSC logo, above the banner');
+  const otherBrand = ['pixel8multimedia', 'wyrmfuel', 'thefuglys', 'labrats', 'catsoncrack', 'bikerbabies', 'dottyandfriends', 'themetavision']
+    .find((b) => html.toLowerCase().includes(b));
+  ok(!otherBrand, 'and carries no other brand\'s logo or domain', otherBrand);
   ok(needsAttention(order) === 1, 'and the order matches Needs attention',
     `${needsAttention(order)} line(s)`);
 

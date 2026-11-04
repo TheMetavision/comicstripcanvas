@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { createClient } from '@sanity/client';
 import { Resend } from 'resend';
-import { emailHeader } from './_shared/email.mjs';
+import { emailHeader, teamEmailHeader } from './_shared/email.mjs';
 import { FULL_BLEED, styleOr, styleLabel, styleLabelFor } from './_shared/artwork-styles.mjs';
 import { sizeLabels, sizeLabelFor, orientationFromAspect } from './_shared/sizes.mjs';
 import { deleteBuild } from './_shared/delete-build.mjs';
@@ -910,6 +910,7 @@ async function fulfilOrder(session) {
           subject: `${session.livemode === false ? '[TEST] ' : ''}${missingPrint.length ? '⚠ PRINT FILE MISSING — ' : ''}${repeatWelcomeCode ? '⚠ REPEAT WELCOME CODE — ' : ''}${isPersonalised ? '🎨 PERSONALISED' : '📦 NEW'} ORDER ${orderNumber} — £${totalAmount.toFixed(2)} — ${customerName}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff;">
+              ${teamEmailHeader}
               <div style="background: ${isPersonalised ? BRAND.cyan : BRAND.pink}; padding: 20px; text-align: center;">
                 <h1 style="color: #fff; margin: 0; font-size: 22px; letter-spacing: 1px;">${isPersonalised ? '🎨 PERSONALISED ORDER' : '📦 NEW ORDER RECEIVED'}</h1>
                 <p style="color: rgba(255,255,255,0.9); margin: 6px 0 0; font-size: 15px; font-weight: bold;">${orderNumber}</p>
