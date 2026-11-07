@@ -1622,6 +1622,11 @@ export function initProductBuilder() {
   const isSafetyReason = (r) => /^safety/i.test(r || '');
   const isCapReason = (r) => /^cap$/i.test((r || '').trim());
   const styleRetryable = (r) => !isSafetyReason(r) && !isCapReason(r);
+  /* Google itself was out of service (402, 429 or 5xx) -- the server sets
+     failCode 'unavailable' and refunds the call. Retryable like any other
+     transport fault, but worded so the customer does not blame their photo. */
+  const isUnavailable = (s) => !!s && s.failCode === 'unavailable';
+  const UNAVAILABLE_TEXT = 'Comic style temporarily unavailable — please try again later';
 
   const loadImage = (file) => new Promise((res, rej) => {
     const url = URL.createObjectURL(file), im = new Image();
@@ -1817,7 +1822,8 @@ export function initProductBuilder() {
         kind = 'bad';
         lines = isSafetyReason(s.styleError) ? ['Style not applied', 'Use a different photo']
           : isCapReason(s.styleError) ? ['Style not applied', 'No attempts left']
-            : ['Style not applied', 'Tap to try again'];
+            : isUnavailable(s) ? ['Temporarily unavailable', 'Tap to try again']
+              : ['Style not applied', 'Tap to try again'];
         tip = `${styleFailureText(s)} (${s.styleError || 'unknown'})`;
       } else if (s.uploadState === UPLOADED && s.styleState === STYLE_LIMITED) {
         /* 'busy', not 'bad'. Nothing has gone wrong and the flag should not
@@ -1942,6 +1948,7 @@ export function initProductBuilder() {
       return "We couldn't apply the comic style to this photo — please try a different one";
     }
     if (isCapReason(s.styleError)) return CAP_TEXT;
+    if (isUnavailable(s)) return UNAVAILABLE_TEXT;
     return "The comic style didn't apply — tap to try again";
   }
 
@@ -1988,6 +1995,7 @@ export function initProductBuilder() {
       const slot = slotForServerPanel(s.serverPanel) || s.serverPanel;
       s.styleState = STYLE_FAILED;
       s.styleError = 'timeout';
+      s.failCode = null;
       s.styleGaveUp = true;
       changed = true;
       console.warn(
@@ -2179,6 +2187,7 @@ export function initProductBuilder() {
          is reasonable -- and, past CUTOUT_GIVE_UP_MS, no longer is. */
       if (s.styleState === STYLE_DONE && !s.styleDoneAt) s.styleDoneAt = Date.now();
       s.styleError = row.styleError || null;
+      s.failCode = row.failCode || null;
       if (row.styledWidth) s.styledW = row.styledWidth;
       if (row.styledHeight) s.styledH = row.styledHeight;
       if (row.styledKey) s.styledKey = row.styledKey;
@@ -2471,7 +2480,7 @@ export function initProductBuilder() {
        bought and already made. */
     if (ADMIN) { console.warn('[builder] admin edit: refusing to re-style — that is paid work'); return false; }
     if (s.styleState === STYLE_PENDING || s.styleState === STYLE_STYLING) return false;
-    s.styleState = STYLE_PENDING; s.styleError = null;
+    s.styleState = STYLE_PENDING; s.styleError = null; s.failCode = null;
     s.styleClockAt = Date.now();        // a retry gets the full four minutes too
     s.styleGaveUp = false;
     drawSlotFlag(id);
@@ -2493,6 +2502,7 @@ export function initProductBuilder() {
     } catch (e) {
       s.styleState = STYLE_FAILED;
       s.styleError = e.message || 'retry failed';
+      s.failCode = null;
       console.warn(`[builder] re-style of ${id} failed: ${s.styleError}`);
       drawSlotFlag(id);
       if (selected === id) syncPanel();
@@ -2800,6 +2810,7 @@ export function initProductBuilder() {
              reported as done on the very first poll. */
           s.styleState = STYLE_PENDING;
           s.styleError = null;
+          s.failCode = null;
         }
         // the stored file is the one the customer should be working with
         if (sending !== file) await adoptEncoded(id, sending);
@@ -2863,7 +2874,7 @@ export function initProductBuilder() {
         // slot is uploaded the moment it is filled, so it starts queued.
         // Both modes upload the moment a slot is filled, so both start queued.
         uploadState: PENDING, uploadError: null, uploadPct: null,
-        styleState: null, styleError: null, styled: false,
+        styleState: null, styleError: null, failCode: null, styled: false,
         /* The panel this photograph was UPLOADED under, which stops being the
            panel it sits in the moment anything is swapped. Every conversation
            with the server -- the status poll, fetching the styled image, asking

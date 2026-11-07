@@ -55,7 +55,11 @@ export async function adoptStyledTwin(sanity, id, panel, twin) {
       [`photos[panel == "${panel}"].styledAt`]: new Date().toISOString(),
     })
     .setIfMissing({ styledKeys: [] })
-    .unset([`photos[panel == "${panel}"].styleError`, `styledKeys[@ == "${twin.styledKey}"]`])
+    .unset([
+      `photos[panel == "${panel}"].styleError`,
+      `photos[panel == "${panel}"].failCode`,
+      `styledKeys[@ == "${twin.styledKey}"]`,
+    ])
     .append('styledKeys', [twin.styledKey])
     .commit();
 }

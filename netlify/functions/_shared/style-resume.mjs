@@ -117,7 +117,11 @@ async function resumePanel({ sanity, store, doc, panel, origin, now }) {
       .patch(doc._id)
       .ifRevisionId(doc._rev)
       .set({ [`photos[panel == "${panel}"].styleStatus`]: 'pending' })
-      .unset([`photos[panel == "${panel}"].styleError`, `photos[panel == "${panel}"].pausedAt`])
+      .unset([
+        `photos[panel == "${panel}"].styleError`,
+        `photos[panel == "${panel}"].failCode`,
+        `photos[panel == "${panel}"].pausedAt`,
+      ])
       .commit();
   } catch (err) {
     // A revision clash means somebody else got there first, which is the

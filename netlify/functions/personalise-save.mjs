@@ -530,6 +530,7 @@ export async function markFailed(id, panelId, reason) {
       [`photos[panel == "${panelId}"].styleStatus`]: 'failed',
       [`photos[panel == "${panelId}"].styleError`]: reason,
     })
+    .unset([`photos[panel == "${panelId}"].failCode`])
     .commit();
 }
 

@@ -161,6 +161,7 @@ export default async (req, context) => {
             [`photos[panel == "${panel}"].styleStatus`]: 'failed',
             [`photos[panel == "${panel}"].styleError`]: 'cap',
           })
+          .unset([`photos[panel == "${panel}"].failCode`])
           .commit();
       }
       console.warn(
@@ -178,7 +179,7 @@ export default async (req, context) => {
     await sanity
       .patch(docIdFor(id))
       .set({ [`photos[panel == "${panel}"].styleStatus`]: 'pending' })
-      .unset([`photos[panel == "${panel}"].styleError`])
+      .unset([`photos[panel == "${panel}"].styleError`, `photos[panel == "${panel}"].failCode`])
       .commit();
 
     const origin = internalOrigin(req);

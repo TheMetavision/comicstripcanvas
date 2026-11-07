@@ -108,10 +108,20 @@ const setPanel = (panel, fields) =>
    A safety block DOES count -- the model looked at the photograph and gave its
    answer. So does a timeout: nothing says the generation did not happen, and
    assuming it did is the side to be wrong on. */
-const NEVER_REACHED_MODEL = new Set([401, 403, 429]);
+const NEVER_REACHED_MODEL = new Set([401, 402, 403, 429]);
 const shouldRefund = (err) =>
   typeof err?.status === 'number' &&
   (NEVER_REACHED_MODEL.has(err.status) || (err.status >= 500 && err.status < 600));
+
+/* Google is out of service for us: out of credit (402), rate-limited (429) or
+   down (5xx). Nothing the customer did and nothing a different photo would
+   change, so the panel carries failCode 'unavailable' and the builder says
+   "temporarily unavailable" rather than blaming the photo. 401/403 are left
+   out on purpose -- those are our key or configuration, still refunded above
+   but not an upstream outage. Checked after style.mjs's own single retry. */
+const isUpstreamUnavailable = (err) =>
+  typeof err?.status === 'number' &&
+  (err.status === 402 || err.status === 429 || (err.status >= 500 && err.status < 600));
 
 /**
  * Cut the background out of a styled cover.
@@ -174,9 +184,16 @@ async function makeCutout(jpeg) {
   }
 }
 
-async function markFailed(id, panel, reason) {
+async function markFailed(id, panel, reason, failCode = null) {
   try {
-    await sanity.patch(docIdFor(id)).set(setPanel(panel, { styleStatus: 'failed', styleError: reason })).commit();
+    /* failCode is written or cleared on every failure, never left over from an
+       earlier one: a stale 'unavailable' on a panel that has since failed for
+       another reason would tell the customer the wrong thing. */
+    const p = sanity.patch(docIdFor(id)).set(setPanel(panel, {
+      styleStatus: 'failed', styleError: reason, ...(failCode ? { failCode } : {}),
+    }));
+    if (!failCode) p.unset([`photos[panel == "${panel}"].failCode`]);
+    await p.commit();
   } catch (err) {
     console.error(`style-photo: could not mark ${id} ${panel} failed:`, err.message);
   }
@@ -279,7 +296,7 @@ export default async (req) => {
     await sanity
       .patch(docIdFor(id))
       .set(setPanel(panel, { styleStatus: 'styling' }))
-      .unset([`photos[panel == "${panel}"].styleError`])
+      .unset([`photos[panel == "${panel}"].styleError`, `photos[panel == "${panel}"].failCode`])
       .commit();
 
     const photos = getStore(PHOTO_STORE);
@@ -363,7 +380,11 @@ export default async (req) => {
     await sanity
       .patch(docIdFor(id))
       .setIfMissing({ styledKeys: [] })
-      .unset([`styledKeys[@ == "${styledKey}"]`, `photos[panel == "${panel}"].styleError`])
+      .unset([
+        `styledKeys[@ == "${styledKey}"]`,
+        `photos[panel == "${panel}"].styleError`,
+        `photos[panel == "${panel}"].failCode`,
+      ])
       .append('styledKeys', [styledKey])
       .set(setPanel(panel, {
         styledKey,
@@ -425,6 +446,10 @@ export default async (req) => {
     return new Response('Styled', { status: 200 });
   } catch (err) {
     const reason = shortReason(err);
+    const unavailable = isUpstreamUnavailable(err);
+    /* One fixed line per outage, worded for a log alert rather than a person:
+       the same shape is meant to be matched across brands and features. */
+    if (unavailable) console.error(`[ai-upstream] UNAVAILABLE brand=csc feature=style status=${err.status}`);
     console.error(
       `style-photo: ${id} ${panel} failed after ${Date.now() - started} ms — ${reason}`,
       err instanceof StyleError
@@ -462,7 +487,7 @@ export default async (req) => {
         console.error(`spend-guard: could not refund the counters for ${id} ${panel}:`, refundErr.message);
       }
     }
-    if (isId(id) && isPanel(panel)) await markFailed(id, panel, reason);
+    if (isId(id) && isPanel(panel)) await markFailed(id, panel, reason, unavailable ? 'unavailable' : null);
     return new Response('Failed', { status: 500 });
   }
 };

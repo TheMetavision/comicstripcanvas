@@ -408,6 +408,16 @@ export default defineType({
             },
             { name: 'styleError', title: 'Style Error', type: 'string' },
             {
+              name: 'failCode',
+              title: 'Failure Code',
+              type: 'string',
+              readOnly: true,
+              description:
+                '“unavailable” means Google’s image model was out of credit, rate-limited or ' +
+                'down (402, 429 or 5xx) — not a problem with the photo. The call was refunded, ' +
+                'and the customer was told to try again later.',
+            },
+            {
               name: 'limitedAt',
               title: 'Ran Out Of Attempts At',
               type: 'datetime',

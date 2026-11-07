@@ -87,6 +87,10 @@ export default async (req) => {
       panel: p.panel,
       styleStatus: p.styleStatus || 'pending',
       styleError: p.styleError || null,
+      /* A machine code beside the human reason, so the builder can pick its
+         wording without parsing styleError. Only 'unavailable' so far: Google
+         was out of credit, rate-limited or down -- nothing to do with the photo. */
+      failCode: p.failCode || null,
       styledWidth: p.styledWidth ?? null,
       styledHeight: p.styledHeight ?? null,
       /* The builder records this in the recipe, so the brief says exactly which
