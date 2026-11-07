@@ -413,8 +413,9 @@ export default defineType({
               type: 'string',
               readOnly: true,
               description:
-                '“unavailable” means Google’s image model was out of credit, rate-limited or ' +
-                'down (402, 429 or 5xx) — not a problem with the photo. The call was refunded, ' +
+                '“unavailable” means Google’s image model refused our key or access, was out of ' +
+                'credit, rate-limited or down (401, 402, 403, 429 or 5xx) — not a problem with ' +
+                'the photo. The call was refunded, ' +
                 'and the customer was told to try again later.',
             },
             {

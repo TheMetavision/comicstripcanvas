@@ -113,15 +113,14 @@ const shouldRefund = (err) =>
   typeof err?.status === 'number' &&
   (NEVER_REACHED_MODEL.has(err.status) || (err.status >= 500 && err.status < 600));
 
-/* Google is out of service for us: out of credit (402), rate-limited (429) or
-   down (5xx). Nothing the customer did and nothing a different photo would
-   change, so the panel carries failCode 'unavailable' and the builder says
-   "temporarily unavailable" rather than blaming the photo. 401/403 are left
-   out on purpose -- those are our key or configuration, still refunded above
-   but not an upstream outage. Checked after style.mjs's own single retry. */
-const isUpstreamUnavailable = (err) =>
-  typeof err?.status === 'number' &&
-  (err.status === 402 || err.status === 429 || (err.status >= 500 && err.status < 600));
+/* Google will not serve us: key or access refused (401/403), out of credit
+   (402), rate-limited (429) or down (5xx). Nothing the customer did and
+   nothing a different photo would change, so the panel carries failCode
+   'unavailable' and the builder says "temporarily unavailable" rather than
+   blaming the photo. Exactly the refund set above, so every refunded failure
+   is also one the customer is told to try again later. Checked after
+   style.mjs's own single retry (which never retries 401/402/403). */
+const isUpstreamUnavailable = shouldRefund;
 
 /**
  * Cut the background out of a styled cover.

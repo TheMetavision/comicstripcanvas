@@ -1622,7 +1622,7 @@ export function initProductBuilder() {
   const isSafetyReason = (r) => /^safety/i.test(r || '');
   const isCapReason = (r) => /^cap$/i.test((r || '').trim());
   const styleRetryable = (r) => !isSafetyReason(r) && !isCapReason(r);
-  /* Google itself was out of service (402, 429 or 5xx) -- the server sets
+  /* Google itself would not serve us (401, 402, 403, 429 or 5xx) -- the server sets
      failCode 'unavailable' and refunds the call. Retryable like any other
      transport fault, but worded so the customer does not blame their photo. */
   const isUnavailable = (s) => !!s && s.failCode === 'unavailable';

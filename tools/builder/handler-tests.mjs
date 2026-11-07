@@ -1603,7 +1603,8 @@ say('\n16. STYLING: WHEN THE MODEL SAYS NO\n');
   ok(!panelOf(seeded.id, seeded.panel).failCode, 'and a 400 is NOT marked unavailable',
     String(panelOf(seeded.id, seeded.panel).failCode));
 
-  /* Upstream unavailable: 402 (out of credit), 429 and 5xx. The panel carries
+  /* Upstream unavailable: 401/403 (key or access), 402 (out of credit), 429
+     and 5xx. The panel carries
      failCode 'unavailable' so the builder can say "try again later" instead of
      blaming the photo; the call goes back to the design cap AND to the day's
      breaker; and one fixed log line is written for the alert to match. */
@@ -1616,7 +1617,7 @@ say('\n16. STYLING: WHEN THE MODEL SAYS NO\n');
   };
   const dayCalls = async () => (await guard.readGlobal(guard.guardStore(), new Date(), 'customer')).calls;
 
-  for (const [status, n] of [[402, 'a'], [429, 'b'], [500, 'c'], [503, 'd']]) {
+  for (const [status, n] of [[401, '4'], [402, 'a'], [403, '5'], [429, 'b'], [500, 'c'], [503, 'd']]) {
     resetAll();
     genaiStub.willThrow(status, `upstream ${status}`);
     seeded = await seedBuild({ id: `pp-${n.repeat(32)}` });
@@ -1633,24 +1634,16 @@ say('\n16. STYLING: WHEN THE MODEL SAYS NO\n');
     ok(logs.filter((l) => l === want).length === 1, `a ${status} logs exactly "${want}"`,
       logs.filter((l) => l.startsWith('[ai-upstream]')).join(' | ') || '(none)');
   }
-  /* 402 is a billing answer, not a wobble: refunded, but not retried. */
-  resetAll();
-  genaiStub.willThrow(402, 'payment required');
-  seeded = await seedBuild({ id: `pp-${'1'.repeat(32)}` });
-  await captureErrors(() => runStyle(seeded.id, seeded.panel));
-  ok(genaiStub.calls.length === 1, 'a 402 is asked once and not retried',
-    String(genaiStub.calls.length));
-
-  /* 401/403 stay refunded but are our configuration, not an outage. */
-  resetAll();
-  genaiStub.willThrow(401, 'unauthorised');
-  seeded = await seedBuild({ id: `pp-${'2'.repeat(32)}` });
-  let logs = await captureErrors(() => runStyle(seeded.id, seeded.panel));
-  ok(!panelOf(seeded.id, seeded.panel).failCode, 'a 401 is NOT marked unavailable',
-    String(panelOf(seeded.id, seeded.panel).failCode));
-  ok(!logs.some((l) => l.startsWith('[ai-upstream]')), 'and does not log the upstream line');
-  ok(sanityStub.docs.get(DOC(seeded.id)).styleCalls === 0, 'but is still refunded',
-    String(sanityStub.docs.get(DOC(seeded.id)).styleCalls));
+  /* 401, 402 and 403 are answers, not wobbles: refunded, but not retried. */
+  for (const [status, n] of [[401, '1'], [402, '2'], [403, '6']]) {
+    resetAll();
+    genaiStub.willThrow(status, `upstream ${status}`);
+    seeded = await seedBuild({ id: `pp-${n.repeat(32)}` });
+    await captureErrors(() => runStyle(seeded.id, seeded.panel));
+    ok(genaiStub.calls.length === 1, `a ${status} is asked once and not retried`,
+      String(genaiStub.calls.length));
+  }
+  let logs;
 
   /* A later failure of another kind must not inherit a stale 'unavailable'. */
   resetAll();
